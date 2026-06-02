@@ -1,0 +1,41 @@
+"use client";
+
+export default function SessionError({
+  error,
+  reset,
+}: {
+  error: Error & { digest?: string };
+  reset: () => void;
+}) {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-dark-900 bg-workbench bg-grid">
+      <div className="text-center max-w-md px-4">
+        <div className="mb-4 flex justify-center">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+            <path d="M12 9v4" />
+            <path d="M12 17h.01" />
+          </svg>
+        </div>
+        <h1 className="text-lg font-semibold text-red-400 mb-2">工作台加载出错</h1>
+        <p className="text-sm text-zinc-400 mb-4 leading-relaxed">
+          {error.message || "未知错误，请刷新页面重试"}
+        </p>
+        <div className="flex gap-3 justify-center">
+          <button
+            onClick={reset}
+            className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-sm font-medium rounded-lg transition-all"
+          >
+            重试
+          </button>
+          <a
+            href="/"
+            className="px-4 py-2 text-sm font-medium text-indigo-400 hover:text-indigo-300 border border-indigo-500/30 rounded-lg transition-colors"
+          >
+            返回首页
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
