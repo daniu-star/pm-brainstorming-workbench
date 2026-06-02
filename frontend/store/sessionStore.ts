@@ -59,8 +59,6 @@ interface SessionState {
   setOnboardingOpen: (open: boolean) => void;
   completeOnboarding: () => void;
   login: (phone: string, code: string) => Promise<void>;
-  loginWechat: () => Promise<void>;
-  loginQq: () => Promise<void>;
   logout: () => void;
 
   createSession: (problem: string) => Promise<void>;
@@ -490,34 +488,6 @@ export const useSessionStore = create<SessionState>((set, get) => {
         userNickname: result.user?.nickname || result.user?.phone || null,
       });
       toast("success", "登录成功");
-    },
-
-    loginWechat: async () => {
-      const mockCode = `wx_dev_${Date.now()}`;
-      const result = await api<{ token: string; user: { nickname?: string } }>("/api/auth/wechat", {
-        method: "POST",
-        body: JSON.stringify({ code: mockCode }),
-      });
-      saveJwtToken(result.token);
-      set({
-        isLoggedIn: true,
-        userNickname: result.user?.nickname || "微信用户",
-      });
-      toast("success", "微信登录成功");
-    },
-
-    loginQq: async () => {
-      const mockCode = `qq_dev_${Date.now()}`;
-      const result = await api<{ token: string; user: { nickname?: string } }>("/api/auth/qq", {
-        method: "POST",
-        body: JSON.stringify({ code: mockCode }),
-      });
-      saveJwtToken(result.token);
-      set({
-        isLoggedIn: true,
-        userNickname: result.user?.nickname || "QQ用户",
-      });
-      toast("success", "QQ 登录成功");
     },
 
     logout: () => {

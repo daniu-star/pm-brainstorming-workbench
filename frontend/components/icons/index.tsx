@@ -90,8 +90,11 @@ export function PlusIcon({ size = 24, className, ...props }: IconProps) {
 }
 
 export function MicIcon({ size = 24, className, ...props }: IconProps) {
-  const { children, ...data } = makeIcon(size, "M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z M19 10v2a7 7 0 0 1-14 0v-2 M12 19v3 M8 22h8");
-  return <svg className={className} {...data} {...props} />;
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" />
+    </svg>
+  );
 }
 
 export function CoachIcon({ size = 24, className, ...props }: IconProps) {

@@ -9,16 +9,6 @@ from db.user_store import user_store
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-def _validate_oauth_code(code: str, provider: str) -> bool:
-    if not code:
-        return False
-    if len(code) < 8 or len(code) > 128:
-        return False
-    if not re.match(r'^[a-zA-Z0-9_-]+$', code):
-        return False
-    return True
-
-
 class SmsSendRequest(BaseModel):
     phone: str
 
@@ -28,26 +18,16 @@ class SmsVerifyRequest(BaseModel):
     code: str
 
 
-class WechatAuthRequest(BaseModel):
-    code: str
-
-
-class QQAuthRequest(BaseModel):
-    code: str
-
-
 @router.post("/sms/send")
 async def sms_send(req: SmsSendRequest, request: Request):
     if not req.phone:
         raise HTTPException(status_code=400, detail="手机号不能为空")
     code, hint = send_sms_code(req.phone)
-    is_dev = request.client.host in ("127.0.0.1", "::1") if request.client else False
     response = {"success": True}
     if hint:
         if hint == "sms_unavailable":
-            response["hint"] = "短信服务暂不可用"
-        elif is_dev:
-            response["hint"] = hint
+            response["hint"] = "短信服务暂未配置"
+            response["code"] = code
     return response
 
 
@@ -68,16 +48,6 @@ async def sms_verify(req: SmsVerifyRequest):
             "phone": user.get("phone", ""),
         },
     }
-
-
-@router.post("/wechat")
-async def wechat_auth():
-    raise HTTPException(status_code=501, detail="微信登录暂未上线，请使用手机号登录")
-
-
-@router.post("/qq")
-async def qq_auth():
-    raise HTTPException(status_code=501, detail="QQ登录暂未上线，请使用手机号登录")
 
 
 @router.get("/me")

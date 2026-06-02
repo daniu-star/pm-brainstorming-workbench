@@ -171,15 +171,15 @@ export function InputBox() {
             title="点击语音输入"
             className={`w-10 h-10 min-w-[44px] min-h-[44px] rounded-full transition-all duration-200 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:ring-offset-2 focus:ring-offset-white ${
               status === "recording"
-                ? "mic-ripple bg-red-600 hover:bg-red-500 active:bg-red-700 text-white"
+                ? "mic-ripple bg-red-600 hover:bg-red-500 active:bg-red-700 text-white shadow-lg shadow-red-200"
                 : status === "transcribing"
-                  ? "bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-white animate-pulse"
+                  ? "bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-white animate-pulse shadow-lg shadow-amber-200"
                   : status === "success"
-                    ? "bg-emerald-500 text-white"
-                    : "mic-pulse bg-warm-100 hover:bg-warm-200 active:bg-warm-300 text-warm-500 hover:text-warm-600 disabled:text-warm-400"
+                    ? "bg-emerald-500 text-white shadow-lg shadow-emerald-200"
+                    : "mic-pulse bg-amber-100 hover:bg-amber-200 active:bg-amber-300 text-amber-600 hover:text-amber-700 disabled:text-amber-400 shadow-sm shadow-amber-100"
             }`}
           >
-            <MicIcon size={18} />
+            <MicIcon size={20} />
           </button>
           {status === "recording" && (
             <span className="text-[10px] text-red-600 mt-0.5 whitespace-nowrap">正在聆听...</span>
