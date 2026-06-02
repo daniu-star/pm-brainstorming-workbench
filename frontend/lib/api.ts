@@ -22,11 +22,17 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
   if (!res.ok) {
     let errMsg: string;
     try {
-      errMsg = await res.text();
+      const text = await res.text();
+      try {
+        const json = JSON.parse(text);
+        errMsg = json.detail || json.message || json.error || text || `API 请求失败: ${res.status}`;
+      } catch {
+        errMsg = text || `API 请求失败: ${res.status}`;
+      }
     } catch {
       errMsg = `API 请求失败: ${res.status}`;
     }
-    throw new Error(errMsg || `API 请求失败: ${res.status}`);
+    throw new Error(errMsg);
   }
   const contentType = res.headers.get("content-type") || "";
   if (!contentType.includes("application/json")) {

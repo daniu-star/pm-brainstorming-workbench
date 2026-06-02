@@ -46,10 +46,8 @@ export default function LoginPage() {
         if (result.code) {
           setSmsStatus("failed");
           setDisplayCode(result.code);
-        } else if (!result.hint) {
-          setSmsStatus("sent");
         } else {
-          setSmsStatus("failed");
+          setSmsStatus("sent");
         }
       }
     } catch (err) {

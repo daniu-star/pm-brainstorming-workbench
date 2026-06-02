@@ -1,8 +1,10 @@
+import json
 import os
 import random
 import time
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import jwt
 
@@ -13,6 +15,9 @@ JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 72
 
 _jwt_secret_is_default = False
+
+SMS_CODES_FILE = Path(os.getenv("SMS_CODES_FILE", "/tmp/sms_codes.json"))
+SMS_CODE_EXPIRE_MINUTES = 5
 
 
 def _check_jwt_secret():
@@ -28,9 +33,32 @@ def is_jwt_secret_safe() -> bool:
 
 _check_jwt_secret()
 
-SMS_CODES: dict[str, dict] = {}
 
-SMS_CODE_EXPIRE_MINUTES = 5
+def _load_sms_codes() -> dict:
+    try:
+        if SMS_CODES_FILE.exists():
+            with open(SMS_CODES_FILE, "r") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def _save_sms_codes(codes: dict) -> None:
+    try:
+        SMS_CODES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(SMS_CODES_FILE, "w") as f:
+            json.dump(codes, f)
+    except Exception as e:
+        logger.warning("Failed to persist SMS codes: %s", e)
+
+
+def _cleanup_expired_codes(codes: dict) -> dict:
+    now = time.time()
+    expired_keys = [k for k, v in codes.items() if now > v.get("expires_at", 0)]
+    for k in expired_keys:
+        del codes[k]
+    return codes
 
 
 def create_jwt_token(user_id: str) -> str:
@@ -60,7 +88,11 @@ def generate_sms_code() -> str:
 def send_sms_code(phone: str) -> tuple[str, str | None]:
     code = generate_sms_code()
     expires_at = time.time() + SMS_CODE_EXPIRE_MINUTES * 60
-    SMS_CODES[phone] = {"code": code, "expires_at": expires_at}
+
+    codes = _load_sms_codes()
+    _cleanup_expired_codes(codes)
+    codes[phone] = {"code": code, "expires_at": expires_at}
+    _save_sms_codes(codes)
 
     from core.sms import send_sms_via_alibaba
     result = send_sms_via_alibaba(phone, code)
@@ -73,13 +105,18 @@ def send_sms_code(phone: str) -> tuple[str, str | None]:
 
 
 def verify_sms_code(phone: str, code: str) -> bool:
-    entry = SMS_CODES.get(phone)
+    codes = _load_sms_codes()
+    _cleanup_expired_codes(codes)
+
+    entry = codes.get(phone)
     if entry is None:
         return False
     if time.time() > entry["expires_at"]:
-        del SMS_CODES[phone]
+        del codes[phone]
+        _save_sms_codes(codes)
         return False
     if entry["code"] != code:
         return False
-    del SMS_CODES[phone]
+    del codes[phone]
+    _save_sms_codes(codes)
     return True
