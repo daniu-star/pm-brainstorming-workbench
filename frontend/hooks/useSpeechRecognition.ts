@@ -18,7 +18,13 @@ interface SpeechRecognitionResult {
 
 function getSupportedMimeType(): string | null {
   if (typeof window === "undefined") return null;
-  const types = ["audio/webm;codecs=opus", "audio/webm", "audio/wav"];
+  const types = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4",
+    "audio/wav",
+    "audio/ogg;codecs=opus",
+  ];
   for (const type of types) {
     if (MediaRecorder.isTypeSupported(type)) return type;
   }
@@ -77,7 +83,7 @@ export function useSpeechRecognition(): SpeechRecognitionResult {
           setIsTranscribing(true);
           try {
             const formData = new FormData();
-            const ext = mimeType?.includes("wav") ? "wav" : "webm";
+            const ext = mimeType?.includes("wav") ? "wav" : mimeType?.includes("mp4") ? "mp4" : mimeType?.includes("ogg") ? "ogg" : "webm";
             formData.append("file", blob, `recording.${ext}`);
 
             const res = await fetch(apiUrl("/api/voice/stt"), {
@@ -87,8 +93,8 @@ export function useSpeechRecognition(): SpeechRecognitionResult {
             });
 
             if (!res.ok) {
-              const text = await res.text().catch(() => "");
-              throw new Error(text || `语音识别请求失败: ${res.status}`);
+              const errorData = await res.json().catch(() => ({}));
+              throw new Error(errorData.detail || `语音识别请求失败 (${res.status})`);
             }
 
             const data = await res.json();

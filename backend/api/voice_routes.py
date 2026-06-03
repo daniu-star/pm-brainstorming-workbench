@@ -45,8 +45,11 @@ async def speech_to_text(request: Request, file: UploadFile = File(...)):
     check_quota(user, llm_config)
 
     content_type = file.content_type or "audio/webm"
-    if content_type not in ("audio/webm", "audio/wav"):
-        raise HTTPException(status_code=400, detail="仅支持 audio/webm 或 audio/wav 格式")
+    # Normalize content_type - browsers may send "audio/webm;codecs=opus"
+    ct_lower = content_type.lower().split(";")[0].strip()
+    if ct_lower not in ("audio/webm", "audio/wav", "audio/mp4", "audio/ogg", "audio/mpeg"):
+        raise HTTPException(status_code=400, detail=f"不支持的音频格式: {content_type}，仅支持 webm/wav/mp3/ogg")
+    content_type = ct_lower
 
     try:
         audio_bytes = await file.read()
