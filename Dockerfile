@@ -20,6 +20,8 @@ EXPOSE 7860
 ENV LLM_API_KEY=""
 ENV LLM_BASE_URL="https://api.openai.com/v1"
 ENV LLM_MODEL="gpt-4o"
+ENV HF_API_TOKEN=""
+ENV HF_WHISPER_MODEL="openai/whisper-large-v3"
 ENV SESSION_DATA_DIR="/app/data/sessions"
 ENV USER_DATA_DIR="/app/data/users"
 ENV BACKEND_PORT=7860
