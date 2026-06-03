@@ -45,7 +45,7 @@ export function ProductWireframe({ description }: ProductWireframeProps) {
 
   if (sections.length === 0) {
     return (
-      <div className="text-xs text-warm-400 italic p-2">
+      <div className="text-xs text-warm-500 italic p-2">
         {description}
       </div>
     );
@@ -82,12 +82,12 @@ function WireframeBlock({ section }: { section: WireframeSection }) {
     <div
       className={`border border-dashed border-warm-300 rounded bg-white flex flex-col items-center justify-center gap-0.5 px-2 py-1 ${styleClass}`}
     >
-      <span className="text-[10px] font-semibold text-warm-400 uppercase tracking-wider">
+      <span className="text-xs font-semibold text-warm-500 uppercase tracking-wider">
         {section.label}
       </span>
       {section.content && (
         <span className={`text-warm-500 text-center leading-tight ${
-          isContent ? "text-[10px]" : "text-[9px]"
+          isContent ? "text-xs" : "text-[11px]"
         } ${isNav ? "max-w-[200px]" : ""}`}>
           {section.content.length > 60
             ? section.content.slice(0, 60) + "..."

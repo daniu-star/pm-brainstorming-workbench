@@ -34,7 +34,7 @@ export function RoleSelector() {
               />
             </span>
             <span
-              className="text-[10px] leading-none"
+              className="text-[11px] leading-none"
               style={{ color: targetRole === role.id ? role.color : undefined }}
             >
               {role.name}
@@ -44,7 +44,7 @@ export function RoleSelector() {
         <button
           onClick={() => setTargetRole("all")}
           disabled={isStreaming}
-          className="flex flex-col items-center gap-1 shrink-0 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:ring-offset-1 focus:ring-offset-white"
+          className="flex flex-col items-center gap-1 shrink-0 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:ring-offset-1 focus:ring-offset-white min-h-[44px]"
           aria-label="让所有角色一起讨论"
         >
           <span
@@ -61,7 +61,7 @@ export function RoleSelector() {
             <CrosshairIcon size={14} className="text-white" />
           </span>
           <span
-            className={`text-[10px] leading-none ${targetRole === "all" ? "text-amber-600" : "text-warm-500"}`}
+            className={`text-[11px] leading-none ${targetRole === "all" ? "text-amber-600 font-semibold" : "text-warm-500"}`}
           >
             全部 @
           </span>

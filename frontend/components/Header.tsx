@@ -43,7 +43,7 @@ export function Header() {
 
   return (
     <>
-      <header className="h-12 bg-white/90 backdrop-blur border-b border-warm-200 shadow-sm flex items-center justify-between px-4 shrink-0">
+      <header className="h-14 bg-white/90 backdrop-blur border-b border-warm-200 shadow-sm flex items-center justify-between px-4 shrink-0">
         <div className="flex items-center gap-4">
           <Link
             href="/"
@@ -51,10 +51,10 @@ export function Header() {
             className="text-amber-600 hover:text-amber-700 active:text-amber-800 font-bold text-sm transition-all duration-200 flex items-center gap-2 focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none rounded"
           >
             <BrainIcon size={20} className="text-amber-600" />
-            产品脑暴工作台
+            PM Brainstorm
           </Link>
-          <span className="text-warm-300">|</span>
-          <span className={`text-xs font-medium ${phaseInfo.color}`}>{phaseInfo.label}</span>
+          <span className="border-l border-warm-200 h-4" />
+          <span className={`text-sm font-semibold px-2 py-0.5 rounded-full ${phase === 'interview' ? 'bg-red-50 text-red-600' : phase === 'coach' ? 'bg-amber-50 text-amber-600' : 'bg-amber-50 text-amber-700'}`}>{phaseInfo.label}</span>
         </div>
 
         <div className="flex items-center gap-3">

@@ -31,7 +31,7 @@ export function TimelineNodeCard({ node }: Props) {
 
   return (
     <div
-      className="w-[260px] rounded-xl bg-white shadow-sm bg-gradient-to-r hover:-translate-y-0.5 hover:shadow-lg active:scale-[0.98] transition-all duration-200 relative overflow-hidden cursor-default"
+      className="max-w-[280px] w-full rounded-xl bg-white shadow-sm bg-gradient-to-r hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98] transition-all duration-200 relative overflow-hidden cursor-default"
       style={{
         backgroundImage: undefined,
       }}
@@ -56,12 +56,12 @@ export function TimelineNodeCard({ node }: Props) {
                   src={getRoleAvatar(role)}
                   alt={roleInfo?.name || role}
                   className="w-5 h-5 rounded-full border border-warm-200"
-                  style={{ borderColor: roleInfo?.color || "#52525b" }}
+                  style={{ borderColor: roleInfo?.color || "#8b6f47" }}
                 />
               );
             })}
             {node.roles?.length > 4 && (
-              <span className="w-5 h-5 rounded-full bg-warm-100 text-[9px] text-warm-500 flex items-center justify-center border border-warm-200">
+              <span className="w-5 h-5 rounded-full bg-warm-100 text-[11px] text-warm-500 flex items-center justify-center border border-warm-200">
                 +{node.roles.length - 4}
               </span>
             )}
@@ -80,7 +80,7 @@ export function TimelineNodeCard({ node }: Props) {
                 <div key={i} className="flex items-start gap-1.5">
                   <span
                     className="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0"
-                    style={{ backgroundColor: roleInfo?.color || "#6b7280" }}
+                    style={{ backgroundColor: roleInfo?.color || "#8b6f47" }}
                   />
                   <span className="text-xs text-warm-500 leading-snug">
                     {pos.stance}

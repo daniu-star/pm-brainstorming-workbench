@@ -36,12 +36,12 @@ export function ChatPanel() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="h-11 bg-white border-b border-warm-200 flex items-center px-4 shrink-0 relative">
+      <div className="h-12 bg-white border-b border-warm-200 flex items-center px-4 shrink-0 relative">
         <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${accentColor}`} />
         <span className="text-sm font-semibold text-warm-600 pl-1">
           {phase === "interview" ? "AI 面试官" : phase === "coach" ? "产品教练 · 思路梳理" : "产品脑暴群聊"}
         </span>
-        <span className="ml-auto bg-warm-100 text-warm-500 text-[10px] rounded-full px-2 py-0.5">
+        <span className="ml-auto bg-warm-100 text-warm-500 text-xs rounded-full px-2 py-0.5">
           {messages.length} 条消息
         </span>
         <button

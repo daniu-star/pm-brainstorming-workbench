@@ -3,20 +3,8 @@
 import { useState, useEffect } from "react";
 import { useSessionStore } from "@/store/sessionStore";
 import { api } from "@/lib/api";
-
-const PROVIDERS = [
-  { id: "", name: "自动检测", baseUrl: "", model: "" },
-  { id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-v4-flash" },
-  { id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt-4o" },
-  { id: "moonshot", name: "Moonshot (月之暗面)", baseUrl: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k" },
-  { id: "qwen", name: "通义千问 (Qwen)", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-turbo" },
-  { id: "glm", name: "智谱 (GLM)", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4" },
-  { id: "yi", name: "零一万物 (Yi)", baseUrl: "https://api.lingyiwanwu.com/v1", model: "yi-lightning" },
-  { id: "doubao", name: "豆包 (Doubao)", baseUrl: "https://ark.cn-beijing.volces.com/api/v3", model: "doubao-pro-4k" },
-  { id: "hunyuan", name: "混元 (Hunyuan)", baseUrl: "https://api.hunyuan.cloud.tencent.com/v1", model: "hunyuan-lite" },
-  { id: "minimax", name: "MiniMax", baseUrl: "https://api.minimax.chat/v1", model: "minimax-chat" },
-  { id: "custom", name: "自定义", baseUrl: "", model: "" },
-];
+import { PROVIDERS } from "@/lib/constants";
+import { CloseIcon } from "@/components/icons";
 
 export function SettingsModal() {
   const isOpen = useSessionStore((s) => s.isSettingsOpen);
@@ -46,6 +34,15 @@ export function SettingsModal() {
       setTestError(null);
     }
   }, [isOpen, userApiKey, userBaseUrl, userModel]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSettingsOpen(false);
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [isOpen, setSettingsOpen]);
 
   if (!isOpen) return null;
 
@@ -118,7 +115,7 @@ export function SettingsModal() {
               aria-label="关闭设置"
               className="text-warm-500 hover:text-warm-600 active:text-warm-700 transition-all duration-200 min-h-[44px] min-w-[44px] flex items-center justify-center focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none rounded"
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+              <CloseIcon size={16} />
             </button>
           </div>
 
@@ -182,7 +179,7 @@ export function SettingsModal() {
           )}
           {testResult === "fail" && (
             <div className="mt-3 text-sm text-red-600">
-              <div>✗ 连接失败</div>
+              <div><span aria-hidden="true">✗</span> 连接失败</div>
               {testError && <div className="text-xs text-red-500/70 mt-1">{testError}</div>}
             </div>
           )}

@@ -86,12 +86,12 @@ export const TYPE_CONFIG: Record<string, { label: string; color: string; bg: str
   feature:  { label: "功能", color: "#22c55e", bg: "#22c55e18" },
   risk:     { label: "风险", color: "#ef4444", bg: "#ef444418" },
   question: { label: "问题", color: "#f59e0b", bg: "#f59e0b18" },
-  insight:  { label: "洞察", color: "#6366f1", bg: "#6366f118" },
+  insight:  { label: "洞察", color: "#f59e0b", bg: "#f59e0b18" },
   // Chinese aliases
   "功能": { label: "功能", color: "#22c55e", bg: "#22c55e18" },
   "风险": { label: "风险", color: "#ef4444", bg: "#ef444418" },
   "问题": { label: "问题", color: "#f59e0b", bg: "#f59e0b18" },
-  "洞察": { label: "洞察", color: "#6366f1", bg: "#6366f118" },
+  "洞察": { label: "洞察", color: "#f59e0b", bg: "#f59e0b18" },
 };
 
 export interface ProductPortrait {
@@ -108,5 +108,5 @@ export interface ProductPortrait {
 export const TIMELINE_NODE_CONFIG: Record<string, { label: string; color: string; bg: string; icon: string }> = {
   consensus:     { label: "共识", color: "#22c55e", bg: "#22c55e18", icon: "✓" },
   disagreement:  { label: "分歧", color: "#ef4444", bg: "#ef444418", icon: "✗" },
-  summary:       { label: "总结", color: "#6366f1", bg: "#6366f118", icon: "◆" },
+  summary:       { label: "总结", color: "#f59e0b", bg: "#f59e0b18", icon: "◆" },
 };

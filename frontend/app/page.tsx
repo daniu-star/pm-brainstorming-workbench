@@ -21,9 +21,9 @@ const PROMPT_TEMPLATES = [
 const ROLES_DATA = [
   {
     name: "CTO",
-    color: "#d97706",
-    bg: "#fffbeb",
-    border: "#fde68a",
+    color: "#3b82f6",
+    bg: "#eff6ff",
+    border: "#bfdbfe",
     desc: "技术可行性",
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -33,7 +33,7 @@ const ROLES_DATA = [
   },
   {
     name: "设计师",
-    color: "#9333ea",
+    color: "#a855f7",
     bg: "#faf5ff",
     border: "#e9d5ff",
     desc: "用户体验",
@@ -46,7 +46,7 @@ const ROLES_DATA = [
   },
   {
     name: "运营",
-    color: "#16a34a",
+    color: "#22c55e",
     bg: "#f0fdf4",
     border: "#bbf7d0",
     desc: "增长策略",
@@ -58,9 +58,9 @@ const ROLES_DATA = [
   },
   {
     name: "用户",
-    color: "#2563eb",
-    bg: "#eff6ff",
-    border: "#bfdbfe",
+    color: "#f97316",
+    bg: "#fff7ed",
+    border: "#fed7aa",
     desc: "真实需求",
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -135,7 +135,7 @@ export default function LandingPage() {
       <div className="landing-dots" />
 
       <nav
-        className={`fixed top-0 left-0 right-0 h-14 bg-white border-b border-amber-200 flex items-center justify-between px-6 z-30 transition-all duration-700 ${mounted ? "opacity-100" : "opacity-0"}`}
+        className={`fixed top-0 left-0 right-0 h-14 bg-warm-50/80 backdrop-blur border-b border-warm-200 flex items-center justify-between px-6 z-30 transition-all duration-500 ${mounted ? "opacity-100" : "opacity-0"}`}
       >
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-400 via-orange-500 to-rose-500 flex items-center justify-center shadow-md shadow-orange-200">
@@ -146,7 +146,7 @@ export default function LandingPage() {
           </div>
           <div>
             <span className="text-sm font-bold text-amber-900 tracking-wide">PM Brainstorm</span>
-            <span className="text-[10px] text-amber-700 ml-2 font-bold">Workbench</span>
+            <span className="text-xs text-amber-700 ml-2 font-bold">Workbench</span>
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -203,10 +203,10 @@ export default function LandingPage() {
         </div>
       )}
 
-      <div className="flex flex-col items-center justify-center px-5 min-h-screen relative z-10 pt-14">
+      <div id="main-content" className="flex flex-col items-center justify-center px-5 min-h-screen relative z-10 pt-14">
         <div className="max-w-lg w-full text-center">
 
-          <div className={`mb-8 transition-all duration-700 delay-100 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-5"}`}>
+          <div className={`mb-8 transition-all duration-500 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-5"}`}>
             <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white border border-amber-200 shadow-sm mb-6">
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
@@ -215,12 +215,12 @@ export default function LandingPage() {
               <span className="text-[11px] text-amber-800 font-bold tracking-wide">AI 驱动的产品脑暴工作台</span>
             </div>
 
-            <h1 className="text-4xl md:text-5xl font-extrabold leading-[1.1] tracking-tight mb-3">
+            <h1 className="text-4xl md:text-5xl font-extrabold leading-[1.25] tracking-tight mb-3">
               <span className="bg-gradient-to-r from-amber-600 via-orange-500 to-rose-500 bg-clip-text text-transparent">
                 PM Brainstorm
               </span>
               <br />
-              <span className="text-amber-900 text-2xl md:text-3xl font-semibold tracking-wide">Workbench</span>
+              <span className="text-amber-900 text-xl md:text-2xl font-semibold tracking-wide">Workbench</span>
             </h1>
 
             <p className="text-amber-900 text-sm md:text-[15px] leading-relaxed max-w-sm mx-auto font-medium">
@@ -230,8 +230,8 @@ export default function LandingPage() {
             </p>
           </div>
 
-          <div className={`mb-6 transition-all duration-700 delay-200 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-5"}`}>
-            <div className="flex justify-center gap-3">
+          <div className={`mb-6 transition-all duration-500 delay-100 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-5"}`}>
+            <div className="flex justify-center gap-3" role="group" aria-label="AI 专家角色">
               {ROLES_DATA.map((role) => (
                 <div key={role.name} className="flex flex-col items-center gap-1.5 group cursor-default">
                   <div
@@ -250,9 +250,9 @@ export default function LandingPage() {
             </div>
           </div>
 
-          <div className={`transition-all duration-700 delay-300 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-5"}`}>
-            <div className="bg-white border border-amber-200 rounded-2xl p-5 shadow-lg shadow-amber-100">
-              <label className="block text-xs text-amber-900 mb-3 text-left font-bold tracking-wide uppercase">
+          <div className={`transition-all duration-500 delay-100 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-5"}`}>
+            <div className="bg-white border border-warm-200 rounded-2xl p-5 shadow-md">
+              <label className="block text-xs text-amber-900 mb-3 text-left font-semibold">
                 你想探索什么产品方向？
               </label>
               <textarea
@@ -276,8 +276,8 @@ export default function LandingPage() {
                   {PROMPT_TEMPLATES.map((tpl) => (
                     <button
                       key={tpl}
-                      onMouseDown={(e) => { e.preventDefault(); setProblem(tpl); }}
-                      className="text-[10px] text-amber-800 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg px-2.5 py-1.5 transition-colors text-left leading-snug font-medium"
+                      onClick={() => setProblem(tpl)}
+                      className="text-xs text-amber-800 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg px-2.5 py-1.5 transition-colors text-left leading-snug font-medium"
                     >
                       {tpl}
                     </button>
@@ -293,7 +293,7 @@ export default function LandingPage() {
                 onClick={handleCreate}
                 disabled={!problem.trim() || isCreating}
                 aria-label="开始脑暴"
-                className="mt-4 w-full h-11 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 active:from-amber-700 active:to-orange-700 disabled:from-amber-200 disabled:to-orange-200 disabled:text-amber-400 text-white font-semibold rounded-xl transition-all duration-200 flex items-center justify-center gap-2 text-sm shadow-md shadow-amber-200 disabled:shadow-none"
+                className="mt-4 w-full h-11 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 disabled:bg-warm-300 disabled:text-warm-400 text-white font-semibold rounded-xl transition-colors duration-200 flex items-center justify-center gap-2 text-sm shadow-md disabled:shadow-none"
               >
                 {isCreating ? (
                   <>
@@ -310,8 +310,8 @@ export default function LandingPage() {
             </div>
           </div>
 
-          <div className={`mt-8 transition-all duration-700 delay-[400ms] ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-5"}`}>
-            <div className="grid grid-cols-3 gap-3">
+          <div className={`mt-8 transition-all duration-500 delay-200 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-5"}`}>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {[
                 { label: "多角色圆桌", sub: "4位专家讨论", bg: "bg-amber-50", border: "border-amber-200", dot: "bg-amber-400", text: "text-amber-900" },
                 { label: "可视化画布", sub: "功能树提取", bg: "bg-purple-50", border: "border-purple-200", dot: "bg-purple-400", text: "text-purple-900" },
@@ -323,13 +323,13 @@ export default function LandingPage() {
                 >
                   <div className={`w-2 h-2 rounded-full ${f.dot} mx-auto mb-2`} />
                   <div className={`text-xs font-bold ${f.text}`}>{f.label}</div>
-                  <div className="text-[10px] text-gray-600 mt-0.5 font-medium">{f.sub}</div>
+                  <div className="text-xs text-warm-500 mt-0.5 font-medium">{f.sub}</div>
                 </div>
               ))}
             </div>
           </div>
 
-          <div className={`mt-10 text-[10px] text-amber-500 font-medium transition-all duration-700 delay-[500ms] ${mounted ? "opacity-100" : "opacity-0"}`}>
+          <div className={`mt-10 text-xs text-warm-500 font-medium transition-all duration-500 delay-200 ${mounted ? "opacity-100" : "opacity-0"}`}>
             Powered by AI · OpenAI Compatible · BYOK Supported
           </div>
         </div>

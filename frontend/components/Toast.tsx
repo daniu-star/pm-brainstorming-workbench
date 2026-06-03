@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { CloseIcon } from "@/components/icons";
 
 type ToastType = "success" | "error" | "warning" | "info";
 
@@ -106,12 +107,10 @@ export function ToastContainer() {
             <span className="text-sm text-warm-600 flex-1 leading-relaxed">{t.message}</span>
             <button
               onClick={() => removeToast(t.id)}
-              className="shrink-0 text-warm-500 hover:text-warm-600 transition-colors min-h-[28px] min-w-[28px] flex items-center justify-center"
+              className="shrink-0 text-warm-500 hover:text-warm-600 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
               aria-label="关闭通知"
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M18 6L6 18M6 6l12 12" />
-              </svg>
+              <CloseIcon size={14} />
             </button>
           </div>
         );

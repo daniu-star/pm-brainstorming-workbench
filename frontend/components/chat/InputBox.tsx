@@ -154,7 +154,7 @@ export function InputBox() {
                   ? "回答产品教练的问题"
                   : "输入你的想法或追问"
             }
-            className="w-full bg-warm-50 border border-warm-200 rounded-2xl px-4 py-2.5 text-sm text-warm-600 placeholder-warm-400 resize-none focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30 transition-all" style={{ boxShadow: "inset 0 1px 3px rgba(139,111,71,0.06)" }}
+            className="w-full bg-warm-50 border border-warm-200 rounded-2xl px-4 py-2.5 text-sm text-warm-600 placeholder-warm-400 resize-none focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30 transition-all input-inner-shadow"
             onKeyDown={(e) => {
               if (e.key === "Enter" && (!e.shiftKey || e.ctrlKey || e.metaKey)) {
                 e.preventDefault();
@@ -171,31 +171,31 @@ export function InputBox() {
             title="点击语音输入"
             className={`w-10 h-10 min-w-[44px] min-h-[44px] rounded-full transition-all duration-200 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:ring-offset-2 focus:ring-offset-white ${
               status === "recording"
-                ? "mic-ripple bg-red-600 hover:bg-red-500 active:bg-red-700 text-white shadow-lg shadow-red-200"
+                ? "mic-ripple bg-red-600 hover:bg-red-500 active:bg-red-700 text-white shadow-md shadow-red-200"
                 : status === "transcribing"
-                  ? "bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-white animate-pulse shadow-lg shadow-amber-200"
+                  ? "bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-white animate-pulse shadow-md shadow-amber-200"
                   : status === "success"
-                    ? "bg-emerald-500 text-white shadow-lg shadow-emerald-200"
+                    ? "bg-emerald-500 text-white shadow-md shadow-emerald-200"
                     : "mic-pulse bg-amber-100 hover:bg-amber-200 active:bg-amber-300 text-amber-600 hover:text-amber-700 disabled:text-amber-400 shadow-sm shadow-amber-100"
             }`}
           >
             <MicIcon size={20} />
           </button>
           {status === "recording" && (
-            <span className="text-[10px] text-red-600 mt-0.5 whitespace-nowrap">正在聆听...</span>
+            <span className="text-[11px] text-red-600 mt-0.5 whitespace-nowrap">正在聆听...</span>
           )}
           {status === "transcribing" && (
-            <span className="text-[10px] text-amber-600 mt-0.5 whitespace-nowrap">正在识别...</span>
+            <span className="text-[11px] text-amber-600 mt-0.5 whitespace-nowrap">正在识别...</span>
           )}
           {status === "success" && (
-            <span className="text-[10px] text-emerald-600 mt-0.5 whitespace-nowrap">识别成功</span>
+            <span className="text-[11px] text-emerald-600 mt-0.5 whitespace-nowrap">识别成功</span>
           )}
         </div>
         <button
           onClick={handleSend}
           disabled={!input.trim() || isStreaming}
           aria-label="发送消息"
-          className="shrink-0 w-10 h-10 min-w-[44px] min-h-[44px] bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 active:from-amber-700 active:to-orange-700 disabled:from-warm-300 disabled:to-warm-300 disabled:text-warm-400 text-white rounded-full transition-all duration-200 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:ring-offset-2 focus:ring-offset-white"
+          className="shrink-0 w-10 h-10 min-w-[44px] min-h-[44px] bg-amber-600 hover:bg-amber-700 active:bg-amber-800 disabled:bg-warm-300 disabled:text-warm-400 text-white rounded-full transition-colors duration-200 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:ring-offset-2 focus:ring-offset-white"
         >
           <SendIcon size={18} />
         </button>

@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useSessionStore } from "@/store/sessionStore";
 import { api } from "@/lib/api";
 import { toast } from "@/components/Toast";
-import { WalletIcon } from "@/components/icons";
+import { WalletIcon, CloseIcon, SpinnerIcon } from "@/components/icons";
 
 type TierKey = "standard" | "professional" | "flagship";
 
@@ -85,7 +85,7 @@ const STATUS_LABEL: Record<RechargeResult["status"], string> = {
 
 const STATUS_STYLE: Record<RechargeResult["status"], string> = {
   pending: "text-amber-600 bg-amber-50 border-amber-200",
-  pending_review: "text-blue-600 bg-blue-50 border-blue-200",
+  pending_review: "text-amber-600 bg-amber-50 border-amber-200",
   approved: "text-emerald-600 bg-emerald-50 border-emerald-200",
   rejected: "text-red-600 bg-red-50 border-red-200",
   cancelled: "text-warm-400 bg-warm-50 border-warm-200",
@@ -148,6 +148,15 @@ export function RechargeModal() {
       resetState();
     }
   }, [isOpen, resetState]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setRechargeOpen(false);
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [isOpen, setRechargeOpen]);
 
   useEffect(() => {
     return cleanup;
@@ -319,7 +328,7 @@ export function RechargeModal() {
               aria-label="关闭充值"
               className="text-warm-500 hover:text-warm-600 active:text-warm-700 transition-all duration-200 min-h-[44px] min-w-[44px] flex items-center justify-center focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none rounded"
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+              <CloseIcon size={16} />
             </button>
           </div>
 
@@ -364,17 +373,14 @@ export function RechargeModal() {
           </div>
 
           <div className="flex items-center justify-center gap-4 mb-6 text-xs">
-            <span className={step >= 1 ? "text-amber-600 font-medium" : "text-warm-400"}>选择套餐</span>
-            <span className={step >= 2 ? "text-amber-600 font-medium" : "text-warm-400"}>扫码付款</span>
-            <span className={step >= 3 ? "text-amber-600 font-medium" : "text-warm-400"}>等待确认</span>
+            <span className={step >= 1 ? "text-amber-600 font-medium" : "text-warm-500"}>选择套餐</span>
+            <span className={step >= 2 ? "text-amber-600 font-medium" : "text-warm-500"}>扫码付款</span>
+            <span className={step >= 3 ? "text-amber-600 font-medium" : "text-warm-500"}>等待确认</span>
           </div>
 
           {restoring ? (
-            <div className="flex items-center justify-center py-12 text-sm text-warm-400">
-              <svg className="animate-spin w-5 h-5 mr-2 text-amber-500" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
+            <div className="flex items-center justify-center py-12 text-sm text-warm-500">
+              <SpinnerIcon size={20} className="text-amber-500 mr-2" />
               恢复充值状态...
             </div>
           ) : (
@@ -385,6 +391,9 @@ export function RechargeModal() {
                     <div
                       key={tier.tierKey}
                       onClick={() => setSelectedTier(tier.tierKey)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedTier(tier.tierKey); } }}
                       className={`relative p-4 rounded-xl border transition-all duration-200 cursor-pointer ${
                         selectedTier === tier.tierKey
                           ? "bg-amber-50 border-amber-400 shadow-md scale-[1.02]"
@@ -394,7 +403,7 @@ export function RechargeModal() {
                       }`}
                     >
                       {tier.badge && (
-                        <div className="absolute -top-2.5 right-4 px-2.5 py-0.5 bg-gradient-to-r from-amber-500 to-orange-500 text-white text-xs font-semibold rounded-full">
+                        <div className="absolute -top-2.5 right-4 px-2.5 py-0.5 btn-gradient text-xs font-semibold rounded-full">
                           {tier.badge}
                         </div>
                       )}
@@ -421,7 +430,7 @@ export function RechargeModal() {
                           handleSubmit(tier.tierKey);
                         }}
                         disabled={submitting}
-                        className="mt-3 w-full py-2 text-xs font-medium rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:from-amber-600 hover:to-orange-600 active:from-amber-700 active:to-orange-700 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none"
+                        className="mt-3 w-full py-2 text-xs btn-gradient disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none"
                       >
                         {submitting ? "提交中..." : "选择此套餐"}
                       </button>
@@ -476,7 +485,7 @@ export function RechargeModal() {
                       <button
                         onClick={handlePaid}
                         disabled={confirming}
-                        className="w-full py-2.5 text-sm font-medium rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:from-amber-600 hover:to-orange-600 active:from-amber-700 active:to-orange-700 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none"
+                        className="w-full py-2.5 text-sm btn-gradient disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none"
                       >
                         {confirming ? "确认中..." : "我已付款"}
                       </button>
@@ -507,16 +516,10 @@ export function RechargeModal() {
                         <div className="text-sm text-warm-600 font-medium mb-2">充值状态</div>
                         <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-medium ${STATUS_STYLE[rechargeResult.status]}`}>
                           {rechargeResult.status === "pending" && (
-                            <svg className="animate-spin w-4 h-4 text-amber-500" viewBox="0 0 24 24" fill="none">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                            </svg>
+                            <SpinnerIcon size={16} className="text-amber-500" />
                           )}
                           {rechargeResult.status === "pending_review" && (
-                            <svg className="animate-spin w-4 h-4 text-blue-500" viewBox="0 0 24 24" fill="none">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                            </svg>
+                            <SpinnerIcon size={16} className="text-blue-500" />
                           )}
                           {rechargeResult.status === "approved" && (
                             <svg className="w-4 h-4 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -582,17 +585,14 @@ export function RechargeModal() {
 
                       {rechargeResult.status === "pending_review" && (
                         <div className="space-y-2">
-                          <div className="p-2.5 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-600 flex items-center gap-2">
-                            <svg className="animate-spin w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                            </svg>
+                          <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-600 flex items-center gap-2">
+                            <SpinnerIcon size={16} className="text-amber-500" />
                             等待审核中...
                           </div>
                           <button
                             onClick={checkStatus}
                             disabled={checking}
-                            className="px-4 py-2 text-xs font-medium rounded-lg bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 active:bg-blue-200 transition-all duration-200 disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-blue-500/50 focus-visible:outline-none"
+                            className="px-4 py-2 text-xs font-medium rounded-lg bg-amber-50 text-amber-600 border border-amber-200 hover:bg-amber-100 active:bg-amber-200 transition-all duration-200 disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none"
                           >
                             {checking ? "查询中..." : "查询审核状态"}
                           </button>
@@ -612,7 +612,7 @@ export function RechargeModal() {
                           </div>
                           <button
                             onClick={handleNewRecharge}
-                            className="px-4 py-2 text-xs font-medium rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:from-amber-600 hover:to-orange-600 active:from-amber-700 active:to-orange-700 transition-all duration-200 focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none"
+                            className="px-4 py-2 text-xs btn-gradient focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none"
                           >
                             重新充值
                           </button>
@@ -626,7 +626,7 @@ export function RechargeModal() {
                           </div>
                           <button
                             onClick={handleNewRecharge}
-                            className="px-4 py-2 text-xs font-medium rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:from-amber-600 hover:to-orange-600 active:from-amber-700 active:to-orange-700 transition-all duration-200 focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none"
+                            className="px-4 py-2 text-xs btn-gradient focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none"
                           >
                             重新充值
                           </button>

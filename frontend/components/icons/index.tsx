@@ -138,6 +138,23 @@ export function GearIcon({ size = 24, className, ...props }: IconProps) {
   );
 }
 
+export function CloseIcon({ size = 24, className, ...props }: IconProps) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M18 6L6 18M6 6l12 12" />
+    </svg>
+  );
+}
+
+export function SpinnerIcon({ size = 24, className, ...props }: IconProps) {
+  return (
+    <svg className={`animate-spin ${className ?? ""}`} width={size} height={size} viewBox="0 0 24 24" fill="none" {...props}>
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+    </svg>
+  );
+}
+
 const ROLE_NAME_TO_FILENAME: Record<string, string> = {
   "产品教练": "coach",
   "AI面试官": "interviewer-business",

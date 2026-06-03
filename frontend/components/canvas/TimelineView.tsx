@@ -30,8 +30,8 @@ export function TimelineView({ map }: Props) {
 
         <div className="relative z-10">
           {timeline.map((node, i) => {
-            const isLeft = i % 2 === 0;
             const config = TIMELINE_NODE_CONFIG[node.type] || TIMELINE_NODE_CONFIG.consensus;
+            const isLeft = i % 2 === 0;
 
             return (
               <div
@@ -39,12 +39,27 @@ export function TimelineView({ map }: Props) {
                 className="timeline-node-enter flex items-start mb-6"
                 style={{ animationDelay: `${i * 100}ms` }}
               >
+                {/* Mobile: always left-aligned */}
+                <div className="md:hidden w-full pl-8 flex">
+                  <span
+                    className="timeline-dot"
+                    style={{
+                      borderColor: config.color,
+                      backgroundColor: `${config.color}30`,
+                      top: 14,
+                      left: 20,
+                    }}
+                  />
+                  <TimelineNodeCard node={node} />
+                </div>
+
+                {/* Desktop: alternating layout */}
                 {isLeft ? (
                   <>
-                    <div className="w-1/2 pr-6 flex justify-end">
+                    <div className="hidden md:block md:w-1/2 md:pr-6 md:flex md:justify-end">
                       <TimelineNodeCard node={node} />
                     </div>
-                    <div className="relative flex-shrink-0" style={{ width: 12 }}>
+                    <div className="hidden md:block relative flex-shrink-0" style={{ width: 12 }}>
                       <span
                         className="timeline-dot"
                         style={{
@@ -54,12 +69,12 @@ export function TimelineView({ map }: Props) {
                         }}
                       />
                     </div>
-                    <div className="w-1/2 pl-6" />
+                    <div className="hidden md:block md:w-1/2 md:pl-6" />
                   </>
                 ) : (
                   <>
-                    <div className="w-1/2 pr-6" />
-                    <div className="relative flex-shrink-0" style={{ width: 12 }}>
+                    <div className="hidden md:block md:w-1/2 md:pr-6" />
+                    <div className="hidden md:block relative flex-shrink-0" style={{ width: 12 }}>
                       <span
                         className="timeline-dot"
                         style={{
@@ -69,7 +84,7 @@ export function TimelineView({ map }: Props) {
                         }}
                       />
                     </div>
-                    <div className="w-1/2 pl-6 flex justify-start">
+                    <div className="hidden md:block md:w-1/2 md:pl-6 md:flex md:justify-start">
                       <TimelineNodeCard node={node} />
                     </div>
                   </>

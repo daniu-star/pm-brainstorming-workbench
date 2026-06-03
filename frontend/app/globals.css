@@ -10,6 +10,9 @@
   --color-warm-400: #b8a898;
   --color-warm-500: #8b6f47;
   --color-warm-600: #6b5535;
+  --color-warm-700: #4a3a24;
+  --color-warm-800: #2c2418;
+  --color-warm-900: #1a150e;
 
   --bg-primary: var(--color-warm-50);
   --bg-secondary: #ffffff;
@@ -20,7 +23,7 @@
   --border-color: var(--color-warm-200);
   --border-subtle: var(--color-warm-100);
 
-  --color-primary: #e07a2f;
+  --color-primary: #d97706;
   --color-primary-hover: #d4622b;
   --color-primary-light: #f5a623;
   --color-success: #6b8f5e;
@@ -42,18 +45,20 @@
 @font-face {
   font-family: "Inter";
   font-style: normal;
-  font-weight: 400 700;
+  font-weight: 100 900;
   font-display: swap;
-  src: local("Inter"), local("Inter Variable");
+  src: url("https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuLyfAZ9hiA.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
 body {
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-family: "PingFang SC", "Microsoft YaHei", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: "Inter", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-variant-numeric: tabular-nums;
 }
 
 @layer base {
@@ -66,7 +71,7 @@ body {
 
 @layer components {
   .btn-primary {
-    @apply h-12 px-6 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 active:from-amber-700 active:to-orange-700 disabled:from-warm-300 disabled:to-warm-300 disabled:text-warm-400 text-white font-semibold rounded-xl transition-all duration-200 flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:ring-offset-2 focus:ring-white;
+    @apply h-12 px-6 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 disabled:bg-warm-300 disabled:text-warm-400 text-white font-semibold rounded-xl transition-colors duration-200 flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:ring-offset-2 focus:ring-white;
   }
 
   .btn-ghost {
@@ -75,6 +80,19 @@ body {
 
   .btn-danger {
     @apply h-11 px-4 text-sm text-red-500 hover:text-red-600 bg-red-50 hover:bg-red-100 active:bg-red-200 transition-all duration-200 rounded-lg min-h-[44px];
+  }
+
+  .btn-gradient {
+    @apply bg-gradient-to-r from-amber-500 to-orange-500 text-white font-medium rounded-lg transition-all duration-200;
+  }
+  .btn-gradient:hover {
+    @apply from-amber-600 to-orange-600;
+  }
+  .btn-gradient:active {
+    @apply from-amber-700 to-orange-700;
+  }
+  .btn-gradient:disabled {
+    @apply opacity-50 cursor-not-allowed;
   }
 
   .card {
@@ -145,7 +163,7 @@ body {
   50% { opacity: 0; }
 }
 .streaming-cursor::after {
-  content: "▊";
+  content: "▎";
   animation: blink 0.8s infinite;
 }
 
@@ -219,12 +237,19 @@ body {
 
 .timeline-axis {
   position: absolute;
-  left: 50%;
+  left: 20px;
   top: 0;
   bottom: 0;
   width: 2px;
   background: linear-gradient(to bottom, transparent, rgba(224, 122, 47, 0.25) 10%, rgba(224, 122, 47, 0.25) 90%, transparent);
-  transform: translateX(-50%);
+  transform: none;
+}
+
+@media (min-width: 768px) {
+  .timeline-axis {
+    left: 50%;
+    transform: translateX(-50%);
+  }
 }
 
 .timeline-dot {
@@ -265,12 +290,19 @@ body {
 
 .timeline-axis-dashed {
   position: absolute;
-  left: 50%;
+  left: 20px;
   top: 0;
   bottom: 0;
   width: 0;
-  border-left: 2px dashed rgba(224, 122, 47, 0.25);
-  transform: translateX(-50%);
+  border-left: 2px solid rgba(224, 122, 47, 0.2);
+  transform: none;
+}
+
+@media (min-width: 768px) {
+  .timeline-axis-dashed {
+    left: 50%;
+    transform: translateX(-50%);
+  }
 }
 
 .bubble-hover-lift {
@@ -308,7 +340,7 @@ body {
 }
 
 .chat-area-bg {
-  background-color: #faf8f5;
+  background-color: var(--color-warm-50);
   background-image:
     radial-gradient(ellipse at 50% 30%, rgba(255,255,255,0.6) 0%, transparent 70%);
 }
@@ -319,6 +351,20 @@ body {
 
 .input-inner-shadow {
   box-shadow: inset 0 1px 3px rgba(139, 111, 71, 0.06);
+}
+
+.bubble-user-bg {
+  background-color: #fffbeb;
+}
+
+.interviewer-avatar-ring {
+  border: 1.5px solid #ef4444;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.2);
+}
+
+.interviewer-bubble-bg {
+  background: radial-gradient(ellipse at 30% 30%, rgba(239, 68, 68, 0.08) 0%, transparent 60%),
+              linear-gradient(135deg, #fef2f2, rgba(254, 226, 226, 0.4));
 }
 
 .role-selected-ring {
@@ -358,4 +404,40 @@ body {
 @keyframes waveformBar {
   0%, 100% { height: 8px; opacity: 0.5; }
   50% { height: 28px; opacity: 1; }
+}
+
+.canvas-empty-glow {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 50%, rgba(224, 122, 47, 0.06) 0%, transparent 60%);
+  pointer-events: none;
+}
+
+.canvas-orbit {
+  animation: canvasOrbit 8s linear infinite;
+}
+
+@keyframes canvasOrbit {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Respect reduced motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .streaming-cursor::after {
+    animation: none;
+    opacity: 1;
+  }
+  .msg-enter {
+    animation: none;
+  }
+  .timeline-node-enter {
+    animation: none;
+  }
 }

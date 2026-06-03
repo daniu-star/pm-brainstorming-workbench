@@ -73,7 +73,7 @@ export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputP
 
   if (interviewMode === "text") {
     return (
-      <div className="px-4 py-3 border-t border-slate-200 bg-white">
+      <div className="px-4 py-3 border-t border-warm-200 bg-white">
         <div className="flex gap-2 items-end">
           <div className="flex-1 relative">
             <textarea
@@ -82,7 +82,7 @@ export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputP
               placeholder="回答面试官的问题..."
               rows={3}
               aria-label="回答面试官问题"
-              className="w-full bg-warm-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-700 placeholder-slate-400 resize-none focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30 transition-all"
+              className="w-full bg-warm-50 border border-warm-200 rounded-xl px-4 py-2.5 text-sm text-warm-700 placeholder-warm-400 resize-none focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30 transition-all"
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
@@ -95,7 +95,7 @@ export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputP
             onClick={handleTextSend}
             disabled={!input.trim() || isStreaming}
             aria-label="发送回答"
-            className="shrink-0 w-12 h-12 min-w-[48px] min-h-[48px] bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 active:from-amber-700 active:to-amber-800 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-xl transition-all duration-200 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:ring-offset-2 focus:ring-offset-white"
+            className="shrink-0 w-12 h-12 min-w-[48px] min-h-[48px] bg-amber-600 hover:bg-amber-700 active:bg-amber-800 disabled:bg-warm-200 disabled:text-warm-400 text-white rounded-xl transition-colors duration-200 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:ring-offset-2 focus:ring-offset-white"
           >
             <SendIcon size={18} />
           </button>
@@ -105,7 +105,7 @@ export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputP
   }
 
   return (
-    <div className="px-4 py-3 border-t border-slate-200 bg-white">
+    <div className="px-4 py-3 border-t border-warm-200 bg-white">
       <VoiceInputView
         isRecording={isRecording}
         isTranscribing={isTranscribing}
@@ -153,10 +153,10 @@ function VoiceInputView({
   if (!isSupported) {
     return (
       <div className="flex flex-col items-center gap-3 py-4">
-        <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center opacity-40">
+        <div className="w-16 h-16 rounded-full bg-warm-100 flex items-center justify-center opacity-40">
           <MicIcon size={28} />
         </div>
-        <p className="text-sm text-slate-500">您的浏览器不支持语音输入</p>
+        <p className="text-sm text-warm-500">您的浏览器不支持语音输入</p>
       </div>
     );
   }
@@ -168,14 +168,14 @@ function VoiceInputView({
           <button
             onClick={start}
             aria-label="开始录音"
-            className="w-16 h-16 min-w-[44px] min-h-[44px] rounded-full bg-slate-100 hover:bg-slate-200 active:bg-slate-200 text-slate-500 hover:text-slate-600 transition-all duration-200 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:ring-offset-2 focus:ring-offset-white"
+            className="w-16 h-16 min-w-[44px] min-h-[44px] rounded-full bg-warm-100 hover:bg-warm-200 active:bg-warm-200 text-warm-500 hover:text-warm-600 transition-all duration-200 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:ring-offset-2 focus:ring-offset-white"
           >
             <MicIcon size={28} />
           </button>
         </div>
         <div className="flex flex-col items-center gap-1.5">
-          <p className="text-sm text-slate-600">点击麦克风开始语音对话</p>
-          <p className="text-xs text-slate-500">语音识别将自动转为文字</p>
+          <p className="text-sm text-warm-600">点击麦克风开始语音对话</p>
+          <p className="text-xs text-warm-500">语音识别将自动转为文字</p>
         </div>
       </div>
     );
@@ -223,14 +223,14 @@ function VoiceInputView({
             <button onClick={start} className="px-3 py-1.5 bg-red-100 hover:bg-red-200 active:bg-red-300 rounded-lg text-xs text-red-700 transition-colors min-h-[44px]">
               重试
             </button>
-            <button onClick={reset} className="text-xs text-slate-500 hover:text-slate-700 transition-colors underline">
+            <button onClick={reset} className="text-xs text-warm-500 hover:text-warm-700 transition-colors underline">
               切换到文字模式
             </button>
           </div>
         </div>
       )}
       {transcript && status !== "error" && (
-        <div className="w-full bg-warm-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-700 min-h-[40px]">
+        <div className="w-full bg-warm-50 border border-warm-200 rounded-xl px-4 py-2.5 text-sm text-warm-700 min-h-[40px]">
           {transcript}
         </div>
       )}
@@ -248,7 +248,7 @@ function VoiceInputView({
                   ? "bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-white focus:ring-amber-500/50 animate-pulse"
                   : status === "success"
                     ? "bg-emerald-500 text-white focus:ring-emerald-500/50"
-                    : "mic-pulse bg-slate-100 hover:bg-slate-200 active:bg-slate-200 text-slate-500 hover:text-slate-600 focus:ring-amber-500/50"
+                    : "mic-pulse bg-warm-100 hover:bg-warm-200 active:bg-warm-200 text-warm-500 hover:text-warm-600 focus:ring-amber-500/50"
             }`}
           >
             <MicIcon size={28} />
@@ -260,7 +260,7 @@ function VoiceInputView({
             onClick={onSend}
             disabled={isStreaming}
             aria-label="发送语音转录"
-            className="w-12 h-12 min-w-[48px] min-h-[48px] bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 active:from-amber-700 active:to-amber-800 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-xl transition-all duration-200 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:ring-offset-2 focus:ring-offset-white"
+            className="w-12 h-12 min-w-[48px] min-h-[48px] bg-amber-600 hover:bg-amber-700 active:bg-amber-800 disabled:bg-warm-200 disabled:text-warm-400 text-white rounded-xl transition-colors duration-200 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:ring-offset-2 focus:ring-offset-white"
           >
             <SendIcon size={18} />
           </button>
@@ -314,32 +314,32 @@ function PhoneModeView({
   }, [isRecording, isTranscribing, errorMessage, isSupported, start]);
 
   return (
-    <div className="px-4 py-8 bg-gradient-to-b from-slate-800 to-slate-900 flex flex-col items-center gap-6">
+    <div className="px-4 py-8 bg-warm-50 flex flex-col items-center gap-6">
       <div className="flex flex-col items-center gap-2">
-        <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-slate-600 shadow-lg">
+        <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-red-300 shadow-md">
           <img
             src="/avatars/interviewer-business.svg"
             alt="AI 面试官"
             className="w-full h-full object-cover"
           />
         </div>
-        <span className="text-sm font-medium text-white">AI 压力面试官</span>
+        <span className="text-sm font-medium text-warm-800">AI 压力面试官</span>
       </div>
 
       <div className="h-8 flex items-center justify-center">
         {status === "recording" && (
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-            <span className="text-sm text-red-400">正在聆听...</span>
+            <span className="text-sm text-red-600">正在聆听...</span>
           </div>
         )}
         {status === "transcribing" && (
           <div className="flex items-center gap-2">
-            <svg className="animate-spin h-4 w-4 text-amber-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <svg className="animate-spin h-4 w-4 text-amber-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
-            <span className="text-sm text-amber-400">正在识别...</span>
+            <span className="text-sm text-amber-600">正在识别...</span>
           </div>
         )}
         {status === "success" && (
@@ -347,12 +347,12 @@ function PhoneModeView({
             <svg className="h-4 w-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
             </svg>
-            <span className="text-sm text-emerald-400">识别成功</span>
+            <span className="text-sm text-emerald-600">识别成功</span>
           </div>
         )}
         {status === "error" && !isRecording && (
           <div className="flex flex-col items-center gap-2">
-            <span className="text-xs text-red-400">{errorMessage}</span>
+            <span className="text-xs text-red-600">{errorMessage}</span>
             <button onClick={start} className="px-3 py-1 bg-red-600 hover:bg-red-500 active:bg-red-700 text-white rounded-full text-xs font-medium transition-all duration-200 min-h-[44px]">
               重试
             </button>
@@ -388,12 +388,12 @@ function PhoneModeView({
           aria-label={isRecording ? "停止录音" : "开始录音"}
           className={`relative w-20 h-20 rounded-full transition-all duration-200 flex items-center justify-center focus:outline-none ${
             status === "recording"
-              ? "bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-500/30"
+              ? "bg-red-600 hover:bg-red-500 text-white shadow-md shadow-red-500/30"
               : status === "transcribing"
-                ? "bg-amber-500 hover:bg-amber-400 text-white shadow-lg shadow-amber-500/30 animate-pulse"
+                ? "bg-amber-500 hover:bg-amber-400 text-white shadow-md shadow-amber-500/30 animate-pulse"
                 : status === "success"
-                  ? "bg-emerald-500 text-white shadow-lg shadow-emerald-500/30"
-                  : "bg-amber-500 hover:bg-amber-400 text-white shadow-lg shadow-amber-500/30"
+                  ? "bg-emerald-500 text-white shadow-md shadow-emerald-500/30"
+                  : "bg-amber-500 hover:bg-amber-400 text-white shadow-md shadow-amber-500/30"
           }`}
         >
           <MicIcon size={32} />
@@ -402,7 +402,7 @@ function PhoneModeView({
 
       <button
         onClick={onHangUp}
-        className="flex items-center gap-2 px-6 py-3 bg-red-600 hover:bg-red-500 active:bg-red-700 text-white rounded-full text-sm font-medium transition-all duration-200 shadow-lg shadow-red-600/30"
+        className="flex items-center gap-2 px-6 py-3 bg-red-600 hover:bg-red-500 active:bg-red-700 text-white rounded-full text-sm font-medium transition-all duration-200 shadow-md shadow-red-600/30"
         aria-label="挂断电话模式"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

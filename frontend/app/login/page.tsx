@@ -72,12 +72,9 @@ export default function LoginPage() {
   }, [phone, code, isLoggingIn, login, router]);
 
   return (
-    <div className="min-h-screen relative overflow-hidden bg-gradient-to-br from-orange-50 via-amber-50 to-rose-50 flex items-center justify-center px-4">
-      <div className="landing-blobs" />
-      <div className="landing-dots" />
-
-      <div className={`w-full max-w-sm relative z-10 transition-all duration-700 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-5"}`}>
-        <div className="bg-white border border-amber-200 rounded-2xl shadow-lg shadow-amber-100 overflow-hidden">
+    <div className="min-h-screen relative overflow-hidden bg-warm-50 flex items-center justify-center px-4">
+      <div className={`w-full max-w-md relative z-10 transition-all duration-700 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-5"}`}>
+        <div className="bg-white border border-amber-200 rounded-2xl shadow-md shadow-amber-100 overflow-hidden">
           <div className="px-6 pt-6 pb-4 text-center">
             <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-400 via-orange-500 to-rose-500 flex items-center justify-center shadow-md shadow-orange-200 mx-auto mb-3">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -98,18 +95,18 @@ export default function LoginPage() {
           <div className="p-6">
             <div className="space-y-4">
               <div>
-                <label className="block text-[11px] text-amber-900 mb-1.5 font-bold tracking-wide uppercase">手机号</label>
+                <label className="block text-xs text-amber-900 mb-1.5 font-semibold">手机号</label>
                 <input
                   type="tel"
                   value={phone}
                   onChange={(e) => { const v = e.target.value.replace(/\D/g, "").slice(0, 11); setPhone(v); }}
                   placeholder="请输入11位手机号"
                   maxLength={11}
-                  className="w-full bg-white border border-amber-200 rounded-xl px-4 py-2.5 text-sm text-gray-900 placeholder-amber-400 focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100 transition-all font-medium"
+                  className="w-full bg-white border border-amber-200 rounded-xl px-4 py-2.5 text-sm text-warm-800 placeholder-amber-400 focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-500/30 transition-all font-medium"
                 />
               </div>
               <div>
-                <label className="block text-[11px] text-amber-900 mb-1.5 font-bold tracking-wide uppercase">验证码</label>
+                <label className="block text-xs text-amber-900 mb-1.5 font-semibold">验证码</label>
                 <div className="flex gap-2">
                   <input
                     type="tel"
@@ -117,7 +114,7 @@ export default function LoginPage() {
                     onChange={(e) => { const v = e.target.value.replace(/\D/g, "").slice(0, 6); setCode(v); }}
                     placeholder="6位验证码"
                     maxLength={6}
-                    className="flex-1 bg-white border border-amber-200 rounded-xl px-4 py-2.5 text-sm text-gray-900 placeholder-amber-400 focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100 transition-all font-medium"
+                    className="flex-1 bg-white border border-amber-200 rounded-xl px-4 py-2.5 text-sm text-gray-900 placeholder-amber-400 focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-500/30 transition-all font-medium"
                   />
                   <button
                     onClick={handleSendCode}
@@ -135,10 +132,10 @@ export default function LoginPage() {
                 {smsStatus === "failed" && displayCode && (
                   <div className="mt-2 px-3 py-2 bg-amber-50 border border-amber-300 rounded-lg text-xs font-medium space-y-1">
                     <p className="text-amber-700">⚠️ 短信服务暂未配置，验证码已生成：</p>
-                    <p className="text-amber-900 text-base font-bold tracking-widest text-center py-1 bg-white rounded-md border border-amber-200">
+                    <p className="text-amber-900 text-2xl font-bold font-mono tracking-[0.3em] text-center py-1.5 bg-white rounded-md border border-amber-200">
                       {displayCode}
                     </p>
-                    <p className="text-amber-600 text-[10px]">请在上方输入框中填入此验证码完成登录</p>
+                    <p className="text-amber-600 text-xs">请在上方输入框中填入此验证码完成登录</p>
                   </div>
                 )}
                 {smsStatus === "failed" && !displayCode && (
@@ -150,7 +147,7 @@ export default function LoginPage() {
               <button
                 onClick={handlePhoneLogin}
                 disabled={phone.length !== 11 || code.length !== 6 || isLoggingIn}
-                className="w-full h-11 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 active:from-amber-700 active:to-orange-700 disabled:from-amber-200 disabled:to-orange-200 disabled:text-amber-400 text-white font-semibold rounded-xl transition-all duration-200 flex items-center justify-center gap-2 text-sm shadow-md shadow-amber-200 disabled:shadow-none"
+                className="w-full h-11 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 disabled:bg-warm-300 disabled:text-warm-400 text-white font-semibold rounded-xl transition-colors duration-200 flex items-center justify-center gap-2 text-sm shadow-md disabled:shadow-none"
               >
                 {isLoggingIn ? (
                   <>

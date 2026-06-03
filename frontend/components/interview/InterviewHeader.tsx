@@ -14,7 +14,7 @@ export function InterviewHeader({ phoneMode, onTogglePhoneMode }: InterviewHeade
   const { sessionId, interviewMode, setInterviewMode } = useSessionStore();
 
   return (
-    <header className="h-14 bg-gradient-to-r from-slate-900 to-slate-800 flex items-center justify-between px-4 shrink-0 shadow-lg">
+    <header className="h-14 bg-white/90 backdrop-blur border-b border-red-200 flex items-center justify-between px-4 shrink-0 shadow-md">
       <div className="flex items-center gap-3">
         <button
           onClick={() => {
@@ -24,7 +24,7 @@ export function InterviewHeader({ phoneMode, onTogglePhoneMode }: InterviewHeade
               router.push("/");
             }
           }}
-          className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg text-slate-400 hover:text-white hover:bg-slate-700/60 transition-all duration-200"
+          className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg text-warm-500 hover:text-warm-700 hover:bg-warm-100 transition-all duration-200"
           aria-label="返回主会话"
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -33,7 +33,7 @@ export function InterviewHeader({ phoneMode, onTogglePhoneMode }: InterviewHeade
         </button>
 
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-full overflow-hidden border border-slate-600">
+          <div className="w-8 h-8 rounded-full overflow-hidden border border-red-300">
             <img
               src="/avatars/interviewer-business.svg"
               alt="AI 面试官"
@@ -41,8 +41,8 @@ export function InterviewHeader({ phoneMode, onTogglePhoneMode }: InterviewHeade
             />
           </div>
           <div className="flex flex-col">
-            <span className="text-sm font-bold text-white leading-tight">AI 压力面试官</span>
-            <span className="flex items-center gap-1 text-[10px] text-red-400 leading-tight">
+            <span className="text-sm font-bold text-warm-800 leading-tight">AI 压力面试官</span>
+            <span className="flex items-center gap-1 text-[11px] text-red-400 leading-tight">
               <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
               面试进行中
             </span>
@@ -58,7 +58,7 @@ export function InterviewHeader({ phoneMode, onTogglePhoneMode }: InterviewHeade
           className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg transition-all duration-200 min-h-[44px] min-w-[44px] justify-center ${
             phoneMode
               ? "bg-red-600 text-white"
-              : "bg-slate-700/60 text-slate-300 hover:text-white hover:bg-slate-600/60"
+              : "bg-warm-100 text-warm-600 hover:text-warm-800 hover:bg-warm-200"
           }`}
           aria-label="电话模式"
           aria-pressed={phoneMode}

@@ -4,7 +4,7 @@ import { InterviewIcon } from "@/components/icons";
 
 export function InterviewBanner() {
   return (
-    <div className="mx-4 my-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-red-900/30 to-red-800/20">
+    <div className="mx-4 my-2 px-4 py-2.5 rounded-xl bg-red-50 border border-red-200">
       <div className="flex items-center gap-2">
         <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse shrink-0" />
         <InterviewIcon size={14} className="text-red-400" />

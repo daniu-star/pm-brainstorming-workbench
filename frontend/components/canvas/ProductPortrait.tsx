@@ -86,7 +86,7 @@ export function ProductPortrait({ portrait }: ProductPortraitProps) {
                     style={{ backgroundColor: hex }}
                   />
                   <span className="text-[10px] text-warm-500 font-mono">{hex}</span>
-                  <span className="text-[10px] text-warm-400">
+                  <span className="text-[10px] text-warm-500">
                     {key === "primary" ? "主色" : key === "secondary" ? "辅色" : key === "accent" ? "强调" : "背景"}
                   </span>
                 </div>

@@ -81,7 +81,7 @@ export function InterviewView() {
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
               <div className="mb-4 flex justify-center">
-                <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-slate-700 shadow-lg">
+                <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-red-300 shadow-md">
                   <img
                     src="/avatars/interviewer-business.svg"
                     alt="AI 面试官"
@@ -89,7 +89,7 @@ export function InterviewView() {
                   />
                 </div>
               </div>
-              <p className="text-lg font-semibold text-slate-800 mb-1">准备开始面试</p>
+              <p className="text-lg font-semibold text-warm-600 mb-1">准备开始面试</p>
               <p className="text-sm text-warm-500">AI 压力面试官将对你进行深度提问</p>
             </div>
           </div>
@@ -121,7 +121,7 @@ export function InterviewView() {
         {isStreaming && !streamingContent && (
           <div className="flex items-center gap-3 py-3 px-2 mb-2">
             <div className="shrink-0">
-              <div className="w-10 h-10 rounded-full overflow-hidden border border-slate-600">
+              <div className="w-10 h-10 rounded-full overflow-hidden border border-red-300">
                 <img
                   src="/avatars/interviewer-business.svg"
                   alt="AI 面试官"
@@ -131,7 +131,7 @@ export function InterviewView() {
             </div>
             <div className="flex items-center gap-2">
               <span className="interview-streaming-dot w-2 h-2 rounded-full bg-red-500" />
-              <span className="text-sm text-slate-500">面试官正在思考...</span>
+              <span className="text-sm text-warm-500">面试官正在思考...</span>
             </div>
           </div>
         )}
@@ -158,12 +158,9 @@ function InterviewMessage({
       <div className="msg-enter flex justify-end mb-4">
         <div className="max-w-[75%]">
           <div
-            className={`relative px-4 py-3 shadow-sm rounded-2xl rounded-br-[4px] ${
+            className={`relative px-4 py-3 shadow-sm rounded-2xl rounded-br-[4px] bg-amber-600 ${
               isStreaming ? "streaming-cursor" : ""
             }`}
-            style={{
-              background: "linear-gradient(135deg, #f59e0b, #d97706)",
-            }}
           >
             <p className="text-white text-sm leading-relaxed whitespace-pre-wrap">
               {message.content}
@@ -177,7 +174,7 @@ function InterviewMessage({
   return (
     <div className="msg-enter flex gap-3 mb-4">
       <div className="shrink-0 mt-0.5">
-        <div className="w-10 h-10 rounded-full overflow-hidden border border-slate-600 shadow-sm">
+        <div className="w-10 h-10 rounded-full overflow-hidden border border-red-300 shadow-sm">
           <img
             src="/avatars/interviewer-business.svg"
             alt="AI 面试官"
@@ -187,20 +184,20 @@ function InterviewMessage({
       </div>
       <div className="flex-1 min-w-0 max-w-[85%]">
         <div className="flex items-center gap-2 mb-1">
-          <span className="text-xs font-semibold text-slate-700">AI 压力面试官</span>
-          <span className="flex items-center gap-1 text-[10px] text-red-500">
-            <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+          <span className="text-xs font-semibold text-warm-600">AI 压力面试官</span>
+          <span className="flex items-center gap-1 text-[11px] text-red-500">
+            <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
             压力测试中
           </span>
         </div>
         <div
-          className={`relative bg-white border border-slate-200/80 px-4 py-3 shadow-sm rounded-2xl rounded-tl-[4px] ${
+          className={`relative bg-white border border-red-200/60 px-4 py-3 shadow-sm rounded-2xl rounded-tl-[4px] ${
             isStreaming ? "streaming-cursor" : ""
           }`}
         >
           <div className="absolute left-0 top-2 bottom-2 w-[3px] rounded-full bg-red-500" />
           <div className="pl-2">
-            <div className="prose prose-sm max-w-none text-slate-700 leading-relaxed">
+            <div className="prose prose-sm max-w-none text-warm-600 leading-relaxed">
               {isStreaming ? (
                 <p className="whitespace-pre-wrap">{message.content}</p>
               ) : (

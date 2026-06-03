@@ -16,7 +16,7 @@ export function CanvasToolbar() {
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-warm-600">讨论地图</span>
           {isStreaming && (
-            <span className="flex items-center gap-1 text-[10px] text-amber-600">
+            <span className="flex items-center gap-1 text-xs text-amber-600">
               <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
               分析中
             </span>
@@ -24,7 +24,7 @@ export function CanvasToolbar() {
         </div>
         {discussionMap?.topic && (
           <>
-            <span className="text-warm-300">|</span>
+            <span className="border-l border-warm-200 h-3" aria-hidden="true" />
             <span className="text-xs text-warm-500 truncate max-w-[300px]">
               {discussionMap.topic}
             </span>
@@ -33,7 +33,7 @@ export function CanvasToolbar() {
       </div>
       <div className="flex items-center gap-2">
         {timeline.length > 0 && (
-          <span className="text-[10px] text-warm-500">
+          <span className="text-xs text-warm-500">
             {consensusCount} 共识 · {disagreementCount} 分歧 · {summaryCount} 总结
           </span>
         )}

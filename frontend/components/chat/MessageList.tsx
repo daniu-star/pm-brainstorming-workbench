@@ -137,7 +137,7 @@ export function MessageList() {
       <div className="flex items-center justify-center h-full">
         <div className="text-center text-warm-500">
           <div className="mb-4 flex justify-center">
-            <BrainIcon size={56} className="text-warm-400" />
+            <BrainIcon size={56} className="text-warm-500" />
           </div>
           <p className="text-lg mb-2 font-medium text-warm-600">准备开始脑暴</p>
           <p className="text-sm mb-4">四位专家即将围绕你的产品方向展开讨论</p>

@@ -31,7 +31,7 @@ export function CanvasPanel() {
             className={`px-3 py-1.5 text-xs font-medium transition-all duration-200 border-b-2 min-h-[32px] focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none ${
               activeTab === "map"
                 ? "text-amber-600 border-amber-500"
-                : "text-warm-400 border-transparent hover:text-warm-600"
+                : "text-warm-500 border-transparent hover:text-warm-600"
             }`}
           >
             讨论地图
@@ -42,7 +42,7 @@ export function CanvasPanel() {
             className={`px-3 py-1.5 text-xs font-medium transition-all duration-200 border-b-2 min-h-[32px] focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none ${
               activeTab === "portrait"
                 ? "text-amber-600 border-amber-500"
-                : "text-warm-400 border-transparent hover:text-warm-600"
+                : "text-warm-500 border-transparent hover:text-warm-600"
             }`}
           >
             产品画像
@@ -67,7 +67,7 @@ export function CanvasPanel() {
               <BrainIcon size={40} className="text-amber-500 animate-pulse" />
             </div>
             <p className="text-warm-600 text-sm font-medium mb-1">正在生成产品画像...</p>
-            <p className="text-warm-400 text-xs">分析讨论内容，提炼产品核心特征</p>
+            <p className="text-warm-500 text-xs">分析讨论内容，提炼产品核心特征</p>
           </div>
         </div>
       ) : activeTab === "portrait" && !productPortrait ? (
@@ -77,7 +77,7 @@ export function CanvasPanel() {
               <BrainIcon size={40} className="text-amber-500/40" />
             </div>
             <p className="text-warm-600 text-sm font-medium mb-1">暂无产品画像</p>
-            <p className="text-warm-400 text-xs">在聊天面板点击「画像」按钮生成</p>
+            <p className="text-warm-500 text-xs">在聊天面板点击「画像」按钮生成</p>
           </div>
         </div>
       ) : isEmpty ? (
@@ -90,7 +90,7 @@ export function CanvasPanel() {
               </div>
               <div
                 className={`transition-all duration-500 ${
-                  isStreaming ? "scale-125 animate-pulse" : ""
+                  isStreaming ? "scale-110 animate-pulse" : ""
                 }`}
               >
                 <BrainIcon
@@ -126,13 +126,6 @@ export function CanvasPanel() {
                 </p>
               </>
             )}
-            <div className="flex justify-center gap-4 mt-6">
-              <span className="canvas-particle w-1.5 h-1.5 bg-amber-400/50 rounded-full" style={{ animationDelay: "0s" }} />
-              <span className="canvas-particle w-1 h-1 bg-orange-400/40 rounded-full" style={{ animationDelay: "1.5s" }} />
-              <span className="canvas-particle w-1.5 h-1.5 bg-amber-400/30 rounded-full" style={{ animationDelay: "3s" }} />
-              <span className="canvas-particle w-1 h-1 bg-orange-400/50 rounded-full" style={{ animationDelay: "4.5s" }} />
-              <span className="canvas-particle w-1.5 h-1.5 bg-amber-400/40 rounded-full" style={{ animationDelay: "2s" }} />
-            </div>
           </div>
         </div>
       ) : (

@@ -126,8 +126,8 @@ function WorkbenchContent() {
 
   if (loadError) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-orange-50 via-amber-50 to-rose-50">
-        <div className="text-center max-w-md bg-white border border-amber-200 rounded-2xl p-8 shadow-lg shadow-amber-100">
+      <div className="min-h-screen flex items-center justify-center bg-warm-50">
+        <div className="text-center max-w-md bg-white border border-warm-200 rounded-2xl p-8 shadow-md">
           <div className="w-14 h-14 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center mx-auto mb-4">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
@@ -138,7 +138,7 @@ function WorkbenchContent() {
           <a
             href="/"
             aria-label="返回首页"
-            className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-sm font-semibold rounded-xl shadow-md shadow-amber-200 transition-all"
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white text-sm font-semibold rounded-xl shadow-md transition-colors duration-200"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
             返回首页重新开始
@@ -182,7 +182,7 @@ function WorkbenchContent() {
 
         <div className={`border-l border-warm-200 flex flex-col bg-warm-50 ${
           mobileTab === "chat" ? "flex w-full" : "hidden md:flex"
-        } md:w-[440px] md:min-w-[380px]`}>
+        } md:w-[480px] md:min-w-[400px]`}>
           <ChatPanel />
         </div>
       </div>

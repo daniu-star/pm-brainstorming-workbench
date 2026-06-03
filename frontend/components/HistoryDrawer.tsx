@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import type { SessionSummary } from "@/lib/types";
+import { CloseIcon } from "@/components/icons";
 
 interface HistoryDrawerProps {
   isOpen: boolean;
@@ -105,7 +106,7 @@ export function HistoryDrawer({ isOpen, onClose }: HistoryDrawerProps) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="drawer-title"
-        className="fixed top-0 right-0 h-full w-[360px] max-w-[90vw] bg-warm-50 border-l border-warm-200 z-50 flex flex-col shadow-xl animate-[slideInRight_0.2s_ease-out]"
+        className="fixed top-0 right-0 h-full w-[320px] max-w-[85vw] bg-warm-50 border-l border-warm-200 z-50 flex flex-col shadow-xl animate-[slideInRight_0.2s_ease-out]"
       >
         <div className="h-12 border-b border-warm-200 flex items-center justify-between px-4 shrink-0">
           <span id="drawer-title" className="text-sm font-medium text-warm-600">历史会话</span>
@@ -114,9 +115,7 @@ export function HistoryDrawer({ isOpen, onClose }: HistoryDrawerProps) {
             aria-label="关闭历史会话"
             className="min-h-[44px] min-w-[44px] flex items-center justify-center text-warm-500 hover:text-warm-600 active:text-warm-700 transition-all duration-200 focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none rounded"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M18 6L6 18M6 6l12 12" />
-            </svg>
+            <CloseIcon size={16} />
           </button>
         </div>
 
@@ -177,13 +176,13 @@ export function HistoryDrawer({ isOpen, onClose }: HistoryDrawerProps) {
                       {s.problem_statement || "未命名会话"}
                     </p>
                     <div className="flex items-center gap-2">
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full border ${badge.color}`}>
+                      <span className={`text-[11px] px-2 py-0.5 rounded-full border ${badge.color}`}>
                         {badge.label}
                       </span>
-                      <span className="text-[10px] text-warm-500">
+                      <span className="text-[11px] text-warm-500">
                         {s.message_count} 条消息
                       </span>
-                      <span className="text-[10px] text-warm-500 ml-auto">
+                      <span className="text-[11px] text-warm-500 ml-auto">
                         {formatTime(s.created_at)}
                       </span>
                     </div>
@@ -195,12 +194,6 @@ export function HistoryDrawer({ isOpen, onClose }: HistoryDrawerProps) {
         </div>
       </div>
 
-      <style jsx>{`
-        @keyframes slideInRight {
-          from { transform: translateX(100%); }
-          to { transform: translateX(0); }
-        }
-      `}</style>
     </>
   );
 }
