@@ -54,17 +54,20 @@ async def transcribe_audio_hf(
     if not HF_API_TOKEN:
         raise RuntimeError("HF_API_TOKEN 未配置，无法使用免费语音识别服务")
 
-    import httpx
+    import requests
 
     ext = "wav" if "wav" in content_type else "webm"
     filename = f"audio.{ext}"
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(
+    def _post():
+        return requests.post(
             f"https://api-inference.huggingface.co/models/{HF_WHISPER_MODEL}",
             headers={"Authorization": f"Bearer {HF_API_TOKEN}"},
             files={"file": (filename, audio_bytes, content_type)},
+            timeout=60,
         )
+
+    response = await asyncio.to_thread(_post)
 
     if response.status_code != 200:
         error_detail = response.text[:200]
