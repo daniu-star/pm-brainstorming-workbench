@@ -75,7 +75,6 @@ export default function LandingPage() {
   const [problem, setProblem] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isFocused, setIsFocused] = useState(false);
   const [mounted, setMounted] = useState(false);
   const { isHistoryOpen, toggleHistory } = useSessionStore();
   const setSettingsOpen = useSessionStore((s) => s.setSettingsOpen);
@@ -258,8 +257,6 @@ export default function LandingPage() {
               <textarea
                 value={problem}
                 onChange={(e) => setProblem(e.target.value)}
-                onFocus={() => setIsFocused(true)}
-                onBlur={() => setTimeout(() => setIsFocused(false), 200)}
                 placeholder="例如：我想做一个帮助忙碌父母进行 5 分钟家庭健身的 App..."
                 rows={3}
                 aria-label="输入你想探索的产品方向"
@@ -271,12 +268,12 @@ export default function LandingPage() {
                   }
                 }}
               />
-              {isFocused && !problem.trim() && (
+              {!problem.trim() && (
                 <div className="mt-2.5 flex flex-wrap gap-1.5">
                   {PROMPT_TEMPLATES.map((tpl) => (
                     <button
                       key={tpl}
-                      onClick={() => setProblem(tpl)}
+                      onMouseDown={() => setProblem(tpl)}
                       className="text-xs text-amber-800 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg px-2.5 py-1.5 transition-colors text-left leading-snug font-medium"
                     >
                       {tpl}
