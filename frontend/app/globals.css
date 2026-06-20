@@ -2,42 +2,108 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --color-warm-50: #faf8f5;
-  --color-warm-100: #f5f0ea;
-  --color-warm-200: #e8e0d8;
-  --color-warm-300: #d4c8bb;
-  --color-warm-400: #b8a898;
-  --color-warm-500: #8b6f47;
-  --color-warm-600: #6b5535;
-  --color-warm-700: #4a3a24;
-  --color-warm-800: #2c2418;
-  --color-warm-900: #1a150e;
+/* ===== shadcn/ui 语义令牌（HSL 格式，支持暗色模式） ===== */
+@layer base {
+  :root {
+    /* Light mode - warm 主题 */
+    --background: 40 33% 98%;          /* #faf8f5 */
+    --foreground: 30 30% 14%;          /* #2c2418 */
 
-  --bg-primary: var(--color-warm-50);
-  --bg-secondary: #ffffff;
-  --bg-tertiary: var(--color-warm-100);
-  --text-primary: #2c2418;
-  --text-secondary: #5c4f3d;
-  --text-muted: #8b7d6b;
-  --border-color: var(--color-warm-200);
-  --border-subtle: var(--color-warm-100);
+    --card: 0 0% 100%;                 /* #ffffff */
+    --card-foreground: 30 30% 14%;
 
-  --color-primary: #d97706;
-  --color-primary-hover: #d4622b;
-  --color-primary-light: #f5a623;
-  --color-success: #6b8f5e;
-  --color-warning: #e0a02f;
-  --color-error: #e8614d;
-  --color-coral: #e8614d;
-  --color-amber: #e07a2f;
+    --popover: 0 0% 100%;
+    --popover-foreground: 30 30% 14%;
 
-  --shadow-sm: 0 1px 3px rgba(139, 111, 71, 0.06), 0 1px 2px rgba(139, 111, 71, 0.04);
-  --shadow-md: 0 4px 12px rgba(139, 111, 71, 0.08), 0 2px 4px rgba(139, 111, 71, 0.04);
-  --shadow-lg: 0 12px 32px rgba(139, 111, 71, 0.1), 0 4px 8px rgba(139, 111, 71, 0.06);
-  --shadow-glow-amber: 0 0 40px rgba(224, 122, 47, 0.12), 0 0 80px rgba(224, 122, 47, 0.06);
-  --shadow-glow-coral: 0 0 40px rgba(232, 97, 77, 0.12), 0 0 80px rgba(232, 97, 77, 0.06);
-  --shadow-glow-green: 0 0 40px rgba(107, 143, 94, 0.12), 0 0 80px rgba(107, 143, 94, 0.06);
+    --primary: 32 92% 44%;             /* #d97706 amber-600 */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 40 25% 92%;           /* warm-100 */
+    --secondary-foreground: 30 25% 25%;
+
+    --muted: 40 25% 92%;
+    --muted-foreground: 30 15% 42%;    /* #8b7d6b */
+
+    --accent: 40 25% 92%;
+    --accent-foreground: 30 25% 25%;
+
+    --destructive: 4 78% 58%;          /* #e8614d */
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 35 20% 85%;              /* warm-200 */
+    --input: 35 20% 85%;
+    --ring: 32 92% 44%;
+
+    --radius: 0.75rem;
+
+    /* 保留原有 warm 变量（向后兼容） */
+    --color-warm-50: #faf8f5;
+    --color-warm-100: #f5f0ea;
+    --color-warm-200: #e8e0d8;
+    --color-warm-300: #d4c8bb;
+    --color-warm-400: #b8a898;
+    --color-warm-500: #8b6f47;
+    --color-warm-600: #6b5535;
+    --color-warm-700: #4a3a24;
+    --color-warm-800: #2c2418;
+    --color-warm-900: #1a150e;
+
+    --bg-primary: var(--color-warm-50);
+    --bg-secondary: #ffffff;
+    --bg-tertiary: var(--color-warm-100);
+    --text-primary: #2c2418;
+    --text-secondary: #5c4f3d;
+    --text-muted: #8b7d6b;
+    --border-color: var(--color-warm-200);
+    --border-subtle: var(--color-warm-100);
+
+    --color-primary: #d97706;
+    --color-primary-hover: #d4622b;
+    --color-primary-light: #f5a623;
+    --color-success: #6b8f5e;
+    --color-warning: #e0a02f;
+    --color-error: #e8614d;
+    --color-coral: #e8614d;
+    --color-amber: #e07a2f;
+
+    --shadow-sm: 0 1px 3px rgba(139, 111, 71, 0.06), 0 1px 2px rgba(139, 111, 71, 0.04);
+    --shadow-md: 0 4px 12px rgba(139, 111, 71, 0.08), 0 2px 4px rgba(139, 111, 71, 0.04);
+    --shadow-lg: 0 12px 32px rgba(139, 111, 71, 0.1), 0 4px 8px rgba(139, 111, 71, 0.06);
+    --shadow-glow-amber: 0 0 40px rgba(224, 122, 47, 0.12), 0 0 80px rgba(224, 122, 47, 0.06);
+    --shadow-glow-coral: 0 0 40px rgba(232, 97, 77, 0.12), 0 0 80px rgba(232, 97, 77, 0.06);
+    --shadow-glow-green: 0 0 40px rgba(107, 143, 94, 0.12), 0 0 80px rgba(107, 143, 94, 0.06);
+  }
+
+  .dark {
+    /* Dark mode - 深色科技风 */
+    --background: 30 15% 8%;           /* 深棕黑 */
+    --foreground: 40 20% 90%;
+
+    --card: 30 12% 12%;
+    --card-foreground: 40 20% 90%;
+
+    --popover: 30 12% 12%;
+    --popover-foreground: 40 20% 90%;
+
+    --primary: 32 92% 52%;             /* 亮琥珀 */
+    --primary-foreground: 30 30% 10%;
+
+    --secondary: 30 10% 18%;
+    --secondary-foreground: 40 20% 90%;
+
+    --muted: 30 10% 18%;
+    --muted-foreground: 40 10% 65%;
+
+    --accent: 30 10% 18%;
+    --accent-foreground: 40 20% 90%;
+
+    --destructive: 4 78% 58%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 30 10% 22%;
+    --input: 30 10% 22%;
+    --ring: 32 92% 52%;
+  }
 }
 
 * { box-sizing: border-box; }

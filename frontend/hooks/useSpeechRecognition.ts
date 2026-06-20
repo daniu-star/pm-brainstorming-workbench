@@ -1,20 +1,26 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { apiUrl } from "@/lib/api";
 import { getUserHeaders } from "@/lib/user";
+import { toast } from "@/components/Toast";
+
+type STTErrorType = "permission-denied" | "network" | "unsupported" | "transcribe-failed";
 
 interface SpeechRecognitionResult {
   isRecording: boolean;
   isTranscribing: boolean;
   transcript: string;
   errorMessage: string;
+  recordingDuration: number;
   start: () => void;
   stop: () => void;
   reset: () => void;
   isSupported: boolean;
   status: "idle" | "recording" | "transcribing" | "success" | "error";
 }
+
+const MAX_DURATION = 60;
 
 function getSupportedMimeType(): string | null {
   if (typeof window === "undefined") return null;
@@ -31,26 +37,74 @@ function getSupportedMimeType(): string | null {
   return null;
 }
 
+function notifyError(type: STTErrorType, detail?: string): string {
+  const messages: Record<STTErrorType, { title: string; description: string }> = {
+    "permission-denied": {
+      title: "麦克风权限被拒绝",
+      description: "请在浏览器设置中允许麦克风访问后重试",
+    },
+    network: {
+      title: "网络连接失败",
+      description: "无法连接到语音识别服务，请检查网络连接",
+    },
+    unsupported: {
+      title: "不支持语音输入",
+      description: "请使用 Chrome 或 Edge 浏览器以获得最佳体验",
+    },
+    "transcribe-failed": {
+      title: "语音识别失败",
+      description: detail || "未识别到语音内容，请重试",
+    },
+  };
+  const msg = messages[type];
+  toast({ title: msg.title, description: msg.description, variant: "destructive" });
+  return msg.description;
+}
+
 export function useSpeechRecognition(): SpeechRecognitionResult {
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [recordingDuration, setRecordingDuration] = useState(0);
   const [status, setStatus] = useState<"idle" | "recording" | "transcribing" | "success" | "error">("idle");
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
+  const durationTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const maxDurationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const isSupported = typeof window !== "undefined" && !!window.MediaRecorder;
+  const isSupported =
+    typeof window !== "undefined" &&
+    !!navigator.mediaDevices?.getUserMedia &&
+    typeof MediaRecorder !== "undefined";
+
+  const clearTimers = useCallback(() => {
+    if (durationTimerRef.current) {
+      clearInterval(durationTimerRef.current);
+      durationTimerRef.current = null;
+    }
+    if (maxDurationTimerRef.current) {
+      clearTimeout(maxDurationTimerRef.current);
+      maxDurationTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => clearTimers();
+  }, [clearTimers]);
 
   const start = useCallback(() => {
     if (!isSupported) {
-      alert("您的浏览器不支持语音输入，请使用 Chrome 或 Edge 浏览器。");
+      const msg = notifyError("unsupported");
+      setErrorMessage(msg);
+      setStatus("error");
       return;
     }
     setTranscript("");
     setErrorMessage("");
+    setRecordingDuration(0);
     chunksRef.current = [];
 
     const mimeType = getSupportedMimeType();
@@ -72,6 +126,9 @@ export function useSpeechRecognition(): SpeechRecognitionResult {
         recorder.onstop = async () => {
           setIsRecording(false);
           setStatus("transcribing");
+          clearTimers();
+          setRecordingDuration(0);
+
           const blob = new Blob(chunksRef.current, {
             type: mimeType || "audio/webm",
           });
@@ -103,18 +160,19 @@ export function useSpeechRecognition(): SpeechRecognitionResult {
               setStatus("success");
               setTimeout(() => setStatus("idle"), 2000);
             } else {
-              setErrorMessage("未识别到语音内容，请重试");
+              const msg = notifyError("transcribe-failed", "未识别到语音内容，请重试");
+              setErrorMessage(msg);
               setStatus("error");
             }
           } catch (err) {
-            const msg =
+            const isNetwork =
               err instanceof TypeError &&
               (err.message.includes("Failed to fetch") ||
-                err.message.includes("NetworkError"))
-                ? "无法连接到服务器，请检查网络连接"
-                : err instanceof Error
-                  ? err.message
-                  : "语音识别失败，请重试";
+                err.message.includes("NetworkError"));
+            const detail = err instanceof Error ? err.message : "语音识别失败，请重试";
+            const msg = isNetwork
+              ? notifyError("network")
+              : notifyError("transcribe-failed", detail);
             setErrorMessage(msg);
             setStatus("error");
           } finally {
@@ -124,7 +182,10 @@ export function useSpeechRecognition(): SpeechRecognitionResult {
 
         recorder.onerror = () => {
           setIsRecording(false);
-          setErrorMessage("录音过程中发生错误");
+          clearTimers();
+          setRecordingDuration(0);
+          const msg = notifyError("transcribe-failed", "录音过程中发生错误");
+          setErrorMessage(msg);
           setStatus("error");
           stream.getTracks().forEach((t) => t.stop());
           streamRef.current = null;
@@ -134,29 +195,46 @@ export function useSpeechRecognition(): SpeechRecognitionResult {
         recorder.start();
         setIsRecording(true);
         setStatus("recording");
+
+        durationTimerRef.current = setInterval(() => {
+          setRecordingDuration((d) => d + 1);
+        }, 1000);
+
+        maxDurationTimerRef.current = setTimeout(() => {
+          if (
+            mediaRecorderRef.current &&
+            mediaRecorderRef.current.state === "recording"
+          ) {
+            mediaRecorderRef.current.stop();
+          }
+        }, MAX_DURATION * 1000);
       })
       .catch((err) => {
         if (
           err instanceof DOMException &&
           (err.name === "NotAllowedError" || err.name === "PermissionDeniedError")
         ) {
-          setErrorMessage("麦克风权限被拒绝，请在浏览器设置中允许");
+          const msg = notifyError("permission-denied");
+          setErrorMessage(msg);
           setStatus("error");
         } else {
-          setErrorMessage("无法访问麦克风，请检查设备");
+          const msg = notifyError("transcribe-failed", "无法访问麦克风，请检查设备");
+          setErrorMessage(msg);
           setStatus("error");
         }
       });
-  }, [isSupported]);
+  }, [isSupported, clearTimers]);
 
   const stop = useCallback(() => {
+    clearTimers();
+    setRecordingDuration(0);
     if (
       mediaRecorderRef.current &&
       mediaRecorderRef.current.state === "recording"
     ) {
       mediaRecorderRef.current.stop();
     }
-  }, []);
+  }, [clearTimers]);
 
   const reset = useCallback(() => {
     setTranscript("");
@@ -169,6 +247,7 @@ export function useSpeechRecognition(): SpeechRecognitionResult {
     isTranscribing,
     transcript,
     errorMessage,
+    recordingDuration,
     start,
     stop,
     reset,

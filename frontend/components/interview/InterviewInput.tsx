@@ -1,9 +1,21 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { Send, Mic, Square, PhoneOff, AlertCircle } from "lucide-react";
 import { useSessionStore } from "@/store/sessionStore";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
-import { SendIcon, MicIcon } from "@/components/icons";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
+
+const INTERVIEWER_AVATAR = "/avatars/interviewer-business.svg";
+
+function formatDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
 
 interface InterviewInputProps {
   phoneMode?: boolean;
@@ -18,6 +30,7 @@ export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputP
     isTranscribing,
     transcript,
     errorMessage,
+    recordingDuration,
     start,
     stop,
     reset,
@@ -63,6 +76,7 @@ export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputP
         isTranscribing={isTranscribing}
         isSupported={isSupported}
         errorMessage={errorMessage}
+        recordingDuration={recordingDuration}
         start={start}
         stop={stop}
         onHangUp={onTogglePhoneMode}
@@ -73,16 +87,16 @@ export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputP
 
   if (interviewMode === "text") {
     return (
-      <div className="px-4 py-3 border-t border-warm-200 bg-white">
+      <div className="px-4 py-3 border-t border-border bg-card">
         <div className="flex gap-2 items-end">
           <div className="flex-1 relative">
-            <textarea
+            <Textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="回答面试官的问题..."
               rows={3}
               aria-label="回答面试官问题"
-              className="w-full bg-warm-50 border border-warm-200 rounded-xl px-4 py-2.5 text-sm text-warm-700 placeholder-warm-400 resize-none focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30 transition-all"
+              className="resize-none"
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
@@ -91,21 +105,22 @@ export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputP
               }}
             />
           </div>
-          <button
+          <Button
             onClick={handleTextSend}
             disabled={!input.trim() || isStreaming}
             aria-label="发送回答"
-            className="shrink-0 w-12 h-12 min-w-[48px] min-h-[48px] bg-amber-600 hover:bg-amber-700 active:bg-amber-800 disabled:bg-warm-200 disabled:text-warm-400 text-white rounded-xl transition-colors duration-200 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:ring-offset-2 focus:ring-offset-white"
+            size="icon"
+            className="h-12 w-12 shrink-0"
           >
-            <SendIcon size={18} />
-          </button>
+            <Send className="h-4 w-4" />
+          </Button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="px-4 py-3 border-t border-warm-200 bg-white">
+    <div className="px-4 py-3 border-t border-border bg-card">
       <VoiceInputView
         isRecording={isRecording}
         isTranscribing={isTranscribing}
@@ -113,6 +128,7 @@ export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputP
         errorMessage={errorMessage}
         isSupported={isSupported}
         isStreaming={isStreaming}
+        recordingDuration={recordingDuration}
         start={start}
         stop={stop}
         reset={reset}
@@ -130,6 +146,7 @@ function VoiceInputView({
   errorMessage,
   isSupported,
   isStreaming,
+  recordingDuration,
   start,
   stop,
   reset,
@@ -142,6 +159,7 @@ function VoiceInputView({
   errorMessage: string;
   isSupported: boolean;
   isStreaming: boolean;
+  recordingDuration: number;
   start: () => void;
   stop: () => void;
   reset: () => void;
@@ -153,10 +171,10 @@ function VoiceInputView({
   if (!isSupported) {
     return (
       <div className="flex flex-col items-center gap-3 py-4">
-        <div className="w-16 h-16 rounded-full bg-warm-100 flex items-center justify-center opacity-40">
-          <MicIcon size={28} />
+        <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center opacity-40">
+          <Mic className="h-7 w-7" />
         </div>
-        <p className="text-sm text-warm-500">您的浏览器不支持语音输入</p>
+        <p className="text-sm text-muted-foreground">您的浏览器不支持语音输入</p>
       </div>
     );
   }
@@ -165,17 +183,19 @@ function VoiceInputView({
     return (
       <div className="flex flex-col items-center gap-4 py-4">
         <div className="mic-pulse relative">
-          <button
+          <Button
             onClick={start}
             aria-label="开始录音"
-            className="w-16 h-16 min-w-[44px] min-h-[44px] rounded-full bg-warm-100 hover:bg-warm-200 active:bg-warm-200 text-warm-500 hover:text-warm-600 transition-all duration-200 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:ring-offset-2 focus:ring-offset-white"
+            variant="secondary"
+            size="icon"
+            className="h-16 w-16 rounded-full"
           >
-            <MicIcon size={28} />
-          </button>
+            <Mic className="h-7 w-7" />
+          </Button>
         </div>
         <div className="flex flex-col items-center gap-1.5">
-          <p className="text-sm text-warm-600">点击麦克风开始语音对话</p>
-          <p className="text-xs text-warm-500">语音识别将自动转为文字</p>
+          <p className="text-sm text-foreground">点击麦克风开始语音对话</p>
+          <p className="text-xs text-muted-foreground">语音识别将自动转为文字</p>
         </div>
       </div>
     );
@@ -185,85 +205,83 @@ function VoiceInputView({
     <div className="flex flex-col items-center gap-3">
       {status === "recording" && (
         <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-          <p className="text-sm text-red-600">正在聆听...</p>
+          <Badge variant="destructive" className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-destructive-foreground animate-pulse" />
+            录音中 {formatDuration(recordingDuration)}
+          </Badge>
           <span className="flex items-center gap-0.5 ml-1">
             {Array.from({ length: 5 }).map((_, i) => (
-              <span key={i} className="inline-block w-0.5 bg-red-400 rounded-full animate-pulse" style={{ height: `${8 + Math.random() * 8}px`, animationDelay: `${i * 0.15}s` }} />
+              <span
+                key={i}
+                className="phone-waveform-bar inline-block w-0.5 bg-primary rounded-full"
+                style={{ animationDelay: `${i * 0.15}s` }}
+              />
             ))}
           </span>
         </div>
       )}
       {status === "transcribing" && (
-        <div className="flex items-center gap-2">
-          <svg className="animate-spin h-4 w-4 text-amber-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
-          <p className="text-sm text-amber-600">正在识别...</p>
-        </div>
+        <Badge variant="secondary" className="flex items-center gap-1.5">
+          <Square className="h-3 w-3 animate-pulse" />
+          转写中...
+        </Badge>
       )}
       {status === "success" && (
-        <div className="flex items-center gap-2">
-          <svg className="h-4 w-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-          </svg>
-          <p className="text-sm text-emerald-600">识别成功</p>
-        </div>
+        <Badge variant="default" className="flex items-center gap-1.5">
+          识别成功
+        </Badge>
       )}
       {status === "error" && (
         <div className="flex flex-col items-center gap-2 w-full">
-          <div className="flex items-center gap-2">
-            <svg className="h-4 w-4 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <p className="text-sm text-red-600">{errorMessage}</p>
-          </div>
+          <Badge variant="destructive" className="flex items-center gap-1.5">
+            <AlertCircle className="h-3 w-3" />
+            {errorMessage}
+          </Badge>
           <div className="flex items-center gap-3">
-            <button onClick={start} className="px-3 py-1.5 bg-red-100 hover:bg-red-200 active:bg-red-300 rounded-lg text-xs text-red-700 transition-colors min-h-[44px]">
+            <Button onClick={start} variant="outline" size="sm">
               重试
-            </button>
-            <button onClick={reset} className="text-xs text-warm-500 hover:text-warm-700 transition-colors underline">
+            </Button>
+            <button onClick={reset} className="text-xs text-muted-foreground hover:text-foreground transition-colors underline">
               切换到文字模式
             </button>
           </div>
         </div>
       )}
       {transcript && status !== "error" && (
-        <div className="w-full bg-warm-50 border border-warm-200 rounded-xl px-4 py-2.5 text-sm text-warm-700 min-h-[40px]">
+        <div className="w-full bg-muted border border-border rounded-xl px-4 py-2.5 text-sm text-foreground min-h-[40px]">
           {transcript}
         </div>
       )}
 
       <div className="flex items-center gap-4">
         <div className={status === "recording" ? "mic-ripple relative" : ""}>
-          <button
+          <Button
             onClick={isRecording ? stop : start}
             disabled={isTranscribing}
             aria-label={isRecording ? "停止录音" : "开始录音"}
-            className={`w-16 h-16 min-w-[44px] min-h-[44px] rounded-full transition-all duration-200 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white ${
-              status === "recording"
-                ? "bg-red-600 hover:bg-red-500 active:bg-red-700 text-white focus:ring-red-500/50"
-                : status === "transcribing"
-                  ? "bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-white focus:ring-amber-500/50 animate-pulse"
-                  : status === "success"
-                    ? "bg-emerald-500 text-white focus:ring-emerald-500/50"
-                    : "mic-pulse bg-warm-100 hover:bg-warm-200 active:bg-warm-200 text-warm-500 hover:text-warm-600 focus:ring-amber-500/50"
-            }`}
+            size="icon"
+            className={cn(
+              "h-16 w-16 rounded-full",
+              status === "recording" && "bg-destructive hover:bg-destructive/90",
+              status === "transcribing" && "bg-primary animate-pulse",
+              status === "success" && "bg-primary",
+              status === "idle" && "mic-pulse"
+            )}
           >
-            <MicIcon size={28} />
-          </button>
+            {isRecording ? <Square className="h-6 w-6" /> : <Mic className="h-7 w-7" />}
+          </Button>
         </div>
 
         {transcript && status !== "error" && (
-          <button
+          <Button
             onClick={onSend}
             disabled={isStreaming}
             aria-label="发送语音转录"
-            className="w-12 h-12 min-w-[48px] min-h-[48px] bg-amber-600 hover:bg-amber-700 active:bg-amber-800 disabled:bg-warm-200 disabled:text-warm-400 text-white rounded-xl transition-colors duration-200 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:ring-offset-2 focus:ring-offset-white"
+            size="icon"
+            className="h-12 w-12 shrink-0"
           >
-            <SendIcon size={18} />
-          </button>
+            <Send className="h-4 w-4" />
+          </Button>
         )}
       </div>
     </div>
@@ -275,6 +293,7 @@ function PhoneModeView({
   isTranscribing,
   isSupported,
   errorMessage,
+  recordingDuration,
   start,
   stop,
   onHangUp,
@@ -284,6 +303,7 @@ function PhoneModeView({
   isTranscribing: boolean;
   isSupported: boolean;
   errorMessage: string;
+  recordingDuration: number;
   start: () => void;
   stop: () => void;
   onHangUp?: () => void;
@@ -314,48 +334,48 @@ function PhoneModeView({
   }, [isRecording, isTranscribing, errorMessage, isSupported, start]);
 
   return (
-    <div className="px-4 py-8 bg-warm-50 flex flex-col items-center gap-6">
+    <div className="px-4 py-8 bg-muted/30 flex flex-col items-center gap-6">
       <div className="flex flex-col items-center gap-2">
-        <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-red-300 shadow-md">
-          <img
-            src="/avatars/interviewer-business.svg"
-            alt="AI 面试官"
-            className="w-full h-full object-cover"
-          />
+        <div className="relative">
+          {isRecording && (
+            <span className="phone-ring absolute inset-0 rounded-full" />
+          )}
+          <div className="h-16 w-16 rounded-full overflow-hidden border-2 border-primary/30 shadow-md">
+            <img
+              src={INTERVIEWER_AVATAR}
+              alt="AI 面试官"
+              className="w-full h-full object-cover"
+            />
+          </div>
         </div>
-        <span className="text-sm font-medium text-warm-800">AI 压力面试官</span>
+        <span className="text-sm font-medium text-foreground">AI 压力面试官</span>
       </div>
 
       <div className="h-8 flex items-center justify-center">
         {status === "recording" && (
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-            <span className="text-sm text-red-600">正在聆听...</span>
-          </div>
+          <Badge variant="destructive" className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-destructive-foreground animate-pulse" />
+            正在聆听 {formatDuration(recordingDuration)}
+          </Badge>
         )}
         {status === "transcribing" && (
-          <div className="flex items-center gap-2">
-            <svg className="animate-spin h-4 w-4 text-amber-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-            <span className="text-sm text-amber-600">正在识别...</span>
-          </div>
+          <Badge variant="secondary" className="flex items-center gap-1.5">
+            <Square className="h-3 w-3 animate-pulse" />
+            正在识别...
+          </Badge>
         )}
         {status === "success" && (
-          <div className="flex items-center gap-2">
-            <svg className="h-4 w-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-            </svg>
-            <span className="text-sm text-emerald-600">识别成功</span>
-          </div>
+          <Badge variant="default">识别成功</Badge>
         )}
         {status === "error" && !isRecording && (
           <div className="flex flex-col items-center gap-2">
-            <span className="text-xs text-red-600">{errorMessage}</span>
-            <button onClick={start} className="px-3 py-1 bg-red-600 hover:bg-red-500 active:bg-red-700 text-white rounded-full text-xs font-medium transition-all duration-200 min-h-[44px]">
+            <Badge variant="destructive" className="flex items-center gap-1.5">
+              <AlertCircle className="h-3 w-3" />
+              {errorMessage}
+            </Badge>
+            <Button onClick={start} variant="destructive" size="sm" className="rounded-full">
               重试
-            </button>
+            </Button>
           </div>
         )}
       </div>
@@ -365,10 +385,8 @@ function PhoneModeView({
           {Array.from({ length: 12 }).map((_, i) => (
             <div
               key={i}
-              className="phone-waveform-bar w-1 bg-amber-400 rounded-full"
-              style={{
-                animationDelay: `${i * 0.08}s`,
-              }}
+              className="phone-waveform-bar w-1 bg-primary rounded-full"
+              style={{ animationDelay: `${i * 0.08}s` }}
             />
           ))}
         </div>
@@ -382,34 +400,32 @@ function PhoneModeView({
             <div className="phone-ring absolute inset-0 rounded-full" style={{ animationDelay: "1.2s" }} />
           </>
         )}
-        <button
+        <Button
           onClick={isRecording ? stop : start}
           disabled={!isSupported || isTranscribing}
           aria-label={isRecording ? "停止录音" : "开始录音"}
-          className={`relative w-20 h-20 rounded-full transition-all duration-200 flex items-center justify-center focus:outline-none ${
-            status === "recording"
-              ? "bg-red-600 hover:bg-red-500 text-white shadow-md shadow-red-500/30"
-              : status === "transcribing"
-                ? "bg-amber-500 hover:bg-amber-400 text-white shadow-md shadow-amber-500/30 animate-pulse"
-                : status === "success"
-                  ? "bg-emerald-500 text-white shadow-md shadow-emerald-500/30"
-                  : "bg-amber-500 hover:bg-amber-400 text-white shadow-md shadow-amber-500/30"
-          }`}
+          size="icon"
+          className={cn(
+            "relative h-20 w-20 rounded-full",
+            status === "recording" && "bg-destructive hover:bg-destructive/90 shadow-md shadow-destructive/30",
+            status === "transcribing" && "bg-primary animate-pulse shadow-md shadow-primary/30",
+            status === "success" && "bg-primary shadow-md shadow-primary/30",
+            status === "idle" && "bg-primary hover:bg-primary/90 shadow-md shadow-primary/30"
+          )}
         >
-          <MicIcon size={32} />
-        </button>
+          {isRecording ? <Square className="h-8 w-8" /> : <Mic className="h-8 w-8" />}
+        </Button>
       </div>
 
-      <button
+      <Button
         onClick={onHangUp}
-        className="flex items-center gap-2 px-6 py-3 bg-red-600 hover:bg-red-500 active:bg-red-700 text-white rounded-full text-sm font-medium transition-all duration-200 shadow-md shadow-red-600/30"
+        variant="destructive"
+        className="flex items-center gap-2 rounded-full"
         aria-label="挂断电话模式"
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
-        </svg>
+        <PhoneOff className="h-4 w-4" />
         挂断
-      </button>
+      </Button>
     </div>
   );
 }

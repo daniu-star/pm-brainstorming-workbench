@@ -2,7 +2,7 @@
 
 import { useSessionStore } from "@/store/sessionStore";
 import { ROLES } from "@/lib/types";
-import { CrosshairIcon } from "@/components/icons";
+import { CrosshairIcon, handleAvatarError } from "@/components/icons";
 
 export function RoleSelector() {
   const { isStreaming, targetRole, setTargetRole } = useSessionStore();
@@ -29,6 +29,7 @@ export function RoleSelector() {
             >
               <img
                 src={`/avatars/${role.id}.svg`}
+                onError={handleAvatarError}
                 alt={role.name}
                 className="w-full h-full object-cover"
               />

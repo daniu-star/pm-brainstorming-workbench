@@ -3,6 +3,7 @@
 import type { DiscussionMap } from "@/lib/types";
 import { TIMELINE_NODE_CONFIG } from "@/lib/types";
 import { TimelineNodeCard } from "./TimelineNodeCard";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 interface Props {
   map: DiscussionMap;
@@ -14,15 +15,15 @@ export function TimelineView({ map }: Props) {
   if (timeline.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <p className="text-warm-500 text-sm">暂无讨论节点</p>
+        <p className="text-muted-foreground text-sm">暂无讨论节点</p>
       </div>
     );
   }
 
   return (
-    <div className="flex-1 overflow-y-auto">
+    <ScrollArea className="flex-1 h-full">
       <div className="text-center pt-6 pb-4 px-4">
-        <h2 className="text-xl font-semibold text-warm-600">{map.topic}</h2>
+        <h2 className="text-xl font-semibold text-foreground">{map.topic}</h2>
       </div>
 
       <div className="relative px-4 pb-8" style={{ minHeight: timeline.length * 100 }}>
@@ -94,6 +95,6 @@ export function TimelineView({ map }: Props) {
           })}
         </div>
       </div>
-    </div>
+    </ScrollArea>
   );
 }

@@ -3,8 +3,12 @@
 import { useState, useEffect } from "react";
 import { useSessionStore } from "@/store/sessionStore";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
-import { BrainIcon, InterviewIcon, SendIcon, MicIcon, ArrowRightIcon } from "@/components/icons";
 import { ROLES } from "@/lib/types";
+import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
+import { Send, Mic, Square, Loader2, Brain, ArrowRight, Target } from "lucide-react";
 
 export function InputBox() {
   const [input, setInput] = useState("");
@@ -41,15 +45,15 @@ export function InputBox() {
   }, [transcript, reset]);
 
   return (
-    <div className="px-4 py-3 border-t border-warm-200/80 bg-white/95 backdrop-blur-sm">
+    <div className="px-4 py-3 border-t border-border bg-background/95 backdrop-blur-sm">
       <div className="flex items-center gap-3 mb-2">
         {phase === "coach" && (
           <>
-            <span className="text-xs text-amber-600 flex items-center gap-1">
-              <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
+            <span className="text-xs text-primary flex items-center gap-1">
+              <span className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse" />
               产品教练正在帮你理清思路
             </span>
-            <button
+            <Button
               onClick={() => {
                 if (!isStreaming) {
                   useSessionStore.getState().setPhase("brainstorm");
@@ -57,58 +61,61 @@ export function InputBox() {
               }}
               disabled={isStreaming}
               aria-label="跳过引导直接脑暴"
-              className="text-xs text-amber-600 hover:text-amber-700 active:text-amber-800 transition-all duration-200 disabled:opacity-40 ml-auto flex items-center gap-1 min-h-[44px] min-w-[44px] justify-center focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none"
+              variant="ghost"
+              size="sm"
+              className="text-xs text-primary hover:text-primary/80 ml-auto"
             >
-              跳过引导，直接脑暴 <ArrowRightIcon size={14} />
-            </button>
+              跳过引导，直接脑暴 <ArrowRight size={14} />
+            </Button>
           </>
         )}
         {phase === "brainstorm" && (
           <>
-            <button
+            <Button
               onClick={generateCanvas}
               disabled={isStreaming}
               aria-label="生成讨论画布"
-              className="text-xs text-warm-500 hover:text-emerald-600 active:text-emerald-700 transition-all duration-200 disabled:opacity-40 flex items-center gap-1.5 min-h-[44px] min-w-[44px] justify-center focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none"
+              variant="ghost"
+              size="sm"
+              className="text-xs text-muted-foreground hover:text-emerald-600"
             >
-              <BrainIcon size={14} /> 生成画布
-            </button>
-            <span className="text-warm-300">|</span>
-            <button
+              <Brain size={14} /> 生成画布
+            </Button>
+            <span className="text-muted-foreground/40">|</span>
+            <Button
               onClick={startInterview}
               disabled={isStreaming}
               aria-label="进入面试模式"
-              className="text-xs text-warm-500 hover:text-red-600 active:text-red-700 transition-all duration-200 disabled:opacity-40 flex items-center gap-1.5 min-h-[44px] min-w-[44px] justify-center focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none"
+              variant="ghost"
+              size="sm"
+              className="text-xs text-muted-foreground hover:text-destructive"
             >
-              <InterviewIcon size={14} /> 进入面试
-            </button>
+              <Target size={14} /> 进入面试
+            </Button>
           </>
         )}
         {phase === "interview" && (
-          <span className="text-xs text-red-600 flex items-center gap-1">
-            <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
+          <span className="text-xs text-destructive flex items-center gap-1">
+            <span className="w-1.5 h-1.5 bg-destructive rounded-full animate-pulse" />
             面试模式中 — 回答每个问题以继续
           </span>
         )}
       </div>
 
       {status === "recording" && (
-        <div className="voice-transcript-bar mb-2 px-3 py-1.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600 flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+        <div className="voice-transcript-bar mb-2 px-3 py-1.5 bg-destructive/10 border border-destructive/20 rounded-lg text-xs text-destructive flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-destructive animate-pulse" />
           <span>正在聆听...</span>
           <span className="flex items-center gap-0.5 ml-1">
             {Array.from({ length: 5 }).map((_, i) => (
-              <span key={i} className="inline-block w-0.5 bg-red-400 rounded-full animate-pulse" style={{ height: `${8 + Math.random() * 8}px`, animationDelay: `${i * 0.15}s` }} />
+              <span key={i} className="inline-block w-0.5 bg-destructive/60 rounded-full animate-pulse" style={{ height: `${8 + Math.random() * 8}px`, animationDelay: `${i * 0.15}s` }} />
             ))}
           </span>
         </div>
       )}
       {status === "transcribing" && (
-        <div className="voice-transcript-bar mb-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700 flex items-center gap-2">
-          <svg className="animate-spin h-3.5 w-3.5 text-amber-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
+        <div className="voice-transcript-bar mb-2 px-3 py-1.5 bg-primary/10 border border-primary/20 rounded-lg text-xs text-primary flex items-center gap-2">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
           <span>正在识别...</span>
         </div>
       )}
@@ -121,20 +128,20 @@ export function InputBox() {
         </div>
       )}
       {status === "error" && (
-        <div className="voice-transcript-bar mb-2 px-3 py-1.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600 flex items-center gap-2">
-          <svg className="h-3.5 w-3.5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <div className="voice-transcript-bar mb-2 px-3 py-1.5 bg-destructive/10 border border-destructive/20 rounded-lg text-xs text-destructive flex items-center gap-2">
+          <svg className="h-3.5 w-3.5 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           <span className="flex-1">{errorMessage}</span>
-          <button onClick={start} className="px-2 py-0.5 bg-red-100 hover:bg-red-200 active:bg-red-300 rounded text-red-700 transition-colors">
+          <Button onClick={start} variant="outline" size="sm" className="h-6 px-2 text-xs">
             重试
-          </button>
+          </Button>
         </div>
       )}
 
       <div className="flex gap-2 items-end">
         <div className="flex-1 relative">
-          <textarea
+          <Textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder={
@@ -154,7 +161,7 @@ export function InputBox() {
                   ? "回答产品教练的问题"
                   : "输入你的想法或追问"
             }
-            className="w-full bg-warm-50 border border-warm-200 rounded-2xl px-4 py-2.5 text-sm text-warm-600 placeholder-warm-400 resize-none focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30 transition-all input-inner-shadow"
+            className="rounded-2xl px-4 py-2.5 text-sm resize-none input-inner-shadow border-border bg-background"
             onKeyDown={(e) => {
               if (e.key === "Enter" && (!e.shiftKey || e.ctrlKey || e.metaKey)) {
                 e.preventDefault();
@@ -164,41 +171,47 @@ export function InputBox() {
           />
         </div>
         <div className="flex flex-col items-center shrink-0">
-          <button
+          <Button
             onClick={isRecording ? stop : start}
             disabled={isStreaming || isTranscribing}
             aria-label={isRecording ? "停止录音" : "语音输入"}
             title="点击语音输入"
-            className={`w-10 h-10 min-w-[44px] min-h-[44px] rounded-full transition-all duration-200 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:ring-offset-2 focus:ring-offset-white ${
-              status === "recording"
-                ? "mic-ripple bg-red-600 hover:bg-red-500 active:bg-red-700 text-white shadow-md shadow-red-200"
-                : status === "transcribing"
-                  ? "bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-white animate-pulse shadow-md shadow-amber-200"
-                  : status === "success"
-                    ? "bg-emerald-500 text-white shadow-md shadow-emerald-200"
-                    : "mic-pulse bg-amber-100 hover:bg-amber-200 active:bg-amber-300 text-amber-600 hover:text-amber-700 disabled:text-amber-400 shadow-sm shadow-amber-100"
-            }`}
+            variant="outline"
+            size="icon"
+            className={cn(
+              "rounded-full min-w-[44px] min-h-[44px]",
+              status === "recording" && "mic-ripple bg-destructive hover:bg-destructive/90 text-destructive-foreground border-destructive shadow-md",
+              status === "transcribing" && "bg-primary hover:bg-primary/90 text-primary-foreground border-primary animate-pulse shadow-md",
+              status === "success" && "bg-emerald-500 hover:bg-emerald-500 text-white border-emerald-500 shadow-md"
+            )}
           >
-            <MicIcon size={20} />
-          </button>
+            {status === "recording" ? (
+              <Square size={20} />
+            ) : status === "transcribing" ? (
+              <Loader2 size={20} className="animate-spin" />
+            ) : (
+              <Mic size={20} />
+            )}
+          </Button>
           {status === "recording" && (
-            <span className="text-[11px] text-red-600 mt-0.5 whitespace-nowrap">正在聆听...</span>
+            <Badge variant="destructive" className="text-[11px] mt-0.5 whitespace-nowrap">正在聆听...</Badge>
           )}
           {status === "transcribing" && (
-            <span className="text-[11px] text-amber-600 mt-0.5 whitespace-nowrap">正在识别...</span>
+            <Badge variant="secondary" className="text-[11px] mt-0.5 whitespace-nowrap">正在识别...</Badge>
           )}
           {status === "success" && (
-            <span className="text-[11px] text-emerald-600 mt-0.5 whitespace-nowrap">识别成功</span>
+            <Badge className="text-[11px] mt-0.5 whitespace-nowrap bg-emerald-500 text-white border-transparent">识别成功</Badge>
           )}
         </div>
-        <button
+        <Button
           onClick={handleSend}
           disabled={!input.trim() || isStreaming}
           aria-label="发送消息"
-          className="shrink-0 w-10 h-10 min-w-[44px] min-h-[44px] bg-amber-600 hover:bg-amber-700 active:bg-amber-800 disabled:bg-warm-300 disabled:text-warm-400 text-white rounded-full transition-colors duration-200 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:ring-offset-2 focus:ring-offset-white"
+          size="icon"
+          className="shrink-0 rounded-full min-w-[44px] min-h-[44px]"
         >
-          <SendIcon size={18} />
-        </button>
+          <Send size={18} />
+        </Button>
       </div>
     </div>
   );

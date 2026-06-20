@@ -2,14 +2,26 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRightIcon } from "@/components/icons";
+import {
+  ArrowRight,
+  Settings,
+  LogOut,
+  User,
+  Code,
+  Palette,
+  TrendingUp,
+  Brain,
+} from "lucide-react";
 import { NavButtons } from "@/components/NavButtons";
 import { HistoryDrawer } from "@/components/HistoryDrawer";
 import { SettingsModal } from "@/components/SettingsModal";
 import { RechargeModal } from "@/components/RechargeModal";
 import { OnboardingModal } from "@/components/OnboardingModal";
 import { useSessionStore } from "@/store/sessionStore";
-import { isLoggedIn as checkIsLoggedIn } from "@/lib/user";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
 const PROMPT_TEMPLATES = [
   "我想做一个帮助忙碌父母进行 5 分钟家庭健身的 App",
@@ -25,11 +37,7 @@ const ROLES_DATA = [
     bg: "#eff6ff",
     border: "#bfdbfe",
     desc: "技术可行性",
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
-      </svg>
-    ),
+    icon: <Code size={20} />,
   },
   {
     name: "设计师",
@@ -37,12 +45,7 @@ const ROLES_DATA = [
     bg: "#faf5ff",
     border: "#e9d5ff",
     desc: "用户体验",
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="13.5" cy="6.5" r="2.5" /><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
-        <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
-      </svg>
-    ),
+    icon: <Palette size={20} />,
   },
   {
     name: "运营",
@@ -50,11 +53,7 @@ const ROLES_DATA = [
     bg: "#f0fdf4",
     border: "#bbf7d0",
     desc: "增长策略",
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-      </svg>
-    ),
+    icon: <TrendingUp size={20} />,
   },
   {
     name: "用户",
@@ -62,12 +61,14 @@ const ROLES_DATA = [
     bg: "#fff7ed",
     border: "#fed7aa",
     desc: "真实需求",
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" />
-      </svg>
-    ),
+    icon: <User size={20} />,
   },
+];
+
+const FEATURES = [
+  { label: "多角色圆桌", sub: "4位专家讨论", dot: "bg-amber-400" },
+  { label: "可视化画布", sub: "功能树提取", dot: "bg-purple-400" },
+  { label: "压力测试", sub: "AI面试官", dot: "bg-emerald-400" },
 ];
 
 export default function LandingPage() {
@@ -129,61 +130,57 @@ export default function LandingPage() {
   };
 
   return (
-    <div className="min-h-screen relative overflow-hidden bg-gradient-to-br from-orange-50 via-amber-50 to-rose-50">
+    <div className="min-h-screen relative overflow-hidden bg-background">
       <div className="landing-blobs" />
       <div className="landing-dots" />
 
       <nav
-        className={`fixed top-0 left-0 right-0 h-14 bg-warm-50/80 backdrop-blur border-b border-warm-200 flex items-center justify-between px-6 z-30 transition-all duration-500 ${mounted ? "opacity-100" : "opacity-0"}`}
+        className={`fixed top-0 left-0 right-0 h-14 bg-background/80 backdrop-blur border-b border-border flex items-center justify-between px-6 z-30 transition-all duration-500 ${mounted ? "opacity-100" : "opacity-0"}`}
       >
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-400 via-orange-500 to-rose-500 flex items-center justify-center shadow-md shadow-orange-200">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-            </svg>
+          <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center shadow-md">
+            <Brain className="h-[18px] w-[18px] text-primary-foreground" strokeWidth={2.5} />
           </div>
           <div>
-            <span className="text-sm font-bold text-amber-900 tracking-wide">PM Brainstorm</span>
-            <span className="text-xs text-amber-700 ml-2 font-bold">Workbench</span>
+            <span className="text-sm font-bold text-foreground tracking-wide">PM Brainstorm</span>
+            <span className="text-xs text-primary ml-2 font-bold">Workbench</span>
           </div>
         </div>
         <div className="flex items-center gap-1">
           {storeIsLoggedIn ? (
             <div className="flex items-center gap-2">
-              <span className="text-xs text-amber-800 font-semibold max-w-[80px] truncate">{userNickname || "已登录"}</span>
-              <button
+              <span className="text-xs text-primary font-semibold max-w-[80px] truncate">{userNickname || "已登录"}</span>
+              <Button
                 onClick={storeLogout}
-                className="text-amber-700 hover:text-amber-900 transition-colors h-9 w-9 flex items-center justify-center rounded-lg hover:bg-amber-50"
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 text-primary hover:text-foreground"
                 aria-label="退出登录"
               >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" />
-                </svg>
-              </button>
+                <LogOut className="h-[15px] w-[15px]" />
+              </Button>
             </div>
           ) : showLoginEntry ? (
-            <button
+            <Button
               onClick={() => router.push("/login")}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition-colors"
+              variant="outline"
+              size="sm"
+              className="gap-1.5 text-primary"
               aria-label="登录"
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" />
-              </svg>
+              <User className="h-[14px] w-[14px]" />
               登录
-            </button>
+            </Button>
           ) : null}
-          <button
+          <Button
             onClick={() => setSettingsOpen(true)}
-            className="text-amber-700 hover:text-amber-900 transition-colors h-9 w-9 flex items-center justify-center rounded-lg hover:bg-amber-50"
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 text-primary hover:text-foreground"
             aria-label="API 设置"
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-              <circle cx="12" cy="12" r="3" />
-            </svg>
-          </button>
+            <Settings className="h-[15px] w-[15px]" />
+          </Button>
           <NavButtons currentPage="landing" sessionId={null} onToggleHistory={toggleHistory} />
         </div>
       </nav>
@@ -194,10 +191,12 @@ export default function LandingPage() {
       <OnboardingModal />
 
       {hasCompletedOnboarding && needsConfig && (
-        <div className="fixed top-14 left-0 right-0 z-20 bg-amber-50 border-b border-amber-200">
+        <div className="fixed top-14 left-0 right-0 z-20 bg-primary/10 border-b border-border">
           <div className="max-w-4xl mx-auto px-4 py-2 flex items-center justify-center gap-3">
-            <span className="text-xs text-amber-700">额度已用尽，请配置 API Key 或充值</span>
-            <button onClick={() => setSettingsOpen(true)} className="text-[11px] font-semibold text-amber-700 hover:text-amber-900 bg-amber-100 hover:bg-amber-200 px-2.5 py-1 rounded-md transition-colors">配置</button>
+            <span className="text-xs text-primary">额度已用尽，请配置 API Key 或充值</span>
+            <Button onClick={() => setSettingsOpen(true)} variant="outline" size="sm" className="text-xs h-7 px-2.5">
+              配置
+            </Button>
           </div>
         </div>
       )}
@@ -206,23 +205,23 @@ export default function LandingPage() {
         <div className="max-w-lg w-full text-center">
 
           <div className={`mb-8 transition-all duration-500 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-5"}`}>
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white border border-amber-200 shadow-sm mb-6">
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-card border border-border shadow-sm mb-6">
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
               </span>
-              <span className="text-[11px] text-amber-800 font-bold tracking-wide">AI 驱动的产品脑暴工作台</span>
+              <span className="text-[11px] text-primary font-bold tracking-wide">AI 驱动的产品脑暴工作台</span>
             </div>
 
             <h1 className="text-4xl md:text-5xl font-extrabold leading-[1.25] tracking-tight mb-3">
-              <span className="bg-gradient-to-r from-amber-600 via-orange-500 to-rose-500 bg-clip-text text-transparent">
+              <span className="text-primary">
                 PM Brainstorm
               </span>
               <br />
-              <span className="text-amber-900 text-xl md:text-2xl font-semibold tracking-wide">Workbench</span>
+              <span className="text-foreground text-xl md:text-2xl font-semibold tracking-wide">Workbench</span>
             </h1>
 
-            <p className="text-amber-900 text-sm md:text-[15px] leading-relaxed max-w-sm mx-auto font-medium">
+            <p className="text-foreground text-sm md:text-[15px] leading-relaxed max-w-sm mx-auto font-medium">
               四位 AI 专家围绕你的产品想法
               <br />
               进行多维度深度讨论与压力测试
@@ -243,24 +242,24 @@ export default function LandingPage() {
                   >
                     {role.icon}
                   </div>
-                  <span className="text-[11px] text-amber-900 font-bold">{role.name}</span>
+                  <span className="text-[11px] text-foreground font-bold">{role.name}</span>
                 </div>
               ))}
             </div>
           </div>
 
           <div className={`transition-all duration-500 delay-100 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-5"}`}>
-            <div className="bg-white border border-warm-200 rounded-2xl p-5 shadow-md">
-              <label className="block text-xs text-amber-900 mb-3 text-left font-semibold">
+            <Card className="border-border p-5 rounded-2xl shadow-md">
+              <label className="block text-xs text-foreground mb-3 text-left font-semibold">
                 你想探索什么产品方向？
               </label>
-              <textarea
+              <Textarea
                 value={problem}
                 onChange={(e) => setProblem(e.target.value)}
                 placeholder="例如：我想做一个帮助忙碌父母进行 5 分钟家庭健身的 App..."
                 rows={3}
                 aria-label="输入你想探索的产品方向"
-                className="w-full bg-white border border-amber-200 rounded-xl px-4 py-3 text-gray-900 placeholder-amber-400 resize-none focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100 transition-all text-sm leading-relaxed font-medium"
+                className="resize-none text-sm leading-relaxed font-medium"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
@@ -271,13 +270,15 @@ export default function LandingPage() {
               {!problem.trim() && (
                 <div className="mt-2.5 flex flex-wrap gap-1.5">
                   {PROMPT_TEMPLATES.map((tpl) => (
-                    <button
+                    <Button
                       key={tpl}
+                      variant="outline"
+                      size="sm"
                       onMouseDown={() => setProblem(tpl)}
-                      className="text-xs text-amber-800 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg px-2.5 py-1.5 transition-colors text-left leading-snug font-medium"
+                      className="text-xs h-auto py-1.5 px-2.5 leading-snug text-left whitespace-normal"
                     >
                       {tpl}
-                    </button>
+                    </Button>
                   ))}
                 </div>
               )}
@@ -286,11 +287,12 @@ export default function LandingPage() {
                   {error}
                 </div>
               )}
-              <button
+              <Button
                 onClick={handleCreate}
                 disabled={!problem.trim() || isCreating}
+                size="lg"
                 aria-label="开始脑暴"
-                className="mt-4 w-full h-11 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 disabled:bg-warm-300 disabled:text-warm-400 text-white font-semibold rounded-xl transition-colors duration-200 flex items-center justify-center gap-2 text-sm shadow-md disabled:shadow-none"
+                className="mt-4 w-full h-11 font-semibold rounded-xl shadow-md disabled:shadow-none"
               >
                 {isCreating ? (
                   <>
@@ -300,33 +302,26 @@ export default function LandingPage() {
                 ) : (
                   <>
                     开始脑暴
-                    <ArrowRightIcon size={15} />
+                    <ArrowRight size={15} />
                   </>
                 )}
-              </button>
-            </div>
+              </Button>
+            </Card>
           </div>
 
           <div className={`mt-8 transition-all duration-500 delay-200 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-5"}`}>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {[
-                { label: "多角色圆桌", sub: "4位专家讨论", bg: "bg-amber-50", border: "border-amber-200", dot: "bg-amber-400", text: "text-amber-900" },
-                { label: "可视化画布", sub: "功能树提取", bg: "bg-purple-50", border: "border-purple-200", dot: "bg-purple-400", text: "text-purple-900" },
-                { label: "压力测试", sub: "AI面试官", bg: "bg-emerald-50", border: "border-emerald-200", dot: "bg-emerald-400", text: "text-emerald-900" },
-              ].map((f) => (
-                <div
-                  key={f.label}
-                  className={`${f.bg} border ${f.border} rounded-xl px-3 py-3.5 text-center`}
-                >
-                  <div className={`w-2 h-2 rounded-full ${f.dot} mx-auto mb-2`} />
-                  <div className={`text-xs font-bold ${f.text}`}>{f.label}</div>
-                  <div className="text-xs text-warm-500 mt-0.5 font-medium">{f.sub}</div>
-                </div>
+            <div className="flex flex-wrap justify-center gap-2">
+              {FEATURES.map((f) => (
+                <Badge key={f.label} variant="secondary" className="gap-1.5 px-3 py-1.5 text-xs">
+                  <span className={`w-2 h-2 rounded-full ${f.dot}`} />
+                  <span className="font-bold">{f.label}</span>
+                  <span className="text-muted-foreground font-normal">{f.sub}</span>
+                </Badge>
               ))}
             </div>
           </div>
 
-          <div className={`mt-10 text-xs text-warm-500 font-medium transition-all duration-500 delay-200 ${mounted ? "opacity-100" : "opacity-0"}`}>
+          <div className={`mt-10 text-xs text-muted-foreground font-medium transition-all duration-500 delay-200 ${mounted ? "opacity-100" : "opacity-0"}`}>
             Powered by AI · OpenAI Compatible · BYOK Supported
           </div>
         </div>

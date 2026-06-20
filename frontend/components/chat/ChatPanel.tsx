@@ -7,12 +7,15 @@ import { MessageList } from "./MessageList";
 import { RoleSelector } from "./RoleSelector";
 import { InputBox } from "./InputBox";
 import { InterviewBanner } from "./InterviewBanner";
-import { GearIcon, WalletIcon } from "@/components/icons";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
+import { Settings, Wallet, Download, Image as ImageIcon, Loader2 } from "lucide-react";
 
 const PHASE_ACCENT: Record<string, string> = {
   brainstorm: "bg-amber-500",
   coach: "bg-amber-500",
-  interview: "bg-red-500",
+  interview: "bg-destructive",
 };
 
 export function ChatPanel() {
@@ -36,39 +39,35 @@ export function ChatPanel() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="h-12 bg-white border-b border-warm-200 flex items-center px-4 shrink-0 relative">
-        <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${accentColor}`} />
-        <span className="text-sm font-semibold text-warm-600 pl-1">
+      <div className="h-12 bg-background border-b border-border flex items-center px-4 shrink-0 relative">
+        <div className={cn("absolute left-0 top-0 bottom-0 w-[3px]", accentColor)} />
+        <span className="text-sm font-semibold text-foreground pl-1">
           {phase === "interview" ? "AI 面试官" : phase === "coach" ? "产品教练 · 思路梳理" : "产品脑暴群聊"}
         </span>
-        <span className="ml-auto bg-warm-100 text-warm-500 text-xs rounded-full px-2 py-0.5">
+        <Badge variant="secondary" className="ml-auto">
           {messages.length} 条消息
-        </span>
-        <button
+        </Badge>
+        <Button
           onClick={generateProductPortrait}
           disabled={!canGeneratePortrait || isGeneratingPortrait}
           aria-label="生成产品画像"
-          className={`ml-2 text-xs px-2 py-1 rounded-md border transition-all duration-200 min-h-[32px] flex items-center gap-1 focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none ${
+          variant="ghost"
+          size="sm"
+          className={cn(
+            "ml-2 text-xs h-8",
             canGeneratePortrait && !isGeneratingPortrait
-              ? "bg-amber-50 text-amber-600 border-amber-300 hover:bg-amber-100 active:bg-amber-200"
-              : "bg-warm-50 text-warm-300 border-warm-200 cursor-not-allowed"
-          }`}
+              ? "text-primary hover:bg-primary/10"
+              : "text-muted-foreground"
+          )}
         >
           {isGeneratingPortrait ? (
-            <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
+            <Loader2 className="h-3 w-3 animate-spin" />
           ) : (
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-              <line x1="3" y1="9" x2="21" y2="9"/>
-              <line x1="9" y1="21" x2="9" y2="9"/>
-            </svg>
+            <ImageIcon className="h-3 w-3" />
           )}
           画像
-        </button>
-        <button
+        </Button>
+        <Button
           onClick={() => {
             if (sessionId && messages.length > 0) {
               exportSessionAsMarkdown(
@@ -79,28 +78,30 @@ export function ChatPanel() {
             }
           }}
           aria-label="导出会话"
-          className="text-warm-400 hover:text-warm-600 active:text-warm-700 transition-all duration-200 min-h-[32px] min-w-[32px] flex items-center justify-center focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none rounded"
+          variant="ghost"
+          size="icon"
+          className="text-muted-foreground hover:text-foreground"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-            <polyline points="7 10 12 15 17 10"/>
-            <line x1="12" y1="15" x2="12" y2="3"/>
-          </svg>
-        </button>
-        <button
+          <Download className="h-3.5 w-3.5" />
+        </Button>
+        <Button
           onClick={() => setRechargeOpen(true)}
           aria-label="充值"
-          className="text-warm-400 hover:text-amber-600 active:text-amber-700 transition-all duration-200 min-h-[32px] min-w-[32px] flex items-center justify-center focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none rounded"
+          variant="ghost"
+          size="icon"
+          className="text-muted-foreground hover:text-primary"
         >
-          <WalletIcon size={14} />
-        </button>
-        <button
+          <Wallet className="h-3.5 w-3.5" />
+        </Button>
+        <Button
           onClick={() => setSettingsOpen(true)}
           aria-label="设置"
-          className="text-warm-400 hover:text-warm-600 active:text-warm-700 transition-all duration-200 min-h-[32px] min-w-[32px] flex items-center justify-center focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none rounded"
+          variant="ghost"
+          size="icon"
+          className="text-muted-foreground hover:text-foreground"
         >
-          <GearIcon size={14} />
-        </button>
+          <Settings className="h-3.5 w-3.5" />
+        </Button>
       </div>
 
       {isStreaming && streamingRoleColor && (
@@ -111,23 +112,44 @@ export function ChatPanel() {
       )}
 
       {error && (
-        <div role="alert" className="mx-3 mt-2 px-3 py-2 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm flex justify-between items-center">
+        <div
+          role="alert"
+          className="mx-3 mt-2 px-3 py-2 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive text-sm flex justify-between items-center"
+        >
           <span>{error}</span>
-          <button onClick={clearError} aria-label="关闭错误提示" className="text-red-400 hover:text-red-500 active:text-red-600 ml-2 shrink-0 min-h-[44px] min-w-[44px] flex items-center justify-center transition-all duration-200 focus-visible:ring-2 focus-visible:ring-red-500/50 focus-visible:outline-none rounded">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-          </button>
+          <Button
+            onClick={clearError}
+            aria-label="关闭错误提示"
+            variant="ghost"
+            size="icon"
+            className="text-destructive/60 hover:text-destructive ml-2 shrink-0"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+          </Button>
         </div>
       )}
 
       {connectionStatus === "reconnecting" && (
-        <div className="mx-3 mt-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl text-amber-600 text-sm flex items-center gap-2">
-          <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
-          重新连接中...
+        <div className="mx-3 mt-2">
+          <Badge
+            variant="secondary"
+            className="px-3 py-2 rounded-xl text-sm flex items-center gap-2 w-full justify-start"
+          >
+            <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-pulse" />
+            重新连接中...
+          </Badge>
         </div>
       )}
       {connectionStatus === "disconnected" && (
-        <div className="mx-3 mt-2 px-3 py-2 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm">
-          连接已断开，请检查网络
+        <div className="mx-3 mt-2">
+          <Badge
+            variant="destructive"
+            className="px-3 py-2 rounded-xl text-sm w-full justify-start flex"
+          >
+            连接已断开，请检查网络
+          </Badge>
         </div>
       )}
 

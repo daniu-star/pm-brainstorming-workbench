@@ -112,7 +112,7 @@ function WorkbenchContent() {
                   animationDelay: `${i * 0.15}s`,
                 }}
               >
-                <img src={`/avatars/${r.id}.svg`} alt={r.name} className="w-full h-full object-cover" />
+                <img src={`/avatars/${r.id}.svg`} onError={(e) => { e.currentTarget.src = "/avatars/coach.svg"; }} alt={r.name} className="w-full h-full object-cover" />
               </div>
             ))}
           </div>

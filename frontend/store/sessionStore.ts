@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import type { Message, Role, DiscussionMap, SessionSummary, ProductPortrait } from "@/lib/types";
+import type { Message, Role, DiscussionMap, SessionSummary, ProductPortrait, PipelineNodeState, PipelineNodeName, PipelineResult, PipelineSSEEvent, AcceptanceResult } from "@/lib/types";
+import { PIPELINE_NODE_ORDER } from "@/lib/types";
 import { createSSEConnection, type SSEEvent, type SSEConnectionStatus } from "@/lib/sse";
 import { api } from "@/lib/api";
 import { saveApiKeyConfig, clearApiKeyConfig, getStoredApiKey, getStoredBaseUrl, getStoredModel, saveJwtToken, clearJwtToken, isLoggedIn as checkIsLoggedIn, getJwtToken } from "@/lib/user";
@@ -23,6 +24,10 @@ function generateId(): string {
 
 interface SessionState {
   sessionId: string | null;
+  interviewId: string | null;
+  dimensionsCovered: string[];
+  questionCount: number;
+  interviewCompleted: boolean;
   phase: "define" | "coach" | "brainstorm" | "interview";
   messages: Message[];
   discussionMap: DiscussionMap | null;
@@ -63,6 +68,7 @@ interface SessionState {
 
   createSession: (problem: string) => Promise<void>;
   loadSession: (id: string) => Promise<void>;
+  createInterviewSpace: (parentSessionId: string) => Promise<string>;
   sendMessage: (content: string, targetRole: Role | "all") => void;
   sendToCoach: (content: string) => void;
   startInterview: () => void;
@@ -76,6 +82,14 @@ interface SessionState {
   toggleHistory: () => void;
   setInterviewMode: (mode: "voice" | "text") => void;
   setPlayingAudio: (playing: boolean) => void;
+
+  // Pipeline 相关字段
+  pipelineNodes: PipelineNodeState[];
+  pipelineResult: PipelineResult | null;
+  isPipelineRunning: boolean;
+  pipelineRevisionCount: number;
+  runPipeline: () => void;
+  clearPipeline: () => void;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => {
@@ -128,6 +142,9 @@ export const useSessionStore = create<SessionState>((set, get) => {
           messages: [...state.messages, msg],
           streamingContent: "",
           streamingRole: null,
+          ...(event.dimensions_covered ? { dimensionsCovered: event.dimensions_covered } : {}),
+          ...(event.question_count !== undefined ? { questionCount: event.question_count } : {}),
+          ...(event.interview_completed !== undefined ? { interviewCompleted: event.interview_completed } : {}),
         });
         // Auto-update canvas after each role finishes speaking
         if (state.sessionId) {
@@ -184,6 +201,10 @@ export const useSessionStore = create<SessionState>((set, get) => {
 
   return {
     sessionId: null,
+    interviewId: null,
+    dimensionsCovered: [],
+    questionCount: 0,
+    interviewCompleted: false,
     phase: "define",
     messages: [],
     discussionMap: null,
@@ -210,6 +231,11 @@ export const useSessionStore = create<SessionState>((set, get) => {
     hasCompletedOnboarding: isOnboarded(),
     isLoggedIn: checkIsLoggedIn(),
     userNickname: null,
+    // Pipeline 初始状态
+    pipelineNodes: [],
+    pipelineResult: null,
+    isPipelineRunning: false,
+    pipelineRevisionCount: 0,
     setTargetRole: (role) => set({ targetRole: role }),
 
     createSession: async (problem: string) => {
@@ -240,6 +266,20 @@ export const useSessionStore = create<SessionState>((set, get) => {
         discussionMap: session.discussion_map,
         productPortrait: session.product_portrait || null,
       });
+    },
+
+    createInterviewSpace: async (parentSessionId: string) => {
+      const result = await api<{ interview_id: string }>("/api/interview/create-space", {
+        method: "POST",
+        body: JSON.stringify({ parent_session_id: parentSessionId }),
+      });
+      set({
+        interviewId: result.interview_id,
+        dimensionsCovered: [],
+        questionCount: 0,
+        interviewCompleted: false,
+      });
+      return result.interview_id;
     },
 
     sendToCoach: (content: string) => {
@@ -321,9 +361,15 @@ export const useSessionStore = create<SessionState>((set, get) => {
         error: null,
       });
 
+      const useSpace = !!state.interviewId;
+      const endpoint = useSpace
+        ? `/api/interview/space/${state.interviewId}/start`
+        : "/api/interview/start";
+      const body = useSpace ? {} : { session_id: state.sessionId };
+
       abortController = createSSEConnection(
-        "/api/interview/start",
-        { session_id: state.sessionId },
+        endpoint,
+        body,
         handleSSEEvent,
         handleDone,
         handleError,
@@ -352,12 +398,15 @@ export const useSessionStore = create<SessionState>((set, get) => {
         error: null,
       });
 
+      const useSpace = !!state.interviewId;
+      const endpoint = useSpace
+        ? `/api/interview/space/${state.interviewId}/respond`
+        : "/api/interview/respond";
+      const body = useSpace ? { answer } : { session_id: state.sessionId, answer };
+
       abortController = createSSEConnection(
-        "/api/interview/respond",
-        {
-          session_id: state.sessionId,
-          answer,
-        },
+        endpoint,
+        body,
         handleSSEEvent,
         handleDone,
         handleError
@@ -494,6 +543,190 @@ export const useSessionStore = create<SessionState>((set, get) => {
       clearJwtToken();
       set({ isLoggedIn: false, userNickname: null });
       toast("info", "已退出登录");
+    },
+
+    runPipeline: () => {
+      const state = get();
+      if (!state.sessionId) {
+        toast("error", "请先创建会话");
+        return;
+      }
+      if (state.isPipelineRunning) {
+        toast("info", "Pipeline 正在运行中");
+        return;
+      }
+
+      // 重置 pipeline 节点为 pending 状态
+      const initialNodes: PipelineNodeState[] = PIPELINE_NODE_ORDER.map((name) => ({
+        name,
+        status: "pending" as const,
+      }));
+
+      set({
+        pipelineNodes: initialNodes,
+        pipelineResult: null,
+        isPipelineRunning: true,
+        pipelineRevisionCount: 0,
+        error: null,
+      });
+
+      // Pipeline 专用的 SSE 事件处理
+      function handlePipelineEvent(event: SSEEvent) {
+        const currentNode = event.node as PipelineNodeName | undefined;
+
+        switch (event.type) {
+          case "pipeline_start":
+            // Pipeline 已启动，无需额外处理
+            break;
+
+          case "node_start": {
+            if (!currentNode) break;
+            set((s) => ({
+              pipelineNodes: s.pipelineNodes.map((n) =>
+                n.name === currentNode
+                  ? { ...n, status: "running", startedAt: Date.now(), output: "" }
+                  : n
+              ),
+            }));
+            break;
+          }
+
+          case "token": {
+            if (!currentNode) break;
+            set((s) => ({
+              pipelineNodes: s.pipelineNodes.map((n) =>
+                n.name === currentNode
+                  ? { ...n, output: (n.output || "") + (event.token || "") }
+                  : n
+              ),
+            }));
+            break;
+          }
+
+          case "node_done": {
+            if (!currentNode) break;
+            set((s) => ({
+              pipelineNodes: s.pipelineNodes.map((n) =>
+                n.name === currentNode
+                  ? {
+                      ...n,
+                      status: "completed",
+                      completedAt: Date.now(),
+                      output: event.output || n.output || "",
+                      tokens: event.tokens || n.tokens,
+                    }
+                  : n
+              ),
+            }));
+            // 特殊节点：更新画布/画像/验收结果到 store
+            if (currentNode === "canvas_synthesis" && event.canvas_tree) {
+              set({ discussionMap: event.canvas_tree as unknown as DiscussionMap });
+            }
+            if (currentNode === "portrait" && event.portrait) {
+              set({ productPortrait: event.portrait as unknown as ProductPortrait });
+            }
+            break;
+          }
+
+          case "revision_start": {
+            const revCount = event.revision_count || 1;
+            // 将 cot 到 pm_acceptance 的节点重置为 pending
+            const revisionStartIndex = PIPELINE_NODE_ORDER.indexOf("cot");
+            const nodesToReset = PIPELINE_NODE_ORDER.slice(revisionStartIndex);
+            set((s) => ({
+              pipelineRevisionCount: revCount,
+              pipelineNodes: s.pipelineNodes.map((n) =>
+                nodesToReset.includes(n.name)
+                  ? { ...n, status: "pending" as const, output: undefined, startedAt: undefined, completedAt: undefined }
+                  : n
+              ),
+            }));
+            break;
+          }
+
+          case "pipeline_done": {
+            const acceptanceResult = event.acceptance_result
+              ? {
+                  passed: event.acceptance_result.passed,
+                  gaps: event.acceptance_result.gaps || [],
+                  suggestions: event.acceptance_result.suggestions || [],
+                  summary: event.acceptance_result.summary || "",
+                }
+              : { passed: true, gaps: [], suggestions: [], summary: "" };
+
+            const result: PipelineResult = {
+              prd: event.prd || "",
+              canvasTree: event.canvas_tree || {},
+              productPortrait: event.product_portrait || {},
+              acceptanceResult,
+              revisionCount: event.revision_count || 0,
+            };
+            set({
+              pipelineResult: result,
+              isPipelineRunning: false,
+            });
+            if (acceptanceResult.passed) {
+              toast("success", "Pipeline 完成，PM 验收通过");
+            } else {
+              toast("warning", `Pipeline 完成，但 PM 验收未通过（第 ${result.revisionCount} 次修订后仍有缺口）`);
+            }
+            break;
+          }
+
+          case "error": {
+            const errorMsg = event.message || "Pipeline 执行出错";
+            if (currentNode) {
+              set((s) => ({
+                pipelineNodes: s.pipelineNodes.map((n) =>
+                  n.name === currentNode ? { ...n, status: "error" as const } : n
+                ),
+              }));
+            }
+            set({ error: errorMsg, isPipelineRunning: false });
+            toast("error", errorMsg);
+            break;
+          }
+
+          case "quota_deduct":
+            set((s) => ({ tokensUsed: s.tokensUsed + (event.tokens || 0) }));
+            get().fetchQuota();
+            break;
+        }
+      }
+
+      function handlePipelineDone() {
+        // 确保运行状态被重置（pipeline_done 可能已处理）
+        const current = get();
+        if (current.isPipelineRunning) {
+          set({ isPipelineRunning: false });
+        }
+      }
+
+      function handlePipelineError(err: string) {
+        set({ error: err, isPipelineRunning: false });
+        toast("error", err);
+      }
+
+      abortController = createSSEConnection(
+        "/api/brainstorm/pipeline",
+        { session_id: state.sessionId },
+        handlePipelineEvent,
+        handlePipelineDone,
+        handlePipelineError
+      );
+    },
+
+    clearPipeline: () => {
+      if (abortController && get().isPipelineRunning) {
+        abortController.abort();
+        abortController = null;
+      }
+      set({
+        pipelineNodes: [],
+        pipelineResult: null,
+        isPipelineRunning: false,
+        pipelineRevisionCount: 0,
+      });
     },
 
   };

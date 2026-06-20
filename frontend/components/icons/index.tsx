@@ -157,12 +157,31 @@ export function SpinnerIcon({ size = 24, className, ...props }: IconProps) {
 
 const ROLE_NAME_TO_FILENAME: Record<string, string> = {
   "产品教练": "coach",
+  "coach": "coach",
   "AI面试官": "interviewer-business",
   "interviewer": "interviewer-business",
+  "面试官": "interviewer-business",
+  "技术负责人": "cto",
+  "cto": "cto",
+  "设计师": "designer",
+  "designer": "designer",
+  "运营负责人": "ops",
+  "ops": "ops",
+  "目标用户": "user",
+  "user": "user",
 };
 
 export function getRoleAvatar(roleName?: string): string {
   if (!roleName) return "/avatars/coach.svg";
-  const filename = ROLE_NAME_TO_FILENAME[roleName] || roleName;
+  const filename = ROLE_NAME_TO_FILENAME[roleName] || "coach";
   return `/avatars/${filename}.svg`;
+}
+
+export const AVATAR_FALLBACK = "/avatars/coach.svg";
+
+export function handleAvatarError(e: React.SyntheticEvent<HTMLImageElement>) {
+  const target = e.currentTarget;
+  if (target.src !== AVATAR_FALLBACK) {
+    target.src = AVATAR_FALLBACK;
+  }
 }

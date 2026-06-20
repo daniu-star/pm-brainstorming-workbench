@@ -2,6 +2,8 @@
 
 import type { ProductPortrait as ProductPortraitType } from "@/lib/types";
 import { ProductWireframe } from "./ProductWireframe";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
 interface ProductPortraitProps {
   portrait: ProductPortraitType;
@@ -24,90 +26,125 @@ export function ProductPortrait({ portrait }: ProductPortraitProps) {
 
   return (
     <div className="p-4 space-y-4 overflow-y-auto">
-      <div className="bg-white rounded-xl border border-warm-200 p-5 shadow-sm">
-        <h2 className="text-xl font-bold text-warm-800">{product_name}</h2>
-        <p className="text-sm text-amber-600 mt-1 font-medium">{tagline}</p>
-      </div>
+      <Card className="border-border">
+        <CardHeader className="p-5 space-y-1">
+          <CardTitle className="text-xl text-foreground">{product_name}</CardTitle>
+          <p className="text-sm text-primary font-medium">{tagline}</p>
+        </CardHeader>
+      </Card>
 
       {target_users && (
-        <div className="bg-white rounded-xl border border-warm-200 p-4 shadow-sm">
-          <h3 className="text-xs font-semibold text-warm-500 uppercase tracking-wider mb-2">目标用户</h3>
-          <p className="text-sm text-warm-700 leading-relaxed">{target_users}</p>
-        </div>
+        <Card className="border-border">
+          <CardHeader className="p-4 space-y-2">
+            <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              目标用户
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-4 pt-0">
+            <p className="text-sm text-foreground leading-relaxed">{target_users}</p>
+          </CardContent>
+        </Card>
       )}
 
       {core_features.length > 0 && (
-        <div className="bg-white rounded-xl border border-warm-200 p-4 shadow-sm space-y-3">
-          <h3 className="text-xs font-semibold text-warm-500 uppercase tracking-wider">核心功能</h3>
-          {mustHave.length > 0 && (
-            <div className="space-y-2">
-              {mustHave.map((f, i) => (
-                <FeatureItem key={i} feature={f} />
-              ))}
-            </div>
-          )}
-          {niceToHave.length > 0 && (
-            <div className="space-y-2 pt-2 border-t border-warm-100">
-              {niceToHave.map((f, i) => (
-                <FeatureItem key={i} feature={f} />
-              ))}
-            </div>
-          )}
-        </div>
+        <Card className="border-border">
+          <CardHeader className="p-4 space-y-3">
+            <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              核心功能
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-4 pt-0 space-y-3">
+            {mustHave.length > 0 && (
+              <div className="space-y-2">
+                {mustHave.map((f, i) => (
+                  <FeatureItem key={i} feature={f} />
+                ))}
+              </div>
+            )}
+            {niceToHave.length > 0 && (
+              <div className="space-y-2 pt-2 border-t border-border">
+                {niceToHave.map((f, i) => (
+                  <FeatureItem key={i} feature={f} />
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       )}
 
       {style_keywords.length > 0 && (
-        <div className="bg-white rounded-xl border border-warm-200 p-4 shadow-sm">
-          <h3 className="text-xs font-semibold text-warm-500 uppercase tracking-wider mb-2">风格关键词</h3>
-          <div className="flex flex-wrap gap-2">
-            {style_keywords.map((kw, i) => (
-              <span
-                key={i}
-                className="px-2.5 py-1 text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 rounded-full"
-              >
-                {kw}
-              </span>
-            ))}
-          </div>
-        </div>
+        <Card className="border-border">
+          <CardHeader className="p-4 space-y-2">
+            <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              风格关键词
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-4 pt-0">
+            <div className="flex flex-wrap gap-2">
+              {style_keywords.map((kw, i) => (
+                <Badge key={i} variant="secondary">
+                  {kw}
+                </Badge>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {color_scheme && (
-        <div className="bg-white rounded-xl border border-warm-200 p-4 shadow-sm">
-          <h3 className="text-xs font-semibold text-warm-500 uppercase tracking-wider mb-3">配色方案</h3>
-          <div className="flex gap-4">
-            {(["primary", "secondary", "accent", "background"] as const).map((key) => {
-              const hex = color_scheme[key];
-              if (!hex) return null;
-              return (
-                <div key={key} className="flex flex-col items-center gap-1.5">
-                  <div
-                    className="w-10 h-10 rounded-full border border-warm-200 shadow-inner"
-                    style={{ backgroundColor: hex }}
-                  />
-                  <span className="text-[10px] text-warm-500 font-mono">{hex}</span>
-                  <span className="text-[10px] text-warm-500">
-                    {key === "primary" ? "主色" : key === "secondary" ? "辅色" : key === "accent" ? "强调" : "背景"}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        <Card className="border-border">
+          <CardHeader className="p-4 space-y-3">
+            <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              配色方案
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-4 pt-0">
+            <div className="flex gap-4">
+              {(["primary", "secondary", "accent", "background"] as const).map((key) => {
+                const hex = color_scheme[key];
+                if (!hex) return null;
+                return (
+                  <div key={key} className="flex flex-col items-center gap-1.5">
+                    <div
+                      className="w-10 h-10 rounded-full border border-border shadow-inner"
+                      style={{ backgroundColor: hex }}
+                    />
+                    <span className="text-[10px] text-muted-foreground font-mono">{hex}</span>
+                    <span className="text-[10px] text-muted-foreground">
+                      {key === "primary" ? "主色" : key === "secondary" ? "辅色" : key === "accent" ? "强调" : "背景"}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {interaction_style && (
-        <div className="bg-white rounded-xl border border-warm-200 p-4 shadow-sm">
-          <h3 className="text-xs font-semibold text-warm-500 uppercase tracking-wider mb-2">交互风格</h3>
-          <p className="text-sm text-warm-700">{interaction_style}</p>
-        </div>
+        <Card className="border-border">
+          <CardHeader className="p-4 space-y-2">
+            <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              交互风格
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-4 pt-0">
+            <p className="text-sm text-foreground">{interaction_style}</p>
+          </CardContent>
+        </Card>
       )}
 
       {wireframe_description && (
-        <div className="bg-white rounded-xl border border-warm-200 p-4 shadow-sm">
-          <h3 className="text-xs font-semibold text-warm-500 uppercase tracking-wider mb-3">页面线框</h3>
-          <ProductWireframe description={wireframe_description} />
-        </div>
+        <Card className="border-border">
+          <CardHeader className="p-4 space-y-3">
+            <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              页面线框
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-4 pt-0">
+            <ProductWireframe description={wireframe_description} />
+          </CardContent>
+        </Card>
       )}
     </div>
   );
@@ -117,19 +154,16 @@ function FeatureItem({ feature }: { feature: { name: string; description: string
   const isMust = feature.priority === "must-have";
   return (
     <div className="flex items-start gap-2">
-      <span
-        className={`shrink-0 mt-0.5 px-1.5 py-0.5 text-[10px] font-semibold rounded ${
-          isMust
-            ? "bg-amber-100 text-amber-700 border border-amber-300"
-            : "bg-warm-100 text-warm-500 border border-warm-200"
-        }`}
+      <Badge
+        variant={isMust ? "default" : "secondary"}
+        className="shrink-0 mt-0.5 px-1.5 text-[10px]"
       >
         {isMust ? "必备" : "加分"}
-      </span>
+      </Badge>
       <div className="min-w-0">
-        <span className="text-sm font-medium text-warm-700">{feature.name}</span>
+        <span className="text-sm font-medium text-foreground">{feature.name}</span>
         {feature.description && (
-          <p className="text-xs text-warm-500 mt-0.5 leading-relaxed">{feature.description}</p>
+          <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{feature.description}</p>
         )}
       </div>
     </div>

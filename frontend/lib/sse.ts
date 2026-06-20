@@ -10,7 +10,23 @@ export interface SSEEvent {
   phase?: string;
   message?: string;
   action?: string;
-  node?: Record<string, unknown>;
+  node?: string;
+  interview_id?: string;
+  dimensions_covered?: string[];
+  question_count?: number;
+  interview_completed?: boolean;
+  // Pipeline 相关字段
+  output?: string;
+  canvas_tree?: Record<string, unknown>;
+  portrait?: Record<string, unknown>;
+  acceptance_result?: { passed: boolean; gaps: string[]; suggestions: string[]; summary: string };
+  gaps?: string[];
+  suggestions?: string[];
+  revision_count?: number;
+  total_tokens?: number;
+  prd?: string;
+  product_portrait?: Record<string, unknown>;
+  session_id?: string;
 }
 
 export type SSEConnectionStatus = "connecting" | "connected" | "reconnecting" | "disconnected";

@@ -4,7 +4,7 @@ import { useRef, useEffect, useMemo } from "react";
 import { useSessionStore } from "@/store/sessionStore";
 import { MessageBubble } from "./MessageBubble";
 import { ROLES, ROLE_MAP } from "@/lib/types";
-import { BrainIcon, getRoleAvatar } from "@/components/icons";
+import { BrainIcon, getRoleAvatar, handleAvatarError } from "@/components/icons";
 import type { Message } from "@/lib/types";
 
 type GroupPosition = "first" | "middle" | "last" | "single";
@@ -154,7 +154,7 @@ export function MessageList() {
                     boxShadow: `0 0 12px ${r.color}20`,
                   }}
                 >
-                  <img src={`/avatars/${r.id}.svg`} alt={r.name} className="w-full h-full object-cover" />
+                  <img src={`/avatars/${r.id}.svg`} onError={handleAvatarError} alt={r.name} className="w-full h-full object-cover" />
                 </div>
                 <span className="text-[10px] text-warm-500">{r.name}</span>
               </div>

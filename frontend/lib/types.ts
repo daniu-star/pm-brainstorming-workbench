@@ -110,3 +110,78 @@ export const TIMELINE_NODE_CONFIG: Record<string, { label: string; color: string
   disagreement:  { label: "分歧", color: "#ef4444", bg: "#ef444418", icon: "✗" },
   summary:       { label: "总结", color: "#f59e0b", bg: "#f59e0b18", icon: "◆" },
 };
+
+// ===== Pipeline 相关类型 =====
+export type PipelineNodeName = "pm_prd" | "cot" | "coach" | "cto" | "designer" | "ops" | "user_feedback" | "canvas_synthesis" | "portrait" | "pm_acceptance";
+export type PipelineNodeStatus = "pending" | "running" | "completed" | "error";
+export interface PipelineNodeState {
+  name: PipelineNodeName;
+  status: PipelineNodeStatus;
+  output?: string;
+  startedAt?: number;
+  completedAt?: number;
+  tokens?: number;
+}
+export interface AcceptanceResult {
+  passed: boolean;
+  gaps: string[];
+  suggestions: string[];
+  summary: string;
+}
+export interface PipelineResult {
+  prd: string;
+  canvasTree: Record<string, unknown>;
+  productPortrait: Record<string, unknown>;
+  acceptanceResult: AcceptanceResult;
+  revisionCount: number;
+}
+
+// Pipeline SSE 事件类型（用于在 store 中将 SSEEvent 安全转换为 pipeline 事件）
+export interface PipelineSSEEvent {
+  type: string;
+  session_id?: string;
+  node?: PipelineNodeName | string;
+  role_name?: string;
+  role?: string;
+  token?: string;
+  tokens?: number;
+  output?: string;
+  canvas_tree?: Record<string, unknown>;
+  portrait?: Record<string, unknown>;
+  acceptance_result?: AcceptanceResult;
+  gaps?: string[];
+  suggestions?: string[];
+  revision_count?: number;
+  total_tokens?: number;
+  prd?: string;
+  product_portrait?: Record<string, unknown>;
+  message?: string;
+}
+
+// 10 个 Pipeline 节点的中文显示名映射
+export const PIPELINE_NODE_LABELS: Record<PipelineNodeName, string> = {
+  pm_prd: "产品经理（撰写PRD）",
+  cot: "思维链引擎",
+  coach: "产品教练",
+  cto: "技术负责人",
+  designer: "设计师",
+  ops: "运营负责人",
+  user_feedback: "目标用户",
+  canvas_synthesis: "画布综合",
+  portrait: "产品画像",
+  pm_acceptance: "PM验收",
+};
+
+// Pipeline 节点顺序（用于初始化和修订循环重置）
+export const PIPELINE_NODE_ORDER: PipelineNodeName[] = [
+  "pm_prd",
+  "cot",
+  "coach",
+  "cto",
+  "designer",
+  "ops",
+  "user_feedback",
+  "canvas_synthesis",
+  "portrait",
+  "pm_acceptance",
+];

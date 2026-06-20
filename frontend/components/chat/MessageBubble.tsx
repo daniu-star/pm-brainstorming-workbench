@@ -4,7 +4,11 @@ import { memo } from "react";
 import type { Message } from "@/lib/types";
 import { ROLE_MAP } from "@/lib/types";
 import ReactMarkdown from "react-markdown";
-import { getRoleAvatar } from "@/components/icons";
+import { getRoleAvatar, handleAvatarError } from "@/components/icons";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 interface Props {
   message: Message;
@@ -36,20 +40,20 @@ export const MessageBubble = memo(function MessageBubble({
 
   if (isUser) {
     return (
-      <div className={`msg-enter flex justify-end ${mb}`}>
+      <div className={cn("msg-enter flex justify-end", mb)}>
         <div className="max-w-[70%]">
-          <div
-            className={`relative border border-amber-200/60 px-4 py-2.5 shadow-sm bubble-user-bg ${
-              showMeta
-                ? "rounded-2xl rounded-br-[4px]"
-                : "rounded-xl"
-            } ${isStreaming ? "streaming-cursor" : ""}`}
+          <Card
+            className={cn(
+              "relative px-4 py-2.5 shadow-sm bg-primary text-primary-foreground border-primary",
+              showMeta ? "rounded-2xl rounded-br-[4px]" : "rounded-xl",
+              isStreaming && "streaming-cursor"
+            )}
           >
-            <div className="absolute right-0 top-2 bottom-2 w-[3px] rounded-full bg-amber-500" />
-            <p className="text-warm-600 text-sm leading-relaxed whitespace-pre-wrap">
+            <div className="absolute right-0 top-2 bottom-2 w-[3px] rounded-full bg-primary-foreground/40" />
+            <p className="text-sm leading-relaxed whitespace-pre-wrap">
               {message.content}
             </p>
-          </div>
+          </Card>
         </div>
       </div>
     );
@@ -57,40 +61,40 @@ export const MessageBubble = memo(function MessageBubble({
 
   if (isInterviewer) {
     return (
-      <div className={`msg-enter flex gap-3 ${mb}`}>
+      <div className={cn("msg-enter flex gap-3", mb)}>
         {showMeta ? (
           <div className="avatar-pulse-ring shrink-0 mt-0.5">
-            <div
-              className="w-9 h-9 rounded-full overflow-hidden relative z-10 interviewer-avatar-ring"
-            >
+            <Avatar className="w-9 h-9 rounded-full overflow-hidden relative z-10 interviewer-avatar-ring">
               <img
                 src={getRoleAvatar(roleName)}
+                onError={handleAvatarError}
                 alt="AI 面试官"
                 className="w-full h-full object-cover"
               />
-            </div>
+              <AvatarFallback>?</AvatarFallback>
+            </Avatar>
           </div>
         ) : (
           <div className="w-9 shrink-0" />
         )}
         <div className="flex-1 min-w-0 max-w-[80%]">
-          <div
-            className={`relative border border-red-200/60 px-4 py-2.5 shadow-sm transition-shadow duration-200 interviewer-bubble-bg ${
-              showMeta
-                ? "rounded-2xl rounded-tl-[4px]"
-                : "rounded-xl"
-            } ${isStreaming ? "streaming-cursor" : ""}`}
+          <Card
+            className={cn(
+              "relative px-4 py-2.5 shadow-sm transition-shadow duration-200 border-destructive/30",
+              showMeta ? "rounded-2xl rounded-tl-[4px]" : "rounded-xl",
+              isStreaming && "streaming-cursor"
+            )}
           >
-            <div className="absolute left-0 top-2 bottom-2 w-[4px] rounded-full bg-red-500" />
+            <div className="absolute left-0 top-2 bottom-2 w-[4px] rounded-full bg-destructive" />
             {showMeta && (
               <div className="absolute top-1.5 right-3 z-10">
-                <span className="rounded-full bg-red-500 px-2 py-0.5 text-[11px] font-semibold text-white">
+                <Badge variant="destructive" className="text-[11px]">
                   AI 面试官
-                </span>
+                </Badge>
               </div>
             )}
-            <div className={`pl-3 ${showMeta ? "pr-16" : ""}`}>
-              <div className="prose prose-sm max-w-none text-warm-600 leading-relaxed">
+            <div className={cn("pl-3", showMeta && "pr-16")}>
+              <div className="prose prose-sm max-w-none text-foreground leading-relaxed">
                 {isStreaming ? (
                   <p className="whitespace-pre-wrap">{message.content}</p>
                 ) : (
@@ -98,63 +102,53 @@ export const MessageBubble = memo(function MessageBubble({
                 )}
               </div>
             </div>
-          </div>
+          </Card>
         </div>
       </div>
     );
   }
 
   return (
-    <div className={`msg-enter flex gap-3 ${mb}`}>
+    <div
+      className={cn("msg-enter flex gap-3", mb)}
+      style={{ "--role-color": roleColor } as React.CSSProperties}
+    >
       {showMeta ? (
         <div className="shrink-0 mt-0.5">
-          <div
-            className="w-9 h-9 rounded-full overflow-hidden"
-            style={{
-              border: `1.5px solid ${roleColor}`,
-              boxShadow: `0 0 8px ${roleColor}33`,
-            }}
-          >
+          <Avatar className="w-9 h-9 rounded-full overflow-hidden border-[1.5px] border-[color:var(--role-color)] [box-shadow:0_0_8px_color-mix(in_srgb,var(--role-color)_20%,transparent)]">
             {roleName ? (
               <img
                 src={getRoleAvatar(roleName)}
+                onError={handleAvatarError}
                 alt={roleInfo?.name || roleName}
                 className="w-full h-full object-cover"
               />
             ) : (
-              <span className="text-warm-500">?</span>
+              <AvatarFallback className="text-muted-foreground">?</AvatarFallback>
             )}
-          </div>
+          </Avatar>
         </div>
       ) : (
         <div className="w-9 shrink-0" />
       )}
       <div className="flex-1 min-w-0 max-w-[80%]">
-        <div
-          className={`relative border px-4 py-2.5 shadow-sm transition-shadow duration-200 ${
-            showMeta
-              ? "rounded-2xl rounded-tl-[4px]"
-              : "rounded-xl"
-          } ${isStreaming ? "streaming-cursor" : ""}`}
-          style={{
-            background: `linear-gradient(135deg, ${roleColor}14, ${roleColor}05)`,
-            borderColor: `${roleColor}20`,
-          }}
-        >
-          <div
-            className="absolute left-0 top-2 bottom-2 w-[3px] rounded-full"
-            style={{ backgroundColor: roleColor }}
-          />
-          {showMeta && (
-            <span
-              className="absolute top-1.5 right-3 z-10 rounded-full px-2 py-0.5 text-[11px] font-semibold text-white"
-              style={{ backgroundColor: roleColor }}
-            >
-              {roleInfo?.name || roleName || "未知角色"}
-            </span>
+        <Card
+          className={cn(
+            "relative px-4 py-2.5 shadow-sm transition-shadow duration-200 border-[color:color-mix(in_srgb,var(--role-color)_20%,transparent)] bg-[linear-gradient(135deg,color-mix(in_srgb,var(--role-color)_8%,transparent),color-mix(in_srgb,var(--role-color)_3%,transparent))]",
+            showMeta ? "rounded-2xl rounded-tl-[4px]" : "rounded-xl",
+            isStreaming && "streaming-cursor"
           )}
-          <div className={`pl-2 ${showMeta ? "pr-16" : ""}`}>
-            <div className="prose prose-sm max-w-none text-warm-600 leading-relaxed">
+        >
+          <div className="absolute left-0 top-2 bottom-2 w-[3px] rounded-full bg-[var(--role-color)]" />
+          {showMeta && (
+            <div className="absolute top-1.5 right-3 z-10">
+              <Badge className="text-[11px] text-white border-transparent bg-[var(--role-color)]">
+                {roleInfo?.name || roleName || "未知角色"}
+              </Badge>
+            </div>
+          )}
+          <div className={cn("pl-2", showMeta && "pr-16")}>
+            <div className="prose prose-sm max-w-none text-foreground leading-relaxed">
               {isStreaming ? (
                 <p className="whitespace-pre-wrap">{message.content}</p>
               ) : (
@@ -162,7 +156,7 @@ export const MessageBubble = memo(function MessageBubble({
               )}
             </div>
           </div>
-        </div>
+        </Card>
       </div>
     </div>
   );

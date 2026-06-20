@@ -2,7 +2,13 @@ import logging
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import Response
 from pydantic import BaseModel
-from core.voice import synthesize_speech, transcribe_audio, transcribe_audio_hf, DEFAULT_VOICE
+from core.voice import (
+    synthesize_speech,
+    transcribe_audio,
+    transcribe_audio_hf,
+    DEFAULT_VOICE,
+    INTERVIEWER_VOICE_PROFILE,
+)
 from api.deps import get_current_user, get_user_llm_config, check_quota
 
 logger = logging.getLogger(__name__)
@@ -12,9 +18,24 @@ router = APIRouter(prefix="/api/voice", tags=["voice"])
 class TTSRequest(BaseModel):
     text: str
     voice: str | None = None
+    rate: str = "+0%"
+    pitch: str = "+0%"
+
+
+class InterviewerTTSRequest(BaseModel):
+    text: str
 
 
 INTERVIEWER_VOICE = "zh-CN-YunxiNeural"
+
+# 支持 audio.transcriptions 的 provider 域名关键词
+AUDIO_CAPABLE_KEYWORDS = ("openai", "groq", "together")
+
+
+def _is_audio_capable_provider(llm_config: dict) -> bool:
+    """判断用户的 LLM provider 是否支持 Whisper 语音识别"""
+    base_url = (llm_config.get("base_url") or "").lower()
+    return any(kw in base_url for kw in AUDIO_CAPABLE_KEYWORDS)
 
 
 @router.post("/tts")
@@ -32,7 +53,27 @@ async def text_to_speech(
     if voice_preset == "interviewer":
         effective_voice = INTERVIEWER_VOICE
     try:
-        audio = await synthesize_speech(req.text, effective_voice)
+        audio = await synthesize_speech(req.text, effective_voice, rate=req.rate, pitch=req.pitch)
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return Response(content=audio, media_type="audio/mpeg")
+
+
+@router.post("/tts/interviewer")
+async def interviewer_text_to_speech(req: InterviewerTTSRequest, request: Request):
+    """面试官专用 TTS 端点，使用 INTERVIEWER_VOICE_PROFILE（语速 -5%、音调 -2%）"""
+    user = get_current_user(request)
+    llm_config = get_user_llm_config(request)
+    check_quota(user, llm_config)
+    if not req.text.strip():
+        raise HTTPException(status_code=400, detail="文本不能为空")
+    try:
+        audio = await synthesize_speech(
+            req.text,
+            voice=INTERVIEWER_VOICE_PROFILE["voice"],
+            rate=INTERVIEWER_VOICE_PROFILE["rate"],
+            pitch=INTERVIEWER_VOICE_PROFILE["pitch"],
+        )
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
     return Response(content=audio, media_type="audio/mpeg")
@@ -60,29 +101,36 @@ async def speech_to_text(request: Request, file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="音频文件为空")
 
     try:
-        # Always prefer HF Whisper (free, reliable) for STT
-        # Only fallback to user's API key if HF is unavailable
-        # Note: Most LLM providers (DeepSeek, etc.) do NOT support Whisper
+        # 优先使用 HF Whisper（免费），多模型回退链已在 transcribe_audio_hf 内实现
         try:
             text = await transcribe_audio_hf(
                 audio_bytes=audio_bytes,
                 content_type=content_type,
             )
         except RuntimeError as hf_err:
-            # HF unavailable, try user's API key only if it looks like OpenAI
-            if llm_config["api_key"] and llm_config.get("base_url") and (
-                "openai" in (llm_config.get("base_url") or "").lower()
-            ):
-                logger.warning(f"HF STT failed ({hf_err}), falling back to user API")
-                text = await transcribe_audio(
-                    audio_bytes=audio_bytes,
-                    content_type=content_type,
-                    api_key=llm_config["api_key"],
-                    base_url=llm_config["base_url"],
-                    model=llm_config["model"],
-                )
+            # HF 全部模型失败后，若用户配置了支持 audio 的 provider 则尝试回退
+            if llm_config["api_key"] and _is_audio_capable_provider(llm_config):
+                logger.warning(f"HF STT failed ({hf_err}), falling back to user API ({llm_config.get('base_url')})")
+                try:
+                    text = await transcribe_audio(
+                        audio_bytes=audio_bytes,
+                        content_type=content_type,
+                        api_key=llm_config["api_key"],
+                        base_url=llm_config["base_url"],
+                        model=llm_config["model"],
+                    )
+                except Exception as user_err:
+                    raise HTTPException(
+                        status_code=503,
+                        detail=f"语音识别服务暂不可用。HF错误：{hf_err}；用户API错误：{user_err}。请在设置中配置有效的 HF_API_TOKEN 或使用支持 Whisper 的 API（如 OpenAI/Groq）。"
+                    )
             else:
-                raise
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"语音识别服务暂不可用：{hf_err}。请在后端 .env 中配置有效的 HF_API_TOKEN，或在设置中配置支持 Whisper 的 API（如 OpenAI/Groq/Together）。"
+                )
+    except HTTPException:
+        raise
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:

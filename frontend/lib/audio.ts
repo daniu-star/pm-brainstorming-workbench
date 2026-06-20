@@ -150,3 +150,73 @@ export async function playTTSStream(
 
   return cleanup;
 }
+
+// ===== 面试官专用 TTS（独立端点，语速 -5%、音调 -2%）=====
+
+const activeAudioControllers = new Set<AbortController>();
+
+export async function playInterviewerTTS(
+  text: string,
+  onSentenceStart?: (sentence: string) => void,
+  signal?: AbortSignal
+): Promise<() => void> {
+  let stopped = false;
+  const controller = new AbortController();
+  activeAudioControllers.add(controller);
+
+  const combinedSignal = signal
+    ? AbortSignal.any([signal, controller.signal])
+    : controller.signal;
+
+  if (signal?.aborted) {
+    controller.abort();
+  }
+
+  const sentences = splitSentences(text);
+
+  const streamPromise = (async () => {
+    for (const sentence of sentences) {
+      if (stopped || combinedSignal.aborted) break;
+
+      onSentenceStart?.(sentence);
+
+      const res = await fetch(apiUrl("/api/voice/tts/interviewer"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getUserHeaders() },
+        body: JSON.stringify({ text: sentence }),
+        signal: combinedSignal,
+      });
+
+      if (!res.ok) {
+        throw new Error("语音合成失败");
+      }
+
+      const blob = await res.blob();
+
+      if (stopped || combinedSignal.aborted) break;
+
+      await playAudioBlob(blob, combinedSignal);
+    }
+  })();
+
+  streamPromise.finally(() => {
+    activeAudioControllers.delete(controller);
+  });
+
+  const cleanup = () => {
+    stopped = true;
+    controller.abort();
+    activeAudioControllers.delete(controller);
+  };
+
+  streamPromise.catch(() => {});
+
+  return cleanup;
+}
+
+export function stopAllAudio(): void {
+  for (const controller of activeAudioControllers) {
+    controller.abort();
+  }
+  activeAudioControllers.clear();
+}
