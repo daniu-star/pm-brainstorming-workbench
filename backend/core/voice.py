@@ -65,18 +65,18 @@ async def _call_hf_whisper(model: str, audio_bytes: bytes, content_type: str) ->
     if not HF_API_TOKEN:
         raise RuntimeError("HF_API_TOKEN 未配置")
 
-    import httpx
+    import requests
 
     ext = "wav" if "wav" in content_type else "webm"
     filename = f"audio.{ext}"
 
     def _post():
-        with httpx.Client(timeout=60.0) as client:
-            return client.post(
-                f"https://api-inference.huggingface.co/models/{model}",
-                headers={"Authorization": f"Bearer {HF_API_TOKEN}"},
-                files={"file": (filename, audio_bytes, content_type)},
-            )
+        return requests.post(
+            f"https://api-inference.huggingface.co/models/{model}",
+            headers={"Authorization": f"Bearer {HF_API_TOKEN}"},
+            files={"file": (filename, audio_bytes, content_type)},
+            timeout=60.0,
+        )
 
     response = await asyncio.to_thread(_post)
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { useSessionStore } from "@/store/sessionStore";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { ROLES } from "@/lib/types";
@@ -11,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { Send, Mic, Square, Loader2, Brain, ArrowRight, Target } from "lucide-react";
 
 export function InputBox() {
+  const router = useRouter();
   const [input, setInput] = useState("");
   const sendMessage = useSessionStore((s) => s.sendMessage);
   const sendToCoach = useSessionStore((s) => s.sendToCoach);
@@ -19,6 +21,7 @@ export function InputBox() {
   const isStreaming = useSessionStore((s) => s.isStreaming);
   const generateCanvas = useSessionStore((s) => s.generateCanvas);
   const startInterview = useSessionStore((s) => s.startInterview);
+  const sessionId = useSessionStore((s) => s.sessionId);
   const targetRole = useSessionStore((s) => s.targetRole);
   const setTargetRole = useSessionStore((s) => s.setTargetRole);
 
@@ -83,8 +86,8 @@ export function InputBox() {
             </Button>
             <span className="text-muted-foreground/40">|</span>
             <Button
-              onClick={startInterview}
-              disabled={isStreaming}
+              onClick={() => sessionId && router.push(`/session/${sessionId}/interview`)}
+              disabled={isStreaming || !sessionId}
               aria-label="进入面试模式"
               variant="ghost"
               size="sm"
