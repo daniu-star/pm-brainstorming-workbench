@@ -54,6 +54,7 @@ interface SessionState {
   hasCompletedOnboarding: boolean;
   isLoggedIn: boolean;
   userNickname: string | null;
+  lastAnswerQuality: "good" | "bad" | "neutral";
   setTargetRole: (role: Role | "all") => void;
   setUserApiKey: (key: string, baseUrl: string, model: string) => Promise<void>;
   clearUserApiKey: () => void;
@@ -112,6 +113,19 @@ export const useSessionStore = create<SessionState>((set, get) => {
     }
   }
 
+  const evaluateAnswerQuality = (aiResponse: string): "good" | "bad" | "neutral" => {
+    const goodKeywords = ["很好", "不错", "优秀", "出色", "到位", "精准", "深入", "全面", "清晰", "合理", "赞", "棒", "excellent", "good", "great", "well"];
+    const badKeywords = ["不够", "需要改进", "缺失", "不足", "欠缺", "薄弱", "偏离", "模糊", "浅", "缺乏", "忽略", "遗漏", "insufficient", "weak", "lacking", "missing", "needs improvement"];
+
+    const lower = aiResponse.toLowerCase();
+    const hasGood = goodKeywords.some(k => lower.includes(k));
+    const hasBad = badKeywords.some(k => lower.includes(k));
+
+    if (hasGood && !hasBad) return "good";
+    if (hasBad && !hasGood) return "bad";
+    return "neutral";
+  };
+
   function handleSSEEvent(event: SSEEvent) {
     switch (event.type) {
       case "phase_change":
@@ -145,6 +159,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
           ...(event.dimensions_covered ? { dimensionsCovered: event.dimensions_covered } : {}),
           ...(event.question_count !== undefined ? { questionCount: event.question_count } : {}),
           ...(event.interview_completed !== undefined ? { interviewCompleted: event.interview_completed } : {}),
+          lastAnswerQuality: evaluateAnswerQuality(state.streamingContent),
         });
         // Auto-update canvas after each role finishes speaking
         if (state.sessionId) {
@@ -231,6 +246,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
     hasCompletedOnboarding: isOnboarded(),
     isLoggedIn: checkIsLoggedIn(),
     userNickname: null,
+    lastAnswerQuality: "neutral" as const,
     // Pipeline 初始状态
     pipelineNodes: [],
     pipelineResult: null,

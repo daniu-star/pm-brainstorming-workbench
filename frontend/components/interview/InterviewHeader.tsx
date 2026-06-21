@@ -54,7 +54,7 @@ function DimensionRing({ dimensionsCovered }: { dimensionsCovered: string[] }) {
           })}
         </g>
       </svg>
-      <span className="absolute text-[9px] font-semibold text-muted-foreground leading-none">
+      <span className="absolute text-[9px] font-semibold text-slate-400 leading-none">
         {coveredCount}/{DIMENSIONS.length}
       </span>
     </div>
@@ -80,7 +80,7 @@ export function InterviewHeader({
   const { sessionId, interviewMode, setInterviewMode } = useSessionStore();
 
   return (
-    <header className="h-14 bg-card/90 backdrop-blur border-b border-border flex items-center justify-between px-4 shrink-0 shadow-sm">
+    <header className="interview-dark-header h-14 flex items-center justify-between px-4 shrink-0 shadow-sm">
       <div className="flex items-center gap-3">
         <Button
           variant="ghost"
@@ -95,7 +95,7 @@ export function InterviewHeader({
           aria-label="返回主会话"
           className="h-10 w-10"
         >
-          <ArrowLeft className="h-5 w-5" />
+          <ArrowLeft className="h-5 w-5 text-slate-300" />
         </Button>
 
         <div className="flex items-center gap-2">
@@ -104,7 +104,7 @@ export function InterviewHeader({
             <AvatarFallback>AI</AvatarFallback>
           </Avatar>
           <div className="flex flex-col">
-            <span className="text-sm font-bold text-foreground leading-tight">AI 压力面试官</span>
+            <span className="text-sm font-bold text-slate-200 leading-tight">AI 压力面试官</span>
             <Badge variant="secondary" className="flex items-center gap-1 text-[11px] py-0 px-1.5 w-fit">
               <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
               面试进行中
@@ -133,7 +133,7 @@ export function InterviewHeader({
           onClick={() => setInterviewMode(interviewMode === "voice" ? "text" : "voice")}
           aria-label={interviewMode === "voice" ? "关闭语音" : "开启语音"}
           aria-pressed={interviewMode === "voice"}
-          className="h-10 w-10"
+          className="h-10 w-10 text-slate-300 hover:text-white"
         >
           {interviewMode === "voice" ? (
             <Volume2 className="h-4 w-4" />
@@ -148,7 +148,7 @@ export function InterviewHeader({
           onClick={onTogglePhoneMode}
           aria-label="电话模式"
           aria-pressed={phoneMode}
-          className="h-10 w-10"
+          className="h-10 w-10 text-slate-300 hover:text-white"
         >
           {phoneMode ? <PhoneOff className="h-4 w-4" /> : <Phone className="h-4 w-4" />}
         </Button>

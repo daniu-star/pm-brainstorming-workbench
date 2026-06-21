@@ -105,12 +105,12 @@ function InterviewContent() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background p-4">
-        <Card className="p-8 max-w-sm w-full text-center">
+      <div className="interview-dark-container min-h-screen flex items-center justify-center p-4">
+        <Card className="p-8 max-w-sm w-full text-center bg-[#0f0f1a] border-slate-800">
           <div className="mb-4 flex justify-center">
             <Brain className="h-12 w-12 text-primary animate-pulse" />
           </div>
-          <div className="text-foreground text-lg font-medium mb-2">准备面试...</div>
+          <div className="text-slate-200 text-lg font-medium mb-2">准备面试...</div>
           <div className="mt-4 w-48 h-1 bg-muted rounded-full mx-auto overflow-hidden">
             <div className="h-full bg-primary/50 rounded-full animate-pulse" style={{ width: "60%" }} />
           </div>
@@ -122,13 +122,13 @@ function InterviewContent() {
   if (loadError) {
     const errorInfo = getErrorMessage(loadError);
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background p-4">
-        <Card className="p-8 max-w-md w-full text-center">
+      <div className="interview-dark-container min-h-screen flex items-center justify-center p-4">
+        <Card className="p-8 max-w-md w-full text-center bg-[#0f0f1a] border-slate-800">
           <div className="mb-4 flex justify-center">
             <AlertCircle className="h-12 w-12 text-destructive" />
           </div>
           <div className="text-destructive text-lg font-semibold mb-2">{errorInfo.title}</div>
-          <div className="text-muted-foreground text-sm mb-4">{errorInfo.description}</div>
+          <div className="text-slate-400 text-sm mb-4">{errorInfo.description}</div>
           <div className="flex flex-col gap-2 items-center">
             {errorInfo.showRetry && (
               <Button onClick={retry} variant="default">
@@ -159,7 +159,7 @@ export default function InterviewClientPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="interview-dark-container min-h-screen flex items-center justify-center">
           <div className="w-10 h-10 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
         </div>
       }

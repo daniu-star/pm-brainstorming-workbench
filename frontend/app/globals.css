@@ -488,6 +488,105 @@ body {
   to { transform: rotate(360deg); }
 }
 
+/* ===== 面试暗黑主题 + 动态光条 ===== */
+.interview-dark-container {
+  position: relative;
+  background: #0a0a0f;
+  min-height: 100vh;
+}
+
+.interview-glow-border {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+}
+
+.interview-glow-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 2px solid transparent;
+  border-radius: 0;
+}
+
+.interview-glow-border.quality-good::before {
+  border-color: #00ff88;
+  box-shadow: inset 0 0 30px rgba(0, 255, 136, 0.15), 0 0 30px rgba(0, 255, 136, 0.1);
+  animation: glow-pulse-green 2s ease-in-out infinite;
+}
+
+.interview-glow-border.quality-bad::before {
+  border-color: #ff3366;
+  box-shadow: inset 0 0 30px rgba(255, 51, 102, 0.15), 0 0 30px rgba(255, 51, 102, 0.1);
+  animation: glow-pulse-red 2s ease-in-out infinite;
+}
+
+.interview-glow-border.quality-neutral::before {
+  border-color: #3b82f6;
+  box-shadow: inset 0 0 20px rgba(59, 130, 246, 0.1), 0 0 20px rgba(59, 130, 246, 0.05);
+  animation: glow-pulse-blue 3s ease-in-out infinite;
+}
+
+@keyframes glow-pulse-green {
+  0%, 100% { box-shadow: inset 0 0 30px rgba(0, 255, 136, 0.15), 0 0 30px rgba(0, 255, 136, 0.1); }
+  50% { box-shadow: inset 0 0 50px rgba(0, 255, 136, 0.25), 0 0 50px rgba(0, 255, 136, 0.2); }
+}
+
+@keyframes glow-pulse-red {
+  0%, 100% { box-shadow: inset 0 0 30px rgba(255, 51, 102, 0.15), 0 0 30px rgba(255, 51, 102, 0.1); }
+  50% { box-shadow: inset 0 0 50px rgba(255, 51, 102, 0.25), 0 0 50px rgba(255, 51, 102, 0.2); }
+}
+
+@keyframes glow-pulse-blue {
+  0%, 100% { box-shadow: inset 0 0 20px rgba(59, 130, 246, 0.1), 0 0 20px rgba(59, 130, 246, 0.05); }
+  50% { box-shadow: inset 0 0 35px rgba(59, 130, 246, 0.2), 0 0 35px rgba(59, 130, 246, 0.1); }
+}
+
+/* 暗黑主题消息气泡 */
+.interview-dark-bubble-user {
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  color: #e2e8f0;
+  border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+.interview-dark-bubble-ai {
+  background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%);
+  color: #e2e8f0;
+  border-left: 3px solid #3b82f6;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-left: 3px solid #3b82f6;
+}
+
+.interview-dark-header {
+  background: rgba(10, 10, 15, 0.9);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  color: #e2e8f0;
+}
+
+.interview-dark-input {
+  background: rgba(10, 10, 15, 0.9);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  color: #e2e8f0;
+}
+
+.interview-dark-textarea {
+  background: rgba(26, 26, 46, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #e2e8f0;
+}
+
+.interview-dark-textarea::placeholder {
+  color: #64748b;
+}
+
+.interview-dark-textarea:focus {
+  border-color: rgba(59, 130, 246, 0.5);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+}
+
 /* Respect reduced motion preferences */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

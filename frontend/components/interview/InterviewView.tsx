@@ -34,6 +34,7 @@ export function InterviewView({
   const setPlayingAudio = useSessionStore((s) => s.setPlayingAudio);
   const isPlayingAudio = useSessionStore((s) => s.isPlayingAudio);
   const pipelineResult = useSessionStore((s) => s.pipelineResult);
+  const lastAnswerQuality = useSessionStore((s) => s.lastAnswerQuality);
   const lastMessageRef = useRef<string | null>(null);
   const ttsAbortRef = useRef<AbortController | null>(null);
   const ttsCleanupRef = useRef<(() => void) | null>(null);
@@ -92,7 +93,13 @@ export function InterviewView({
   }, [messages, streamingContent]);
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="interview-dark-container h-full flex flex-col">
+      <div className={cn(
+        "interview-glow-border",
+        lastAnswerQuality === "good" && "quality-good",
+        lastAnswerQuality === "bad" && "quality-bad",
+        lastAnswerQuality === "neutral" && "quality-neutral",
+      )} />
       <InterviewHeader
         phoneMode={phoneMode}
         onTogglePhoneMode={togglePhoneMode}
@@ -112,8 +119,8 @@ export function InterviewView({
                     <AvatarFallback>AI</AvatarFallback>
                   </Avatar>
                 </div>
-                <p className="text-lg font-semibold text-foreground mb-1">准备开始面试</p>
-                <p className="text-sm text-muted-foreground">AI 压力面试官将对你进行深度提问</p>
+                <p className="text-lg font-semibold text-slate-200 mb-1">准备开始面试</p>
+                <p className="text-sm text-slate-400">AI 压力面试官将对你进行深度提问</p>
               </div>
             </div>
           )}
@@ -187,7 +194,7 @@ function InterviewMessage({
         <div className="max-w-[75%]">
           <Card
             className={cn(
-              "relative px-4 py-3 shadow-sm rounded-2xl rounded-br-[4px] bg-primary text-primary-foreground border-0",
+              "interview-dark-bubble-user relative px-4 py-3 shadow-sm rounded-2xl rounded-br-[4px] border-0",
               isStreaming && "streaming-cursor"
             )}
           >
@@ -212,7 +219,7 @@ function InterviewMessage({
       </Avatar>
       <div className="flex-1 min-w-0 max-w-[85%]">
         <div className="flex items-center gap-2 mb-1">
-          <span className="text-xs font-semibold text-foreground">AI 压力面试官</span>
+          <span className="text-xs font-semibold text-slate-200">AI 压力面试官</span>
           <Badge variant="secondary" className="flex items-center gap-1 text-[11px] py-0 px-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-primary" />
             压力测试中
@@ -220,13 +227,13 @@ function InterviewMessage({
         </div>
         <Card
           className={cn(
-            "relative bg-card border px-4 py-3 shadow-sm rounded-2xl rounded-tl-[4px]",
+            "interview-dark-bubble-ai relative px-4 py-3 shadow-sm rounded-2xl rounded-tl-[4px]",
             isStreaming && "streaming-cursor"
           )}
         >
-          <div className="absolute left-0 top-2 bottom-2 w-[3px] rounded-full bg-primary" />
+          <div className="absolute left-0 top-2 bottom-2 w-[3px] rounded-full bg-blue-500" />
           <div className="pl-2">
-            <div className="prose prose-sm max-w-none text-foreground leading-relaxed">
+            <div className="prose prose-sm prose-invert max-w-none text-slate-200 leading-relaxed">
               {isStreaming ? (
                 <p className="whitespace-pre-wrap">{message.content}</p>
               ) : (

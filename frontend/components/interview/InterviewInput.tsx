@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Send, Mic, Square, PhoneOff, AlertCircle, Paperclip, X, File as FileIcon, Loader2 } from "lucide-react";
+import { Send, Mic, Square, PhoneOff, AlertCircle, Paperclip, X, File as FileIcon, Loader2, Zap, Type } from "lucide-react";
 import { useSessionStore } from "@/store/sessionStore";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { Button } from "@/components/ui/button";
@@ -37,8 +37,18 @@ interface InterviewInputProps {
 
 export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputProps) {
   const [input, setInput] = useState("");
+  const [showQuickReplies, setShowQuickReplies] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(false);
+
+  const quickReplies = [
+    "我同意这个观点",
+    "让我想想",
+    "可以详细说说吗？",
+    "我不太确定",
+    "这是一个好问题",
+    "我换个角度来回答",
+  ];
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sessionId = useSessionStore((s) => s.sessionId);
   const { answerInterview, interviewMode, isStreaming, isPlayingAudio, setInterviewMode } = useSessionStore();
@@ -61,10 +71,17 @@ export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputP
     }
   }, [isPlayingAudio, isRecording, stop]);
 
+  const phoneAutoStartRef = useRef(false);
+
   useEffect(() => {
     if (phoneMode && transcript.trim() && !isRecording && !isTranscribing && !isStreaming) {
       answerInterview(transcript.trim());
       reset();
+      phoneAutoStartRef.current = true;
+      // 延迟 1 秒再允许重新录音，等 AI 回复开始
+      setTimeout(() => {
+        phoneAutoStartRef.current = false;
+      }, 1000);
     }
   }, [phoneMode, transcript, isRecording, isTranscribing, isStreaming, answerInterview, reset]);
 
@@ -162,19 +179,22 @@ export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputP
         stop={stop}
         onHangUp={onTogglePhoneMode}
         status={status}
+        isStreaming={isStreaming}
+        transcript={transcript}
+        phoneAutoStartRef={phoneAutoStartRef}
       />
     );
   }
 
   if (interviewMode === "text") {
     return (
-      <div className="px-4 py-3 border-t border-border bg-card">
+      <div className="interview-dark-input px-4 py-3">
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-2">
             {attachments.map((att) => (
               <div
                 key={att.id}
-                className="flex items-center gap-1 px-2 py-1 bg-muted rounded text-xs"
+                className="flex items-center gap-1 px-2 py-1 bg-[#1a1a2e] rounded text-xs text-slate-300"
               >
                 <FileIcon size={12} />
                 <span className="max-w-32 truncate">{att.filename}</span>
@@ -196,7 +216,7 @@ export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputP
               placeholder="回答面试官的问题..."
               rows={3}
               aria-label="回答面试官问题"
-              className="resize-none"
+              className="interview-dark-textarea resize-none"
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
@@ -225,6 +245,15 @@ export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputP
             accept="image/*,.pdf,.txt,.md,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.json,.zip"
           />
           <Button
+            onClick={() => setInterviewMode("voice")}
+            variant="ghost"
+            size="sm"
+            className="text-slate-300 hover:text-white"
+            aria-label="切换语音输入"
+          >
+            <Mic size={16} />
+          </Button>
+          <Button
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading || isStreaming}
             variant="ghost"
@@ -234,19 +263,44 @@ export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputP
           >
             {uploading ? <Loader2 size={16} className="animate-spin" /> : <Paperclip size={16} />}
           </Button>
+          <Button
+            onClick={() => setShowQuickReplies(!showQuickReplies)}
+            variant="ghost"
+            size="sm"
+            className={cn("text-slate-300 hover:text-white", showQuickReplies && "text-blue-400")}
+            aria-label="快捷回复"
+          >
+            <Zap size={16} />
+          </Button>
         </div>
+        {showQuickReplies && (
+          <div className="flex flex-wrap gap-2 mb-2 px-2">
+            {quickReplies.map((reply) => (
+              <button
+                key={reply}
+                onClick={() => {
+                  answerInterview(reply);
+                  setShowQuickReplies(false);
+                }}
+                className="px-3 py-1.5 text-xs rounded-full bg-[#1a1a2e] text-slate-300 border border-slate-700 hover:border-blue-500 hover:text-white transition-colors"
+              >
+                {reply}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     );
   }
 
   return (
-    <div className="px-4 py-3 border-t border-border bg-card">
+    <div className="interview-dark-input px-4 py-3">
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2">
           {attachments.map((att) => (
             <div
               key={att.id}
-              className="flex items-center gap-1 px-2 py-1 bg-muted rounded text-xs"
+              className="flex items-center gap-1 px-2 py-1 bg-[#1a1a2e] rounded text-xs text-slate-300"
             >
               <FileIcon size={12} />
               <span className="max-w-32 truncate">{att.filename}</span>
@@ -283,6 +337,15 @@ export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputP
           onChange={handleFileSelect}
           accept="image/*,.pdf,.txt,.md,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.json,.zip"
         />
+        <Button
+          onClick={() => setInterviewMode("text")}
+          variant="ghost"
+          size="sm"
+          className="text-slate-300 hover:text-white"
+          aria-label="切换文字输入"
+        >
+          <Type size={16} />
+        </Button>
         <Button
           onClick={() => fileInputRef.current?.click()}
           disabled={uploading || isStreaming}
@@ -457,6 +520,9 @@ function PhoneModeView({
   stop,
   onHangUp,
   status,
+  isStreaming,
+  transcript,
+  phoneAutoStartRef,
 }: {
   isRecording: boolean;
   isTranscribing: boolean;
@@ -467,6 +533,9 @@ function PhoneModeView({
   stop: () => void;
   onHangUp?: () => void;
   status: "idle" | "recording" | "transcribing" | "success" | "error";
+  isStreaming: boolean;
+  transcript: string;
+  phoneAutoStartRef: React.MutableRefObject<boolean>;
 }) {
   const autoStartRef = useRef(false);
 
@@ -483,14 +552,14 @@ function PhoneModeView({
   }, [errorMessage]);
 
   useEffect(() => {
-    if (isSupported && !autoStartRef.current && !isRecording && !isTranscribing && !errorMessage) {
+    if (isSupported && !autoStartRef.current && !phoneAutoStartRef.current && !isRecording && !isTranscribing && !errorMessage && !isStreaming) {
       autoStartRef.current = true;
       const timer = setTimeout(() => {
         start();
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [isRecording, isTranscribing, errorMessage, isSupported, start]);
+  }, [isRecording, isTranscribing, errorMessage, isSupported, start, isStreaming, phoneAutoStartRef]);
 
   return (
     <div className="px-4 py-8 bg-muted/30 flex flex-col items-center gap-6">
@@ -548,6 +617,12 @@ function PhoneModeView({
               style={{ animationDelay: `${i * 0.08}s` }}
             />
           ))}
+        </div>
+      )}
+
+      {transcript && (
+        <div className="text-sm text-slate-300 mt-2 px-4 text-center max-w-xs">
+          {transcript}
         </div>
       )}
 
