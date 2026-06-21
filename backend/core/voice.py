@@ -65,18 +65,33 @@ async def _call_hf_whisper(model: str, audio_bytes: bytes, content_type: str) ->
     if not HF_API_TOKEN:
         raise RuntimeError("HF_API_TOKEN 未配置")
 
+    import time
     import requests
 
     ext = "wav" if "wav" in content_type else "webm"
     filename = f"audio.{ext}"
 
     def _post():
-        return requests.post(
-            f"https://api-inference.huggingface.co/models/{model}",
-            headers={"Authorization": f"Bearer {HF_API_TOKEN}"},
-            files={"file": (filename, audio_bytes, content_type)},
-            timeout=60.0,
-        )
+        last_error = None
+        for attempt in range(3):  # 共 3 次（1 次原始 + 2 次重试）
+            try:
+                return requests.post(
+                    f"https://api-inference.huggingface.co/models/{model}",
+                    headers={"Authorization": f"Bearer {HF_API_TOKEN}"},
+                    files={"file": (filename, audio_bytes, content_type)},
+                    timeout=60.0,
+                )
+            except requests.exceptions.ConnectionError as e:
+                last_error = e
+                if attempt < 2:
+                    time.sleep(1)
+                    continue
+                raise RuntimeError(
+                    f"后端网络无法连接 HuggingFace API（DNS解析失败）。"
+                    f"建议使用支持 Web Speech API 的浏览器（Chrome/Edge）进行语音输入。"
+                    f"错误详情: {e}"
+                ) from e
+        raise RuntimeError(f"连接 HuggingFace API 失败: {last_error}")
 
     response = await asyncio.to_thread(_post)
 

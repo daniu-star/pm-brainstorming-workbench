@@ -22,6 +22,12 @@ interface SpeechRecognitionResult {
 
 const MAX_DURATION = 60;
 
+const SpeechRecognitionClass =
+  (typeof window !== "undefined" &&
+    ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)) ||
+  null;
+const supportsWebSpeech = !!SpeechRecognitionClass;
+
 function getSupportedMimeType(): string | null {
   if (typeof window === "undefined") return null;
   const types = [
@@ -68,17 +74,20 @@ export function useSpeechRecognition(): SpeechRecognitionResult {
   const [errorMessage, setErrorMessage] = useState("");
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [status, setStatus] = useState<"idle" | "recording" | "transcribing" | "success" | "error">("idle");
+  const [engine, setEngine] = useState<"web-speech" | "media-recorder" | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const durationTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const maxDurationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recognitionRef = useRef<any>(null);
 
   const isSupported =
-    typeof window !== "undefined" &&
-    !!navigator.mediaDevices?.getUserMedia &&
-    typeof MediaRecorder !== "undefined";
+    supportsWebSpeech ||
+    (typeof navigator !== "undefined" &&
+      !!navigator.mediaDevices?.getUserMedia &&
+      typeof MediaRecorder !== "undefined");
 
   const clearTimers = useCallback(() => {
     if (durationTimerRef.current) {
@@ -92,7 +101,17 @@ export function useSpeechRecognition(): SpeechRecognitionResult {
   }, []);
 
   useEffect(() => {
-    return () => clearTimers();
+    return () => {
+      clearTimers();
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {
+          // ignore
+        }
+        recognitionRef.current = null;
+      }
+    };
   }, [clearTimers]);
 
   const start = useCallback(() => {
@@ -107,6 +126,64 @@ export function useSpeechRecognition(): SpeechRecognitionResult {
     setRecordingDuration(0);
     chunksRef.current = [];
 
+    if (supportsWebSpeech && SpeechRecognitionClass) {
+      setEngine("web-speech");
+      try {
+        const recognition = new SpeechRecognitionClass();
+        recognition.lang = "zh-CN";
+        recognition.continuous = true;
+        recognition.interimResults = true;
+
+        recognition.onresult = (event: any) => {
+          let final = "";
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const transcript_part = event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+              final += transcript_part;
+            }
+          }
+          if (final) {
+            setTranscript((prev) => prev + final);
+          }
+        };
+
+        recognition.onerror = (event: any) => {
+          setIsRecording(false);
+          setStatus("error");
+          const errMsg = event?.error || "语音识别失败";
+          if (errMsg === "not-allowed" || errMsg === "service-not-allowed") {
+            const msg = notifyError("permission-denied");
+            setErrorMessage(msg);
+          } else if (errMsg === "network") {
+            const msg = notifyError("network");
+            setErrorMessage(msg);
+          } else {
+            const msg = notifyError("transcribe-failed", `语音识别错误: ${errMsg}`);
+            setErrorMessage(msg);
+          }
+          recognitionRef.current = null;
+        };
+
+        recognition.onend = () => {
+          setIsRecording(false);
+          setStatus("idle");
+          recognitionRef.current = null;
+        };
+
+        recognition.start();
+        recognitionRef.current = recognition;
+        setIsRecording(true);
+        setStatus("recording");
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : "无法启动语音识别";
+        const msg = notifyError("transcribe-failed", detail);
+        setErrorMessage(msg);
+        setStatus("error");
+      }
+      return;
+    }
+
+    setEngine("media-recorder");
     const mimeType = getSupportedMimeType();
 
     navigator.mediaDevices
@@ -226,6 +303,18 @@ export function useSpeechRecognition(): SpeechRecognitionResult {
   }, [isSupported, clearTimers]);
 
   const stop = useCallback(() => {
+    if (engine === "web-speech" && recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // ignore
+      }
+      setIsRecording(false);
+      setStatus("success");
+      setTimeout(() => setStatus("idle"), 2000);
+      recognitionRef.current = null;
+      return;
+    }
     clearTimers();
     setRecordingDuration(0);
     if (
@@ -234,9 +323,17 @@ export function useSpeechRecognition(): SpeechRecognitionResult {
     ) {
       mediaRecorderRef.current.stop();
     }
-  }, [clearTimers]);
+  }, [clearTimers, engine]);
 
   const reset = useCallback(() => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // ignore
+      }
+      recognitionRef.current = null;
+    }
     setTranscript("");
     setErrorMessage("");
     setStatus("idle");

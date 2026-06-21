@@ -5,6 +5,7 @@ import { Loader2 } from "lucide-react";
 import { useSessionStore } from "@/store/sessionStore";
 import { InterviewHeader } from "./InterviewHeader";
 import { InterviewInput } from "./InterviewInput";
+import { PrdViewer } from "@/components/pipeline/PrdViewer";
 import { playInterviewerTTS } from "@/lib/audio";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Card } from "@/components/ui/card";
@@ -32,11 +33,13 @@ export function InterviewView({
   const streamingRole = useSessionStore((s) => s.streamingRole);
   const setPlayingAudio = useSessionStore((s) => s.setPlayingAudio);
   const isPlayingAudio = useSessionStore((s) => s.isPlayingAudio);
+  const pipelineResult = useSessionStore((s) => s.pipelineResult);
   const lastMessageRef = useRef<string | null>(null);
   const ttsAbortRef = useRef<AbortController | null>(null);
   const ttsCleanupRef = useRef<(() => void) | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [phoneMode, setPhoneMode] = useState(false);
+  const [showPrd, setShowPrd] = useState(false);
 
   const togglePhoneMode = () => setPhoneMode((p) => !p);
 
@@ -94,6 +97,8 @@ export function InterviewView({
         phoneMode={phoneMode}
         onTogglePhoneMode={togglePhoneMode}
         dimensionsCovered={dimensionsCovered}
+        hasPrd={!!pipelineResult?.prd}
+        onViewPrd={() => setShowPrd(true)}
       />
 
       <ScrollArea className={cn("flex-1 bg-background", phoneMode && "hidden")}>
@@ -154,6 +159,15 @@ export function InterviewView({
       </ScrollArea>
 
       <InterviewInput phoneMode={phoneMode} onTogglePhoneMode={togglePhoneMode} />
+
+      {showPrd && pipelineResult?.prd && (
+        <PrdViewer
+          open={showPrd}
+          onOpenChange={setShowPrd}
+          prd={pipelineResult.prd}
+          acceptanceResult={pipelineResult.acceptanceResult}
+        />
+      )}
     </div>
   );
 }

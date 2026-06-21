@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Phone, PhoneOff, Volume2, VolumeX } from "lucide-react";
+import { ArrowLeft, Phone, PhoneOff, Volume2, VolumeX, FileText } from "lucide-react";
 import { useSessionStore } from "@/store/sessionStore";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
@@ -65,12 +65,16 @@ interface InterviewHeaderProps {
   phoneMode?: boolean;
   onTogglePhoneMode?: () => void;
   dimensionsCovered?: string[];
+  onViewPrd?: () => void;
+  hasPrd?: boolean;
 }
 
 export function InterviewHeader({
   phoneMode,
   onTogglePhoneMode,
   dimensionsCovered = [],
+  onViewPrd,
+  hasPrd,
 }: InterviewHeaderProps) {
   const router = useRouter();
   const { sessionId, interviewMode, setInterviewMode } = useSessionStore();
@@ -111,6 +115,17 @@ export function InterviewHeader({
 
       <div className="flex items-center gap-2">
         <DimensionRing dimensionsCovered={dimensionsCovered} />
+
+        {hasPrd && (
+          <Button
+            onClick={onViewPrd}
+            variant="ghost"
+            size="sm"
+            className="text-xs"
+          >
+            <FileText size={16} /> 查看PRD
+          </Button>
+        )}
 
         <Button
           variant={interviewMode === "voice" ? "default" : "outline"}

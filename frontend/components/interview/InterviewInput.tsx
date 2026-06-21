@@ -1,13 +1,26 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Send, Mic, Square, PhoneOff, AlertCircle } from "lucide-react";
+import { Send, Mic, Square, PhoneOff, AlertCircle, Paperclip, X, File as FileIcon, Loader2 } from "lucide-react";
 import { useSessionStore } from "@/store/sessionStore";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { apiUrl } from "@/lib/api";
+import { getUserHeaders } from "@/lib/user";
+import { toast } from "@/components/Toast";
+
+interface Attachment {
+  id: string;
+  session_id: string;
+  filename: string;
+  size: number;
+  content_type: string;
+  uploaded_at: string;
+  url: string;
+}
 
 const INTERVIEWER_AVATAR = "/avatars/interviewer-business.svg";
 
@@ -24,6 +37,10 @@ interface InterviewInputProps {
 
 export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputProps) {
   const [input, setInput] = useState("");
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const sessionId = useSessionStore((s) => s.sessionId);
   const { answerInterview, interviewMode, isStreaming, isPlayingAudio, setInterviewMode } = useSessionStore();
   const {
     isRecording,
@@ -57,17 +74,81 @@ export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputP
     }
   }, [phoneMode, interviewMode, setInterviewMode]);
 
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    if (attachments.length + files.length > 10) {
+      toast("error", "最多上传 10 个附件");
+      return;
+    }
+
+    setUploading(true);
+    try {
+      for (const file of Array.from(files)) {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("session_id", sessionId || "");
+
+        const res = await fetch(apiUrl("/api/attachments/upload"), {
+          method: "POST",
+          body: formData,
+          headers: getUserHeaders(),
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || "上传失败");
+        }
+
+        const data = await res.json();
+        setAttachments((prev) => [...prev, data as Attachment]);
+      }
+    } catch (error) {
+      toast("error", error instanceof Error ? error.message : "附件上传失败");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
+
+  const handleRemoveAttachment = async (attachmentId: string) => {
+    try {
+      await fetch(apiUrl(`/api/attachments/${attachmentId}`), {
+        method: "DELETE",
+        headers: getUserHeaders(),
+      });
+      setAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
+    } catch {
+      toast("error", "删除附件失败");
+    }
+  };
+
   const handleTextSend = () => {
     if (!input.trim() || isStreaming) return;
-    answerInterview(input.trim());
+    let messageContent = input.trim();
+    if (attachments.length > 0) {
+      const fileList = attachments.map((a) => a.filename).join(", ");
+      messageContent = `${messageContent}\n\n[附件: ${fileList}]`;
+    }
+    answerInterview(messageContent);
     setInput("");
+    setAttachments([]);
   };
 
   const handleVoiceSend = useCallback(() => {
     if (!transcript.trim() || isStreaming) return;
-    answerInterview(transcript.trim());
+    let messageContent = transcript.trim();
+    if (attachments.length > 0) {
+      const fileList = attachments.map((a) => a.filename).join(", ");
+      messageContent = `${messageContent}\n\n[附件: ${fileList}]`;
+    }
+    answerInterview(messageContent);
     reset();
-  }, [transcript, isStreaming, answerInterview, reset]);
+    setAttachments([]);
+  }, [transcript, isStreaming, answerInterview, reset, attachments]);
 
   if (phoneMode) {
     return (
@@ -88,6 +169,25 @@ export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputP
   if (interviewMode === "text") {
     return (
       <div className="px-4 py-3 border-t border-border bg-card">
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-2">
+            {attachments.map((att) => (
+              <div
+                key={att.id}
+                className="flex items-center gap-1 px-2 py-1 bg-muted rounded text-xs"
+              >
+                <FileIcon size={12} />
+                <span className="max-w-32 truncate">{att.filename}</span>
+                <button
+                  onClick={() => handleRemoveAttachment(att.id)}
+                  className="text-muted-foreground hover:text-destructive"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="flex gap-2 items-end">
           <div className="flex-1 relative">
             <Textarea
@@ -115,12 +215,51 @@ export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputP
             <Send className="h-4 w-4" />
           </Button>
         </div>
+        <div className="flex items-center gap-2 mt-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={handleFileSelect}
+            accept="image/*,.pdf,.txt,.md,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.json,.zip"
+          />
+          <Button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading || isStreaming}
+            variant="ghost"
+            size="sm"
+            className="text-xs text-muted-foreground"
+            aria-label="上传附件"
+          >
+            {uploading ? <Loader2 size={16} className="animate-spin" /> : <Paperclip size={16} />}
+          </Button>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="px-4 py-3 border-t border-border bg-card">
+      {attachments.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-2">
+          {attachments.map((att) => (
+            <div
+              key={att.id}
+              className="flex items-center gap-1 px-2 py-1 bg-muted rounded text-xs"
+            >
+              <FileIcon size={12} />
+              <span className="max-w-32 truncate">{att.filename}</span>
+              <button
+                onClick={() => handleRemoveAttachment(att.id)}
+                className="text-muted-foreground hover:text-destructive"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       <VoiceInputView
         isRecording={isRecording}
         isTranscribing={isTranscribing}
@@ -135,6 +274,26 @@ export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputP
         onSend={handleVoiceSend}
         status={status}
       />
+      <div className="flex items-center gap-2 mt-2">
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={handleFileSelect}
+          accept="image/*,.pdf,.txt,.md,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.json,.zip"
+        />
+        <Button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploading || isStreaming}
+          variant="ghost"
+          size="sm"
+          className="text-xs text-muted-foreground"
+          aria-label="上传附件"
+        >
+          {uploading ? <Loader2 size={16} className="animate-spin" /> : <Paperclip size={16} />}
+        </Button>
+      </div>
     </div>
   );
 }

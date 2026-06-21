@@ -1,19 +1,27 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useSessionStore } from "@/store/sessionStore";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
-import { ROLES } from "@/lib/types";
+import { ROLES, Attachment } from "@/lib/types";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { Send, Mic, Square, Loader2, Brain, ArrowRight, Target } from "lucide-react";
+import { Send, Mic, Square, Loader2, Brain, ArrowRight, Target, CheckCircle, Paperclip, X, File as FileIcon } from "lucide-react";
+import { PrdViewer } from "@/components/pipeline/PrdViewer";
+import { apiUrl } from "@/lib/api";
+import { getUserHeaders } from "@/lib/user";
+import { toast } from "@/components/Toast";
 
 export function InputBox() {
   const router = useRouter();
   const [input, setInput] = useState("");
+  const [showPrd, setShowPrd] = useState(false);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const sendMessage = useSessionStore((s) => s.sendMessage);
   const sendToCoach = useSessionStore((s) => s.sendToCoach);
   const answerInterview = useSessionStore((s) => s.answerInterview);
@@ -24,18 +32,88 @@ export function InputBox() {
   const sessionId = useSessionStore((s) => s.sessionId);
   const targetRole = useSessionStore((s) => s.targetRole);
   const setTargetRole = useSessionStore((s) => s.setTargetRole);
+  const runPipeline = useSessionStore((s) => s.runPipeline);
+  const isPipelineRunning = useSessionStore((s) => s.isPipelineRunning);
+  const pipelineResult = useSessionStore((s) => s.pipelineResult);
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    if (attachments.length + files.length > 10) {
+      toast("error", "最多上传 10 个附件");
+      return;
+    }
+
+    setUploading(true);
+    try {
+      for (const file of Array.from(files)) {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("session_id", sessionId || "");
+
+        const res = await fetch(apiUrl("/api/attachments/upload"), {
+          method: "POST",
+          body: formData,
+          headers: getUserHeaders(),
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || "上传失败");
+        }
+
+        const data = await res.json();
+        setAttachments((prev) => [...prev, data as Attachment]);
+      }
+    } catch (error) {
+      toast("error", error instanceof Error ? error.message : "附件上传失败");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
+
+  const handleRemoveAttachment = async (attachmentId: string) => {
+    try {
+      await fetch(apiUrl(`/api/attachments/${attachmentId}`), {
+        method: "DELETE",
+        headers: getUserHeaders(),
+      });
+      setAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
+    } catch {
+      toast("error", "删除附件失败");
+    }
+  };
 
   const handleSend = () => {
-    if (!input.trim() || isStreaming) return;
+    if ((!input.trim() && attachments.length === 0) || isStreaming) return;
+
+    let messageContent = input.trim();
+    if (attachments.length > 0) {
+      const fileList = attachments.map((a) => a.filename).join(", ");
+      messageContent = messageContent
+        ? `${messageContent}\n\n[附件: ${fileList}]`
+        : `[附件: ${fileList}]`;
+    }
+
     if (phase === "interview") {
-      answerInterview(input.trim());
+      answerInterview(messageContent);
     } else if (phase === "coach") {
-      sendToCoach(input.trim());
+      sendToCoach(messageContent);
     } else {
-      sendMessage(input.trim(), targetRole);
+      sendMessage(messageContent, targetRole);
       setTargetRole("all");
     }
     setInput("");
+    setAttachments([]);
+  };
+
+  const handleEndBrainstorm = () => {
+    if (!sessionId) return;
+    runPipeline();
   };
 
   const { isRecording, isTranscribing, transcript, errorMessage, start, stop, reset, status } = useSpeechRecognition();
@@ -46,6 +124,12 @@ export function InputBox() {
       reset();
     }
   }, [transcript, reset]);
+
+  useEffect(() => {
+    if (pipelineResult?.prd && !isPipelineRunning) {
+      setShowPrd(true);
+    }
+  }, [pipelineResult, isPipelineRunning]);
 
   return (
     <div className="px-4 py-3 border-t border-border bg-background/95 backdrop-blur-sm">
@@ -74,6 +158,25 @@ export function InputBox() {
         )}
         {phase === "brainstorm" && (
           <>
+            <Button
+              onClick={handleEndBrainstorm}
+              disabled={isPipelineRunning}
+              aria-label="结束脑暴并生成 PRD"
+              variant="default"
+              size="sm"
+              className="text-xs"
+            >
+              {isPipelineRunning ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" /> 生成PRD中...
+                </>
+              ) : (
+                <>
+                  <CheckCircle size={14} /> 结束脑暴
+                </>
+              )}
+            </Button>
+            <span className="text-muted-foreground/40">|</span>
             <Button
               onClick={generateCanvas}
               disabled={isStreaming}
@@ -142,6 +245,27 @@ export function InputBox() {
         </div>
       )}
 
+      {attachments.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-2">
+          {attachments.map((att) => (
+            <div
+              key={att.id}
+              className="flex items-center gap-1 px-2 py-1 bg-muted rounded text-xs"
+            >
+              <FileIcon size={12} />
+              <span className="max-w-32 truncate">{att.filename}</span>
+              <button
+                onClick={() => handleRemoveAttachment(att.id)}
+                className="text-muted-foreground hover:text-destructive"
+                aria-label={`删除附件 ${att.filename}`}
+              >
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="flex gap-2 items-end">
         <div className="flex-1 relative">
           <Textarea
@@ -206,9 +330,27 @@ export function InputBox() {
             <Badge className="text-[11px] mt-0.5 whitespace-nowrap bg-emerald-500 text-white border-transparent">识别成功</Badge>
           )}
         </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={handleFileSelect}
+          accept="image/*,.pdf,.txt,.md,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.json,.zip"
+        />
+        <Button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploading || isStreaming}
+          variant="ghost"
+          size="sm"
+          className="text-xs text-muted-foreground shrink-0"
+          aria-label="上传附件"
+        >
+          {uploading ? <Loader2 size={16} className="animate-spin" /> : <Paperclip size={16} />}
+        </Button>
         <Button
           onClick={handleSend}
-          disabled={!input.trim() || isStreaming}
+          disabled={(!input.trim() && attachments.length === 0) || isStreaming}
           aria-label="发送消息"
           size="icon"
           className="shrink-0 rounded-full min-w-[44px] min-h-[44px]"
@@ -216,6 +358,15 @@ export function InputBox() {
           <Send size={18} />
         </Button>
       </div>
+
+      {showPrd && pipelineResult?.prd && (
+        <PrdViewer
+          open={showPrd}
+          onOpenChange={setShowPrd}
+          prd={pipelineResult.prd}
+          acceptanceResult={pipelineResult.acceptanceResult}
+        />
+      )}
     </div>
   );
 }

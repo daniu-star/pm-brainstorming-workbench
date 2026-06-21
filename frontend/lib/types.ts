@@ -185,3 +185,13 @@ export const PIPELINE_NODE_ORDER: PipelineNodeName[] = [
   "portrait",
   "pm_acceptance",
 ];
+
+export interface Attachment {
+  id: string;
+  session_id: string;
+  filename: string;
+  size: number;
+  content_type: string;
+  uploaded_at: number;
+  url: string;
+}
