@@ -3,6 +3,7 @@ const API_KEY_STORAGE_KEY = "pm-brainstorm-api-key";
 const BASE_URL_STORAGE_KEY = "pm-brainstorm-base-url";
 const MODEL_STORAGE_KEY = "pm-brainstorm-model";
 const JWT_TOKEN_KEY = "pm-brainstorm-jwt-token";
+const AUTH_RETURN_PATH_KEY = "pm-brainstorm-auth-return-path";
 
 export function getUserToken(): string {
   if (typeof window === "undefined") return "";
@@ -66,6 +67,24 @@ export function isLoggedIn(): boolean {
 
 export function logout(): void {
   clearJwtToken();
+}
+
+export function handleExpiredSession(): void {
+  clearJwtToken();
+  if (typeof window === "undefined") return;
+
+  if (window.location.pathname !== "/login") {
+    const returnPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    sessionStorage.setItem(AUTH_RETURN_PATH_KEY, returnPath);
+    window.location.replace("/login?reason=expired");
+  }
+}
+
+export function consumeAuthReturnPath(): string {
+  if (typeof window === "undefined") return "/";
+  const returnPath = sessionStorage.getItem(AUTH_RETURN_PATH_KEY);
+  sessionStorage.removeItem(AUTH_RETURN_PATH_KEY);
+  return returnPath?.startsWith("/") && !returnPath.startsWith("//") ? returnPath : "/";
 }
 
 export function getUserHeaders(): Record<string, string> {

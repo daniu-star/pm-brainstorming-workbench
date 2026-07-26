@@ -1,4 +1,4 @@
-import { getUserHeaders } from "./user";
+import { getUserHeaders, handleExpiredSession } from "./user";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
@@ -20,6 +20,9 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
     throw err;
   }
   if (!res.ok) {
+    if (res.status === 401) {
+      handleExpiredSession();
+    }
     let errMsg: string;
     try {
       const text = await res.text();
