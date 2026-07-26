@@ -3,7 +3,7 @@
 import { useSessionStore } from "@/store/sessionStore";
 import { exportSessionAsMarkdown } from "@/lib/export";
 import Link from "next/link";
-import { Brain, Download, Settings, AlertTriangle, Wallet } from "lucide-react";
+import { Brain, Download, Settings, AlertTriangle, Wallet, LayoutDashboard } from "lucide-react";
 import { NavButtons } from "@/components/NavButtons";
 import { SettingsModal } from "@/components/SettingsModal";
 import { RechargeModal } from "@/components/RechargeModal";
@@ -144,6 +144,17 @@ export function Header() {
           </Tooltip>
 
           <ThemeToggle />
+
+          {sessionId && (
+            <Link
+              href={`/session/${sessionId}/decision`}
+              className="nav-frost-control hidden h-9 items-center gap-1.5 rounded-xl px-3 text-xs lg:flex"
+              aria-label="打开决策中心"
+            >
+              <LayoutDashboard className="h-3.5 w-3.5" />
+              决策中心
+            </Link>
+          )}
 
           <NavButtons
             currentPage="workbench"

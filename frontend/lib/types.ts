@@ -195,3 +195,52 @@ export interface Attachment {
   uploaded_at: number;
   url: string;
 }
+
+// ===== 决策中心 =====
+export type EvidenceSourceType = "interview" | "feedback" | "metric" | "competitor" | "document" | "manual";
+export type ExperimentStatus = "planned" | "running" | "validated" | "invalidated";
+
+export interface DecisionEvidence {
+  id: string;
+  title: string;
+  source_type: EvidenceSourceType;
+  summary: string;
+  source_url: string;
+  tags: string[];
+  confidence: number;
+  created_at: string;
+}
+
+export interface DecisionInitiative {
+  id: string;
+  title: string;
+  description: string;
+  reach: number;
+  impact: number;
+  confidence: number;
+  effort: number;
+  risk: number;
+  priority_score: number;
+  evidence_ids: string[];
+  created_at: string;
+}
+
+export interface DecisionExperiment {
+  id: string;
+  title: string;
+  hypothesis: string;
+  primary_metric: string;
+  success_criteria: string;
+  initiative_id: string;
+  status: ExperimentStatus;
+  learning: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface DecisionHub {
+  evidence: DecisionEvidence[];
+  initiatives: DecisionInitiative[];
+  experiments: DecisionExperiment[];
+  updated_at: string;
+}
