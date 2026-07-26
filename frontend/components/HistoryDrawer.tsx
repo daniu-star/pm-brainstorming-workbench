@@ -13,9 +13,12 @@ interface HistoryDrawerProps {
 
 const PHASE_BADGES: Record<string, { label: string; color: string }> = {
   brainstorm: { label: "脑暴", color: "bg-amber-50 text-amber-600 border-amber-200" },
-  interview: { label: "面试", color: "bg-red-50 text-red-600 border-red-200" },
-  coach: { label: "梳理", color: "bg-amber-50 text-amber-600 border-amber-200" },
-  define: { label: "定义", color: "bg-warm-100 text-warm-500 border-warm-300" },
+  audit: { label: "审计", color: "bg-red-50 text-red-600 border-red-200" },
+  clarify: { label: "澄清", color: "bg-cyan-50 text-cyan-700 border-cyan-200" },
+  draft: { label: "草稿", color: "bg-warm-100 text-warm-500 border-warm-300" },
+  decision_ready: { label: "待决策", color: "bg-indigo-50 text-indigo-700 border-indigo-200" },
+  completed: { label: "已完成", color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  archived: { label: "已归档", color: "bg-slate-100 text-slate-600 border-slate-200" },
 };
 
 function formatTime(iso: string): string {
@@ -164,7 +167,7 @@ export function HistoryDrawer({ isOpen, onClose }: HistoryDrawerProps) {
           {!loading && !error && sessions.length > 0 && (
             <div className="p-3 space-y-2">
               {sessions.map((s) => {
-                const badge = PHASE_BADGES[s.phase] || PHASE_BADGES.define;
+                const badge = PHASE_BADGES[s.phase] || PHASE_BADGES.draft;
                 return (
                   <button
                     key={s.id}

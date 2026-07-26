@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from core.product_generator import generate_product_portrait
 from db.session_store import session_store
 from db.user_store import user_store
@@ -9,7 +9,7 @@ router = APIRouter(prefix="/api/product", tags=["product"])
 
 
 class PortraitRequest(BaseModel):
-    session_id: str
+    session_id: str = Field(min_length=1, max_length=64)
 
 
 @router.post("/portrait")
@@ -18,7 +18,7 @@ async def create_portrait(req: PortraitRequest, request: Request):
     llm_config = get_user_llm_config(request)
     check_quota(user, llm_config)
 
-    session = session_store.get(req.session_id)
+    session = session_store.get(req.session_id, user_token=user["user_token"])
     if session is None:
         raise HTTPException(status_code=404, detail="会话未找到")
 
@@ -46,8 +46,8 @@ async def create_portrait(req: PortraitRequest, request: Request):
 
 @router.get("/{session_id}")
 async def get_portrait(session_id: str, request: Request):
-    get_current_user(request)
-    session = session_store.get(session_id)
+    user = get_current_user(request)
+    session = session_store.get(session_id, user_token=user["user_token"])
     if session is None:
         raise HTTPException(status_code=404, detail="会话未找到")
     return session.get("product_portrait") or {}

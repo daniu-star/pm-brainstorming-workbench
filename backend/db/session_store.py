@@ -1,11 +1,48 @@
 import json
 import os
+import threading
 import uuid
 from datetime import datetime
 from typing import List, Optional
 
 SESSION_DATA_DIR = os.getenv("SESSION_DATA_DIR", "./data/sessions")
 INTERVIEW_SESSION_DATA_DIR = os.getenv("INTERVIEW_SESSION_DATA_DIR", "./data/interview_sessions")
+SESSION_PHASES = {
+    "draft",
+    "clarify",
+    "brainstorm",
+    "audit",
+    "decision_ready",
+    "completed",
+    "archived",
+}
+
+CLARIFICATION_FIELD_ORDER = [
+    "target_user",
+    "current_alternative",
+    "product_form",
+    "success_metric",
+    "constraints",
+]
+
+
+def _new_clarification_state(problem_statement: str) -> dict:
+    now = datetime.now().isoformat()
+    return {
+        "status": "collecting",
+        "current_field": CLARIFICATION_FIELD_ORDER[0],
+        "asked_fields": [],
+        "answered_fields": ["core_problem"] if problem_statement.strip() else [],
+        "fields": {
+            "target_user": "",
+            "core_problem": problem_statement.strip(),
+            "current_alternative": "",
+            "product_form": "",
+            "success_metric": "",
+            "constraints": "",
+        },
+        "updated_at": now,
+    }
 
 
 def _validate_id(value: str) -> str:
@@ -17,6 +54,7 @@ def _validate_id(value: str) -> str:
 class SessionStore:
     def __init__(self):
         self.data_dir = SESSION_DATA_DIR
+        self._lock = threading.RLock()
         os.makedirs(self.data_dir, exist_ok=True)
 
     def create(self, problem_statement: str, user_token: str = "") -> dict:
@@ -24,9 +62,21 @@ class SessionStore:
         session = {
             "id": session_id,
             "problem_statement": problem_statement,
-            "phase": "brainstorm",
+            "phase": "clarify",
+            "phase_history": [
+                {
+                    "from": None,
+                    "to": "clarify",
+                    "reason": "session_created",
+                    "timestamp": datetime.now().isoformat(),
+                }
+            ],
+            "clarification_state": _new_clarification_state(problem_statement),
             "messages": [],
             "canvas_tree": None,
+            "canvas_status": "idle",
+            "canvas_version": 0,
+            "canvas_last_event_id": None,
             "interview_dimensions_covered": [],
             "interview_question_count": 0,
             "decision_hub": {
@@ -73,27 +123,88 @@ class SessionStore:
         return session
 
     def update(self, session_id: str, updates: dict):
-        session = self.get(session_id)
-        if session is None:
-            raise ValueError(f"会话 {session_id} 未找到")
-        session.update(updates)
-        self._save(session)
+        with self._lock:
+            session = self.get(session_id)
+            if session is None:
+                raise ValueError(f"会话 {session_id} 未找到")
+            session.update(updates)
+            self._save(session)
 
-    def add_message(self, session_id: str, role: str, content: str, role_name: str = None):
-        session = self.get(session_id)
-        if session is None:
-            raise ValueError(f"会话 {session_id} 未找到")
-        msg = {"role": role, "content": content, "timestamp": datetime.now().isoformat()}
-        if role_name:
-            msg["role_name"] = role_name
-        session["messages"].append(msg)
-        self._save(session)
+    def transition_phase(self, session_id: str, phase: str, reason: str) -> dict:
+        if phase not in SESSION_PHASES:
+            raise ValueError(f"无效会话阶段: {phase}")
+        with self._lock:
+            session = self.get(session_id)
+            if session is None:
+                raise ValueError(f"会话 {session_id} 未找到")
+            previous = session.get("phase", "draft")
+            if previous != phase:
+                session["phase"] = phase
+                session.setdefault("phase_history", []).append(
+                    {
+                        "from": previous,
+                        "to": phase,
+                        "reason": reason,
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                )
+                self._save(session)
+            return session
 
-    def get_recent_messages(self, session_id: str, n: int = 20) -> List[dict]:
+    def add_message(
+        self,
+        session_id: str,
+        role: str,
+        content: str,
+        role_name: str = None,
+        stage: str = None,
+        round_id: str = None,
+        audit_run_id: str = None,
+        agent_role: str = None,
+    ):
+        with self._lock:
+            session = self.get(session_id)
+            if session is None:
+                raise ValueError(f"会话 {session_id} 未找到")
+            msg = {
+                "id": uuid.uuid4().hex[:16],
+                "role": role,
+                "content": content,
+                "timestamp": datetime.now().isoformat(),
+                "stage": stage or session.get("phase", "draft"),
+            }
+            if role_name:
+                msg["role_name"] = role_name
+            if round_id:
+                msg["round_id"] = round_id
+            if audit_run_id:
+                msg["audit_run_id"] = audit_run_id
+            if agent_role:
+                msg["agent_role"] = agent_role
+            session["messages"].append(msg)
+            self._save(session)
+            return msg
+
+    def get_recent_messages(
+        self,
+        session_id: str,
+        n: int = 20,
+        max_chars: int = 30000,
+    ) -> List[dict]:
         session = self.get(session_id)
         if session is None:
             return []
-        return session["messages"][-n:]
+        selected = []
+        remaining = max_chars
+        for message in reversed(session["messages"][-n:]):
+            if remaining <= 0:
+                break
+            copy = dict(message)
+            content = str(copy.get("content", ""))
+            copy["content"] = content[:remaining]
+            selected.append(copy)
+            remaining -= len(copy["content"])
+        return list(reversed(selected))
 
     def list_sessions(self, user_token: str | None = None) -> List[dict]:
         sessions = []
@@ -152,8 +263,12 @@ class SessionStore:
     def _save(self, session: dict):
         _validate_id(session['id'])
         path = os.path.join(self.data_dir, f"{session['id']}.json")
-        with open(path, "w", encoding="utf-8") as f:
+        temp_path = f"{path}.{uuid.uuid4().hex}.tmp"
+        with open(temp_path, "w", encoding="utf-8") as f:
             json.dump(session, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, path)
 
 
 session_store = SessionStore()
@@ -164,6 +279,7 @@ class InterviewSessionStore:
 
     def __init__(self):
         self.data_dir = INTERVIEW_SESSION_DATA_DIR
+        self._lock = threading.RLock()
         os.makedirs(self.data_dir, exist_ok=True)
 
     def create(
@@ -176,13 +292,26 @@ class InterviewSessionStore:
         interview_id = "iv_" + uuid.uuid4().hex[:10]
         space = {
             "id": interview_id,
+            "audit_run_id": interview_id,
             "parent_session_id": parent_session_id,
             "problem_statement": problem_statement,
             "canvas_tree": canvas_tree,
             "messages": [],
             "dimensions_covered": [],
+            "dimension_plan": [
+                "problem_validity",
+                "solution_effectiveness",
+                "technical_risk",
+                "business_viability",
+                "user_adoption",
+                "execution_risk",
+                "problem_validity",
+                "execution_risk",
+            ],
+            "current_dimension": None,
             "question_count": 0,
-            "status": "active",
+            "status": "not_started",
+            "report": None,
             "created_at": datetime.now().isoformat(),
             "user_token": user_token,
         }
@@ -204,27 +333,52 @@ class InterviewSessionStore:
         return space
 
     def update(self, interview_id: str, updates: dict):
-        space = self.get(interview_id)
-        if space is None:
-            raise ValueError(f"面试空间 {interview_id} 未找到")
-        space.update(updates)
-        self._save(space)
+        with self._lock:
+            space = self.get(interview_id)
+            if space is None:
+                raise ValueError(f"面试空间 {interview_id} 未找到")
+            space.update(updates)
+            self._save(space)
 
     def add_message(self, interview_id: str, role: str, content: str, role_name: str = None):
-        space = self.get(interview_id)
-        if space is None:
-            raise ValueError(f"面试空间 {interview_id} 未找到")
-        msg = {"role": role, "content": content, "timestamp": datetime.now().isoformat()}
-        if role_name:
-            msg["role_name"] = role_name
-        space["messages"].append(msg)
-        self._save(space)
+        with self._lock:
+            space = self.get(interview_id)
+            if space is None:
+                raise ValueError(f"面试空间 {interview_id} 未找到")
+            msg = {
+                "id": uuid.uuid4().hex[:16],
+                "role": role,
+                "content": content,
+                "timestamp": datetime.now().isoformat(),
+                "stage": "audit",
+                "audit_run_id": interview_id,
+            }
+            if role_name:
+                msg["role_name"] = role_name
+            space["messages"].append(msg)
+            self._save(space)
+            return msg
 
-    def get_recent_messages(self, interview_id: str, n: int = 20) -> List[dict]:
+    def get_recent_messages(
+        self,
+        interview_id: str,
+        n: int = 20,
+        max_chars: int = 30000,
+    ) -> List[dict]:
         space = self.get(interview_id)
         if space is None:
             return []
-        return space["messages"][-n:]
+        selected = []
+        remaining = max_chars
+        for message in reversed(space["messages"][-n:]):
+            if remaining <= 0:
+                break
+            copy = dict(message)
+            content = str(copy.get("content", ""))
+            copy["content"] = content[:remaining]
+            selected.append(copy)
+            remaining -= len(copy["content"])
+        return list(reversed(selected))
 
     def list_by_parent(self, parent_session_id: str) -> List[dict]:
         try:
@@ -248,6 +402,29 @@ class InterviewSessionStore:
         results.sort(key=lambda x: x["created_at"], reverse=True)
         return results
 
+    def get_latest_by_parent(
+        self,
+        parent_session_id: str,
+        user_token: str | None = None,
+        statuses: tuple[str, ...] | None = None,
+    ) -> Optional[dict]:
+        candidates = []
+        for fname in os.listdir(self.data_dir):
+            if not fname.endswith(".json"):
+                continue
+            with open(os.path.join(self.data_dir, fname), "r", encoding="utf-8") as f:
+                space = json.load(f)
+            if space.get("parent_session_id") != parent_session_id:
+                continue
+            if user_token is not None and space.get("user_token") != user_token:
+                continue
+            if statuses and space.get("status") not in statuses:
+                continue
+            candidates.append(space)
+        if not candidates:
+            return None
+        return max(candidates, key=lambda item: item.get("created_at", ""))
+
     def delete(self, interview_id: str, user_token: str | None = None) -> bool:
         try:
             _validate_id(interview_id)
@@ -267,8 +444,12 @@ class InterviewSessionStore:
     def _save(self, space: dict):
         _validate_id(space["id"])
         path = os.path.join(self.data_dir, f"{space['id']}.json")
-        with open(path, "w", encoding="utf-8") as f:
+        temp_path = f"{path}.{uuid.uuid4().hex}.tmp"
+        with open(temp_path, "w", encoding="utf-8") as f:
             json.dump(space, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, path)
 
 
 interview_session_store = InterviewSessionStore()

@@ -3,6 +3,7 @@ import os
 import random
 import time
 import logging
+import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -10,7 +11,7 @@ import jwt
 
 logger = logging.getLogger(__name__)
 
-JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-me")
+JWT_SECRET = os.getenv("JWT_SECRET") or secrets.token_urlsafe(48)
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 72
 
@@ -22,8 +23,8 @@ SMS_CODE_EXPIRE_MINUTES = 5
 
 def _check_jwt_secret():
     global _jwt_secret_is_default
-    if JWT_SECRET == "dev-secret-change-me":
-        logger.error("JWT_SECRET 使用默认值，生产环境不安全！请设置环境变量 JWT_SECRET")
+    if not os.getenv("JWT_SECRET"):
+        logger.warning("JWT_SECRET 未配置，已生成进程级临时密钥；服务重启后用户需要重新登录")
         _jwt_secret_is_default = True
 
 

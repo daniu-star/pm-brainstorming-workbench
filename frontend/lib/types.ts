@@ -1,4 +1,34 @@
 export type Role = "cto" | "designer" | "ops" | "user" | "coach" | "interviewer";
+export type SessionPhase =
+  | "draft"
+  | "clarify"
+  | "brainstorm"
+  | "audit"
+  | "decision_ready"
+  | "completed"
+  | "archived";
+
+export type ClarificationStatus =
+  | "collecting"
+  | "awaiting_confirmation"
+  | "confirmed"
+  | "skipped";
+
+export interface ClarificationState {
+  status: ClarificationStatus;
+  current_field: string | null;
+  asked_fields: string[];
+  answered_fields: string[];
+  fields: {
+    target_user: string;
+    core_problem: string;
+    current_alternative: string;
+    product_form: string;
+    success_metric: string;
+    constraints: string;
+  };
+  updated_at: string;
+}
 
 export interface Message {
   id?: string;
@@ -6,13 +36,18 @@ export interface Message {
   content: string;
   role_name?: string;
   timestamp?: string;
+  stage?: SessionPhase;
+  round_id?: string;
+  audit_run_id?: string;
+  agent_role?: string;
 }
 
 export interface Session {
   id: string;
   problem_statement: string;
-  phase: "define" | "coach" | "brainstorm" | "interview";
+  phase: SessionPhase;
   messages: Message[];
+  clarification_state?: ClarificationState;
   discussion_map: DiscussionMap | null;
   canvas_tree: FeatureTree | null;
   created_at: string;
@@ -21,6 +56,25 @@ export interface Session {
 export interface DiscussionMap {
   topic: string;
   timeline: TimelineNode[];
+  sources?: DecisionGraphSource[];
+  edges?: DecisionGraphEdge[];
+  version?: number;
+}
+
+export interface DecisionGraphSource {
+  id: string;
+  kind: "message" | "document" | "metric" | "interview";
+  role: string;
+  excerpt: string;
+  timestamp?: string;
+  round_id?: string;
+}
+
+export interface DecisionGraphEdge {
+  id: string;
+  from: string;
+  to: string;
+  relation: "supports" | "contradicts" | "refines" | "depends_on";
 }
 
 export interface TimelineNode {
@@ -30,6 +84,8 @@ export interface TimelineNode {
   roles: string[];
   timestamp?: string;
   positions?: { role: string; stance: string }[];
+  source_refs?: string[];
+  status?: "draft" | "confirmed";
 }
 
 export interface FeatureTree {
@@ -77,7 +133,7 @@ ROLE_MAP["AI面试官"] = { id: "interviewer", name: "AI 面试官", color: "#ef
 export interface SessionSummary {
   id: string;
   problem_statement: string;
-  phase: "define" | "coach" | "brainstorm" | "interview";
+  phase: SessionPhase;
   message_count: number;
   created_at: string;
 }

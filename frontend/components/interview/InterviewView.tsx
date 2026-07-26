@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { ChevronDown, Loader2 } from "lucide-react";
 import { useSessionStore } from "@/store/sessionStore";
 import { InterviewHeader } from "./InterviewHeader";
 import { InterviewInput } from "./InterviewInput";
@@ -11,11 +11,20 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Card } from "@/components/ui/card";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
 
 const INTERVIEWER_AVATAR = "/avatars/interviewer-business.svg";
 const USER_AVATAR = "/avatars/user.svg";
+const DIMENSION_NAMES: Record<string, string> = {
+  problem_validity: "问题有效性",
+  solution_effectiveness: "方案有效性",
+  technical_risk: "技术风险",
+  business_viability: "商业可行性",
+  user_adoption: "用户采纳",
+  execution_risk: "执行风险",
+};
 
 interface InterviewViewProps {
   dimensionsCovered?: string[];
@@ -35,10 +44,14 @@ export function InterviewView({
   const isPlayingAudio = useSessionStore((s) => s.isPlayingAudio);
   const pipelineResult = useSessionStore((s) => s.pipelineResult);
   const lastAnswerQuality = useSessionStore((s) => s.lastAnswerQuality);
+  const currentAuditDimension = useSessionStore((s) => s.currentAuditDimension);
+  const auditStatus = useSessionStore((s) => s.auditStatus);
   const lastMessageRef = useRef<string | null>(null);
   const ttsAbortRef = useRef<AbortController | null>(null);
   const ttsCleanupRef = useRef<(() => void) | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollHostRef = useRef<HTMLDivElement>(null);
+  const [isNearBottom, setIsNearBottom] = useState(true);
   const [phoneMode, setPhoneMode] = useState(false);
   const [showPrd, setShowPrd] = useState(false);
 
@@ -86,11 +99,26 @@ export function InterviewView({
   }, [messages, interviewMode, isStreaming, isPlayingAudio, setPlayingAudio]);
 
   useEffect(() => {
+    const viewport = scrollHostRef.current?.querySelector<HTMLElement>(
+      "[data-radix-scroll-area-viewport]"
+    );
+    if (!viewport) return;
+    const updatePosition = () => {
+      const distance = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+      setIsNearBottom(distance <= 120);
+    };
+    updatePosition();
+    viewport.addEventListener("scroll", updatePosition, { passive: true });
+    return () => viewport.removeEventListener("scroll", updatePosition);
+  }, []);
+
+  useEffect(() => {
+    if (!isNearBottom) return;
     const raf = requestAnimationFrame(() => {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      bottomRef.current?.scrollIntoView({ behavior: "auto" });
     });
     return () => cancelAnimationFrame(raf);
-  }, [messages, streamingContent]);
+  }, [messages, streamingContent, isNearBottom]);
 
   return (
     <div className="interview-dark-container h-full flex flex-col">
@@ -108,8 +136,9 @@ export function InterviewView({
         onViewPrd={() => setShowPrd(true)}
       />
 
-      <ScrollArea className={cn("interview-stage flex-1 bg-background", phoneMode && "hidden")}>
-        <div className="interview-transcript">
+      <div ref={scrollHostRef} className={cn("relative min-h-0 flex-1", phoneMode && "hidden")}>
+        <ScrollArea className="interview-stage h-full bg-background">
+          <div className="interview-transcript">
           {messages.length === 0 && !isStreaming && (
             <div className="flex items-center justify-center h-full min-h-[300px]">
               <div className="text-center">
@@ -119,7 +148,7 @@ export function InterviewView({
                     <AvatarFallback>AI</AvatarFallback>
                   </Avatar>
                 </div>
-                <p className="text-[10px] tracking-[0.22em] text-cyan-200/45 mb-2">AUDIT CHANNEL READY</p>
+                <p className="text-xs tracking-[0.16em] text-cyan-100/70 mb-2">AUDIT CHANNEL READY</p>
                 <p className="text-lg font-semibold text-slate-100 mb-1">准备进入专业审计</p>
                 <p className="text-sm text-slate-400">六维审计框架将连续质询你的产品方案</p>
               </div>
@@ -129,7 +158,9 @@ export function InterviewView({
           {messages.length > 0 && (
             <div className="text-center mb-4 pt-1">
               <Badge variant="secondary">
-                面试开始{questionCount > 0 ? ` · 第 ${questionCount} 题` : ""}
+                {auditStatus === "completed" ? "审计完成" : "审计进行中"}
+                {questionCount > 0 ? ` · 第 ${questionCount} 题` : ""}
+                {currentAuditDimension ? ` · ${DIMENSION_NAMES[currentAuditDimension] || currentAuditDimension}` : ""}
               </Badge>
             </div>
           )}
@@ -162,9 +193,24 @@ export function InterviewView({
             </div>
           )}
 
-          <div ref={bottomRef} />
-        </div>
-      </ScrollArea>
+            <div ref={bottomRef} />
+          </div>
+        </ScrollArea>
+        {!isNearBottom && (
+          <Button
+            type="button"
+            onClick={() => {
+              bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+              setIsNearBottom(true);
+            }}
+            className="absolute bottom-4 left-1/2 z-20 -translate-x-1/2 rounded-full"
+            size="sm"
+          >
+            <ChevronDown className="h-3.5 w-3.5" />
+            回到最新
+          </Button>
+        )}
+      </div>
 
       <InterviewInput phoneMode={phoneMode} onTogglePhoneMode={togglePhoneMode} />
 
@@ -220,7 +266,9 @@ function InterviewMessage({
       </Avatar>
       <div className="flex-1 min-w-0 max-w-[85%]">
         <div className="flex items-center gap-2 mb-1">
-          <span className="text-xs font-semibold text-slate-200">AI 压力面试官</span>
+          <span className="text-xs font-semibold text-slate-200">
+            {message.role_name === "audit_report" || message.role_name === "AI审计报告" ? "AI 审计报告" : "AI 专业审计官"}
+          </span>
           <Badge variant="secondary" className="flex items-center gap-1 text-[11px] py-0 px-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-primary" />
             压力测试中

@@ -1,11 +1,12 @@
 "use client";
 
-import { useRef, useEffect, useMemo } from "react";
+import { useRef, useEffect, useMemo, useState } from "react";
 import { useSessionStore } from "@/store/sessionStore";
 import { MessageBubble } from "./MessageBubble";
 import { ROLES, ROLE_MAP } from "@/lib/types";
 import { BrainIcon, getRoleAvatar, handleAvatarError } from "@/components/icons";
 import type { Message } from "@/lib/types";
+import { ChevronDown } from "lucide-react";
 
 type GroupPosition = "first" | "middle" | "last" | "single";
 
@@ -119,13 +120,28 @@ export function MessageList() {
   const streamingContent = useSessionStore((s) => s.streamingContent);
   const streamingRole = useSessionStore((s) => s.streamingRole);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const [isNearBottom, setIsNearBottom] = useState(true);
 
   useEffect(() => {
+    const scroller = listRef.current?.parentElement;
+    if (!scroller) return;
+    const updatePosition = () => {
+      const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+      setIsNearBottom(distance <= 120);
+    };
+    updatePosition();
+    scroller.addEventListener("scroll", updatePosition, { passive: true });
+    return () => scroller.removeEventListener("scroll", updatePosition);
+  }, [messages.length]);
+
+  useEffect(() => {
+    if (!isNearBottom) return;
     const raf = requestAnimationFrame(() => {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      bottomRef.current?.scrollIntoView({ behavior: "auto" });
     });
     return () => cancelAnimationFrame(raf);
-  }, [messages, streamingContent]);
+  }, [messages, streamingContent, isNearBottom]);
 
   const grouped = useMemo(() => computeGroups(messages), [messages]);
 
@@ -166,7 +182,7 @@ export function MessageList() {
   }
 
   return (
-    <div className="space-y-1 px-1">
+    <div ref={listRef} className="relative space-y-1 px-1">
       {messages.length > 0 && (
         <div className="text-center mb-4 pt-2">
           <span className="text-xs text-warm-500 bg-warm-100 px-3 py-1 rounded-full border border-warm-200">
@@ -260,6 +276,19 @@ export function MessageList() {
       )}
 
       <div ref={bottomRef} />
+      {!isNearBottom && (
+        <button
+          type="button"
+          onClick={() => {
+            bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+            setIsNearBottom(true);
+          }}
+          className="sticky bottom-2 left-1/2 z-20 mx-auto flex min-h-9 -translate-x-1/2 items-center gap-1.5 rounded-full border border-cyan-200/20 bg-slate-950/90 px-3 py-1.5 text-xs text-cyan-100 shadow-lg backdrop-blur-xl"
+        >
+          <ChevronDown className="h-3.5 w-3.5" />
+          回到最新
+        </button>
+      )}
     </div>
   );
 }

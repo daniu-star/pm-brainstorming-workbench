@@ -14,8 +14,8 @@ import { Settings, Wallet, Download, Image as ImageIcon, Loader2 } from "lucide-
 
 const PHASE_ACCENT: Record<string, string> = {
   brainstorm: "bg-amber-500",
-  coach: "bg-amber-500",
-  interview: "bg-destructive",
+  clarify: "bg-cyan-400",
+  audit: "bg-destructive",
 };
 
 export function ChatPanel() {
@@ -42,7 +42,7 @@ export function ChatPanel() {
       <div className="h-14 bg-background/75 backdrop-blur-xl border-b border-border flex items-center px-4 shrink-0 relative">
         <div className={cn("absolute left-0 top-0 bottom-0 w-[3px]", accentColor)} />
         <span className="text-sm font-semibold text-foreground pl-1">
-          {phase === "interview" ? "AI 面试官" : phase === "coach" ? "产品教练 · 思路梳理" : "产品脑暴群聊"}
+          {phase === "audit" ? "AI 专业审计" : phase === "clarify" ? "产品教练 · 需求澄清" : "产品脑暴群聊"}
         </span>
         <Badge variant="secondary" className="ml-auto">
           {messages.length} 条消息
@@ -153,7 +153,7 @@ export function ChatPanel() {
         </div>
       )}
 
-      {phase === "interview" && <InterviewBanner />}
+      {phase === "audit" && <InterviewBanner />}
 
       <div className="flex-1 overflow-y-auto px-2 py-3 chat-area-bg chat-noise relative">
         <MessageList />

@@ -8,6 +8,7 @@ import { TimelineView } from "./TimelineView";
 import { ProductPortrait } from "./ProductPortrait";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
 type CanvasTab = "map" | "portrait";
 
@@ -17,6 +18,7 @@ export function CanvasPanel() {
   const isStreaming = useSessionStore((s) => s.isStreaming);
   const productPortrait = useSessionStore((s) => s.productPortrait);
   const isGeneratingPortrait = useSessionStore((s) => s.isGeneratingPortrait);
+  const canvasStatus = useSessionStore((s) => s.canvasStatus);
   const [activeTab, setActiveTab] = useState<CanvasTab>("map");
 
   const isEmpty = !discussionMap || !discussionMap.timeline?.length;
@@ -32,8 +34,22 @@ export function CanvasPanel() {
           className="flex-1 flex flex-col"
         >
           <TabsList className="grid w-full grid-cols-2 rounded-none border-b border-border bg-muted/50 h-auto py-1">
-            <TabsTrigger value="map" className="text-xs">
-              讨论地图
+            <TabsTrigger value="map" className="text-xs gap-2">
+              决策图谱
+              <Badge
+                variant={canvasStatus === "error" ? "destructive" : "secondary"}
+                className="h-5 px-1.5 text-xs"
+              >
+                {canvasStatus === "syncing"
+                  ? "同步中"
+                  : canvasStatus === "ready"
+                    ? "已同步"
+                    : canvasStatus === "stale"
+                      ? "待更新"
+                      : canvasStatus === "error"
+                        ? "同步失败"
+                        : "待生成"}
+              </Badge>
             </TabsTrigger>
             <TabsTrigger value="portrait" className="text-xs">
               产品画像
@@ -152,7 +168,7 @@ function MapEmptyState({
         ) : hasMessages ? (
           <>
             <p className="text-foreground text-base font-medium mb-2">
-              讨论地图
+              决策图谱
             </p>
             <p className="text-muted-foreground text-sm">
               每次讨论结束会自动更新，也可手动刷新
@@ -161,7 +177,7 @@ function MapEmptyState({
         ) : (
           <>
             <p className="text-foreground text-lg font-medium mb-2">
-              讨论地图
+              决策图谱
             </p>
             <p className="text-muted-foreground text-sm leading-relaxed">
               开始对话后，将自动提取共识、分歧和阶段性成果

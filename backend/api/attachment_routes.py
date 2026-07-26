@@ -3,6 +3,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import FileResponse
 from typing import Optional
 from core.attachment_store import attachment_store
+from db.session_store import session_store
 from api.deps import get_current_user
 
 router = APIRouter(prefix="/api/attachments", tags=["attachments"])
@@ -16,6 +17,25 @@ ALLOWED_CONTENT_TYPES = [
     "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "application/json", "application/zip",
 ]
+ALLOWED_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".txt", ".md",
+    ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".json", ".zip",
+}
+
+
+def _owned_session(session_id: str, user_token: str) -> dict:
+    session = session_store.get(session_id, user_token=user_token)
+    if session is None:
+        raise HTTPException(status_code=404, detail="会话未找到或无权访问")
+    return session
+
+
+def _owned_attachment(attachment_id: str, user_token: str) -> dict:
+    attachment = attachment_store.get_attachment(attachment_id)
+    if not attachment:
+        raise HTTPException(status_code=404, detail="附件不存在")
+    _owned_session(attachment.get("session_id", ""), user_token)
+    return attachment
 
 
 @router.post("/upload")
@@ -25,14 +45,20 @@ async def upload_attachment(
     session_id: str = Form(...),
 ):
     user = get_current_user(request)
+    _owned_session(session_id, user["user_token"])
     if not file.filename:
         raise HTTPException(status_code=400, detail="文件名不能为空")
+    extension = os.path.splitext(file.filename)[1].lower()
+    if extension not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=415, detail=f"不支持的文件扩展名: {extension or '无'}")
 
     content = await file.read()
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(status_code=400, detail="文件大小超过 10MB 限制")
 
     content_type = file.content_type or "application/octet-stream"
+    if content_type not in ALLOWED_CONTENT_TYPES:
+        raise HTTPException(status_code=415, detail=f"不支持的文件类型: {content_type}")
 
     result = attachment_store.save_attachment(
         session_id=session_id,
@@ -49,6 +75,7 @@ async def list_attachments(
     request: Request,
 ):
     user = get_current_user(request)
+    _owned_session(session_id, user["user_token"])
     return attachment_store.get_attachments_by_session(session_id)
 
 
@@ -58,6 +85,7 @@ async def delete_attachment(
     request: Request,
 ):
     user = get_current_user(request)
+    _owned_attachment(attachment_id, user["user_token"])
     success = attachment_store.delete_attachment(attachment_id)
     if not success:
         raise HTTPException(status_code=404, detail="附件不存在")
@@ -70,9 +98,7 @@ async def get_file(
     request: Request,
 ):
     user = get_current_user(request)
-    attachment = attachment_store.get_attachment(attachment_id)
-    if not attachment:
-        raise HTTPException(status_code=404, detail="文件不存在")
+    attachment = _owned_attachment(attachment_id, user["user_token"])
     file_path = attachment_store.get_file_path(attachment_id)
     if not file_path or not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="文件不存在")

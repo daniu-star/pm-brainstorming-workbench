@@ -35,7 +35,7 @@ const CAPABILITIES = [
     code: "04 / AUDIT",
     icon: Video,
     title: "AI 审计专业通话",
-    description: "用专业视频通话体验承载六维压力测试，让审计过程更专注、更具仪式感。",
+    description: "用专业语音审计空间承载六维压力测试，让审计过程更专注、更具连续性。",
   },
 ];
 
@@ -98,12 +98,12 @@ export default function ProductPage() {
           <div className="film-frame cinema-reveal rounded-2xl p-5 md:p-8">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-[10px] uppercase text-zinc-500">Decision Signal / Live</p>
+                <p className="text-xs uppercase text-zinc-400">Decision Signal / Demo</p>
                 <h2 className="mt-1 text-sm font-semibold text-white">产品方案审计态势</h2>
               </div>
-              <span className="flex items-center gap-2 text-[10px] text-emerald-200">
+              <span className="flex items-center gap-2 text-xs text-emerald-200">
                 <span className="size-1.5 rounded-full bg-emerald-300" />
-                运行中
+                演示数据
               </span>
             </div>
             <div className="film-rule my-6" />
@@ -127,7 +127,7 @@ export default function ProductPage() {
                   <path d="M0 140 C55 132 70 86 122 101 S205 126 245 72 S330 36 420 49" fill="none" stroke="#67e8f9" strokeWidth="3" />
                   <circle cx="420" cy="49" r="5" fill="#67e8f9" />
                 </svg>
-                <div className="mt-3 flex justify-between text-[9px] text-zinc-600">
+                <div className="mt-3 flex justify-between text-xs text-zinc-400">
                   <span>问题定义</span><span>方案推演</span><span>专业审计</span>
                 </div>
               </div>
@@ -139,7 +139,7 @@ export default function ProductPage() {
                   ["商业闭环", 48],
                 ].map(([label, score]) => (
                   <div key={label as string} className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
-                    <div className="flex items-center justify-between text-[10px]">
+                    <div className="flex items-center justify-between text-xs">
                       <span className="text-zinc-400">{label}</span>
                       <span className="font-mono text-zinc-200 tabular-nums">{score}%</span>
                     </div>
@@ -154,7 +154,7 @@ export default function ProductPage() {
               {[["17", "关键洞察"], ["09", "显性风险"], ["06", "待验证假设"]].map(([value, label]) => (
                 <div key={label} className="bg-[#091018] px-3 py-4">
                   <div className="font-mono text-xl font-semibold text-white tabular-nums">{value}</div>
-                  <div className="mt-1 text-[9px] text-zinc-500">{label}</div>
+                  <div className="mt-1 text-xs text-zinc-400">{label}</div>
                 </div>
               ))}
             </div>
@@ -175,7 +175,7 @@ export default function ProductPage() {
                 <article key={item.title} className="group bg-[#090f16] p-7 transition-colors hover:bg-[#0c151f]">
                   <div className="flex items-start justify-between">
                     <Icon size={22} className="text-cyan-200" />
-                    <span className="font-mono text-[9px] text-zinc-600">{item.code}</span>
+                    <span className="font-mono text-xs text-zinc-400">{item.code}</span>
                   </div>
                   <h3 className="mt-10 text-xl font-semibold text-white">{item.title}</h3>
                   <p className="mt-3 max-w-lg text-pretty text-sm leading-7 text-zinc-500">{item.description}</p>

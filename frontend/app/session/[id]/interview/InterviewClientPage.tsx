@@ -57,6 +57,7 @@ function InterviewContent() {
   } = useSessionStore();
   const dimensionsCovered = useSessionStore((s) => s.dimensionsCovered);
   const questionCount = useSessionStore((s) => s.questionCount);
+  const auditStatus = useSessionStore((s) => s.auditStatus);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [interviewId, setInterviewId] = useState<string | null>(null);
@@ -97,11 +98,11 @@ function InterviewContent() {
   };
 
   useEffect(() => {
-    if (!loading && sessionId && interviewId && !triggeredRef.current) {
+    if (!loading && sessionId && interviewId && auditStatus === "not_started" && !triggeredRef.current) {
       triggeredRef.current = true;
       startInterview();
     }
-  }, [loading, sessionId, interviewId, startInterview]);
+  }, [loading, sessionId, interviewId, auditStatus, startInterview]);
 
   if (loading) {
     return (

@@ -1,6 +1,7 @@
 from fastapi import Request, HTTPException
 from db.user_store import user_store
 from core.auth import verify_jwt_token
+from core.config import settings
 
 
 def get_current_user(request: Request) -> dict:
@@ -14,10 +15,13 @@ def get_current_user(request: Request) -> dict:
                 if user_id:
                     user = user_store.get_or_create_user(user_id)
                     return user
+        raise HTTPException(status_code=401, detail="登录凭证无效或已过期")
 
     user_token = request.headers.get("X-User-Token", "")
+    if not settings.allow_anonymous_tokens:
+        raise HTTPException(status_code=401, detail="请先登录")
     if not user_token:
-        raise HTTPException(status_code=400, detail="缺少 Authorization 或 X-User-Token Header")
+        raise HTTPException(status_code=401, detail="缺少登录凭证")
     return user_store.get_or_create_user(user_token)
 
 

@@ -18,9 +18,13 @@ import {
 } from "@/components/ui/tooltip";
 
 const PHASE_LABELS: Record<string, { label: string; variant: "default" | "secondary" | "destructive" }> = {
-  coach: { label: "产品教练 · 思路梳理", variant: "secondary" },
+  draft: { label: "准备中", variant: "secondary" },
+  clarify: { label: "需求澄清", variant: "secondary" },
   brainstorm: { label: "多角色脑暴", variant: "default" },
-  interview: { label: "AI 面试官", variant: "destructive" },
+  audit: { label: "AI 专业审计", variant: "destructive" },
+  decision_ready: { label: "等待决策", variant: "default" },
+  completed: { label: "已完成", variant: "secondary" },
+  archived: { label: "已归档", variant: "secondary" },
 };
 
 function formatQuota(remaining: number): string {

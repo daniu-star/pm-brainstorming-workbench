@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Message, Role, DiscussionMap, SessionSummary, ProductPortrait, PipelineNodeState, PipelineNodeName, PipelineResult, PipelineSSEEvent, AcceptanceResult } from "@/lib/types";
+import type { Message, Role, DiscussionMap, SessionSummary, ProductPortrait, PipelineNodeState, PipelineNodeName, PipelineResult, PipelineSSEEvent, AcceptanceResult, SessionPhase, ClarificationState } from "@/lib/types";
 import { PIPELINE_NODE_ORDER } from "@/lib/types";
 import { createSSEConnection, type SSEEvent, type SSEConnectionStatus } from "@/lib/sse";
 import { api } from "@/lib/api";
@@ -28,9 +28,14 @@ interface SessionState {
   dimensionsCovered: string[];
   questionCount: number;
   interviewCompleted: boolean;
-  phase: "define" | "coach" | "brainstorm" | "interview";
+  auditStatus: "not_started" | "active" | "completed" | "aborted" | "superseded";
+  currentAuditDimension: string | null;
+  auditReport: string | null;
+  phase: SessionPhase;
+  clarificationState: ClarificationState | null;
   messages: Message[];
   discussionMap: DiscussionMap | null;
+  canvasStatus: "idle" | "syncing" | "ready" | "stale" | "error";
   productPortrait: ProductPortrait | null;
   isGeneratingPortrait: boolean;
   isStreaming: boolean;
@@ -71,12 +76,15 @@ interface SessionState {
   loadSession: (id: string) => Promise<void>;
   createInterviewSpace: (parentSessionId: string) => Promise<string>;
   sendMessage: (content: string, targetRole: Role | "all") => void;
+  startClarification: () => void;
   sendToCoach: (content: string) => void;
+  skipClarification: () => Promise<void>;
+  confirmClarification: () => Promise<void>;
   startInterview: () => void;
   answerInterview: (answer: string) => void;
   generateCanvas: () => Promise<void>;
+  setCanvasNodeStatus: (nodeId: string, status: "draft" | "confirmed") => Promise<void>;
   generateProductPortrait: () => Promise<void>;
-  setPhase: (phase: SessionState["phase"]) => void;
   clearError: () => void;
   abortStream: () => void;
   fetchHistory: () => Promise<void>;
@@ -96,20 +104,30 @@ interface SessionState {
 export const useSessionStore = create<SessionState>((set, get) => {
   let abortController: AbortController | null = null;
   let canvasUpdatePending = false;
+  let canvasUpdateQueued = false;
 
   async function autoUpdateCanvas(sid: string) {
-    if (canvasUpdatePending) return;
+    if (canvasUpdatePending) {
+      canvasUpdateQueued = true;
+      return;
+    }
     canvasUpdatePending = true;
+    set({ canvasStatus: "syncing" });
     try {
       const map = await api<DiscussionMap>("/api/canvas/incremental", {
         method: "POST",
         body: JSON.stringify({ session_id: sid }),
       });
-      set({ discussionMap: map });
-    } catch {
-      // Canvas update is best-effort, don't disrupt chat
+      set({ discussionMap: map, canvasStatus: "ready" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "画布同步失败";
+      set({ error: `画布暂未同步：${message}`, canvasStatus: "error" });
     } finally {
       canvasUpdatePending = false;
+      if (canvasUpdateQueued) {
+        canvasUpdateQueued = false;
+        void autoUpdateCanvas(sid);
+      }
     }
   }
 
@@ -129,9 +147,25 @@ export const useSessionStore = create<SessionState>((set, get) => {
   function handleSSEEvent(event: SSEEvent) {
     switch (event.type) {
       case "phase_change":
-        if (event.phase === "coach" || event.phase === "interview" || event.phase === "brainstorm") {
+        if (event.phase === "clarify" || event.phase === "audit" || event.phase === "brainstorm") {
           set({ phase: event.phase });
         }
+        break;
+      case "clarification_state":
+        if (event.clarification_state) {
+          set({ clarificationState: event.clarification_state });
+        }
+        break;
+      case "audit_state":
+        set({
+          phase: event.audit_status === "completed" ? "decision_ready" : "audit",
+          auditStatus: event.audit_status || "active",
+          dimensionsCovered: event.dimensions_covered || [],
+          questionCount: event.question_count || 0,
+          currentAuditDimension: event.current_dimension || null,
+          interviewCompleted: Boolean(event.interview_completed),
+          auditReport: event.audit_report || null,
+        });
         break;
       case "role_start":
         set({ streamingRole: event.role || null, connectionStatus: "connected" });
@@ -159,11 +193,15 @@ export const useSessionStore = create<SessionState>((set, get) => {
           ...(event.dimensions_covered ? { dimensionsCovered: event.dimensions_covered } : {}),
           ...(event.question_count !== undefined ? { questionCount: event.question_count } : {}),
           ...(event.interview_completed !== undefined ? { interviewCompleted: event.interview_completed } : {}),
+          ...(event.current_dimension !== undefined ? { currentAuditDimension: event.current_dimension } : {}),
           lastAnswerQuality: evaluateAnswerQuality(state.streamingContent),
         });
-        // Auto-update canvas after each role finishes speaking
+        break;
+      }
+      case "round_completed": {
+        const state = get();
         if (state.sessionId) {
-          autoUpdateCanvas(state.sessionId);
+          void autoUpdateCanvas(state.sessionId);
         }
         break;
       }
@@ -198,8 +236,13 @@ export const useSessionStore = create<SessionState>((set, get) => {
   }
 
   function handleError(err: string) {
-    set({ error: err, isStreaming: false, connectionStatus: err.includes("重连") ? "reconnecting" : "disconnected" });
-    if (!err.includes("重连")) {
+    const reconnecting = err.includes("重连");
+    set({
+      error: err,
+      ...(reconnecting ? {} : { isStreaming: false }),
+      connectionStatus: reconnecting ? "reconnecting" : "disconnected",
+    });
+    if (!reconnecting) {
       toast("error", err);
     }
   }
@@ -220,9 +263,14 @@ export const useSessionStore = create<SessionState>((set, get) => {
     dimensionsCovered: [],
     questionCount: 0,
     interviewCompleted: false,
-    phase: "define",
+    auditStatus: "not_started",
+    currentAuditDimension: null,
+    auditReport: null,
+    phase: "draft",
+    clarificationState: null,
     messages: [],
     discussionMap: null,
+    canvasStatus: "idle",
     productPortrait: null,
     isGeneratingPortrait: false,
     isStreaming: false,
@@ -255,15 +303,17 @@ export const useSessionStore = create<SessionState>((set, get) => {
     setTargetRole: (role) => set({ targetRole: role }),
 
     createSession: async (problem: string) => {
-      const session = await api<{ id: string }>("/api/session", {
+      const session = await api<{ id: string; phase: SessionPhase; clarification_state: ClarificationState }>("/api/session", {
         method: "POST",
         body: JSON.stringify({ problem_statement: problem }),
       });
       set({
         sessionId: session.id,
-        phase: "brainstorm",
+        phase: session.phase,
+        clarificationState: session.clarification_state,
         messages: [],
         discussionMap: null,
+        canvasStatus: "idle",
       });
     },
 
@@ -274,28 +324,67 @@ export const useSessionStore = create<SessionState>((set, get) => {
         messages: Message[];
         discussion_map: DiscussionMap | null;
         product_portrait: ProductPortrait | null;
+        clarification_state?: ClarificationState;
+        canvas_status?: SessionState["canvasStatus"];
       }>(`/api/session/${id}`);
       set({
         sessionId: session.id,
-        phase: (session.phase || "define") as SessionState["phase"],
+        phase: (
+          session.phase === "coach"
+            ? "clarify"
+            : session.phase === "interview"
+              ? "audit"
+              : session.phase || "draft"
+        ) as SessionState["phase"],
+        clarificationState: session.clarification_state || null,
         messages: session.messages || [],
         discussionMap: session.discussion_map,
+        canvasStatus: session.canvas_status || (session.discussion_map ? "ready" : "idle"),
         productPortrait: session.product_portrait || null,
       });
     },
 
     createInterviewSpace: async (parentSessionId: string) => {
-      const result = await api<{ interview_id: string }>("/api/interview/create-space", {
+      const result = await api<{
+        interview_id: string;
+        status: SessionState["auditStatus"];
+        messages: Message[];
+        dimensions_covered: string[];
+        current_dimension: string | null;
+        question_count: number;
+        report: string | null;
+      }>("/api/interview/create-space", {
         method: "POST",
         body: JSON.stringify({ parent_session_id: parentSessionId }),
       });
       set({
         interviewId: result.interview_id,
-        dimensionsCovered: [],
-        questionCount: 0,
-        interviewCompleted: false,
+        phase: result.status === "completed" ? "decision_ready" : "audit",
+        messages: result.messages || [],
+        dimensionsCovered: result.dimensions_covered || [],
+        questionCount: result.question_count || 0,
+        interviewCompleted: result.status === "completed",
+        auditStatus: result.status,
+        currentAuditDimension: result.current_dimension,
+        auditReport: result.report,
       });
       return result.interview_id;
+    },
+
+    startClarification: () => {
+      const state = get();
+      if (!state.sessionId || state.isStreaming) return;
+
+      abortController?.abort();
+      set({ isStreaming: true, streamingContent: "", error: null });
+      abortController = createSSEConnection(
+        "/api/brainstorm/coach/start",
+        { session_id: state.sessionId },
+        handleSSEEvent,
+        handleDone,
+        handleError,
+        handleStatusChange
+      );
     },
 
     sendToCoach: (content: string) => {
@@ -327,6 +416,41 @@ export const useSessionStore = create<SessionState>((set, get) => {
         handleError,
         handleStatusChange
       );
+    },
+
+    skipClarification: async () => {
+      const state = get();
+      if (!state.sessionId) return;
+      const result = await api<{ phase: SessionPhase; clarification_state: ClarificationState }>(
+        "/api/brainstorm/coach/skip",
+        {
+          method: "POST",
+          body: JSON.stringify({ session_id: state.sessionId }),
+        }
+      );
+      set({
+        phase: result.phase,
+        clarificationState: result.clarification_state,
+        error: null,
+      });
+    },
+
+    confirmClarification: async () => {
+      const state = get();
+      if (!state.sessionId) return;
+      const result = await api<{ phase: SessionPhase; clarification_state: ClarificationState }>(
+        "/api/brainstorm/coach/confirm",
+        {
+          method: "POST",
+          body: JSON.stringify({ session_id: state.sessionId }),
+        }
+      );
+      set({
+        phase: result.phase,
+        clarificationState: result.clarification_state,
+        error: null,
+      });
+      toast("success", "需求已确认，多角色专家已就位");
     },
 
     sendMessage: (content: string, targetRole: Role | "all") => {
@@ -372,6 +496,8 @@ export const useSessionStore = create<SessionState>((set, get) => {
       }
 
       set({
+        phase: "audit",
+        auditStatus: state.auditStatus === "not_started" ? "active" : state.auditStatus,
         isStreaming: true,
         streamingContent: "",
         error: null,
@@ -406,6 +532,8 @@ export const useSessionStore = create<SessionState>((set, get) => {
         role: "user",
         content: answer,
         timestamp: new Date().toISOString(),
+        stage: "audit",
+        audit_run_id: state.interviewId || undefined,
       };
       set({
         messages: [...state.messages, userMsg],
@@ -432,11 +560,30 @@ export const useSessionStore = create<SessionState>((set, get) => {
     generateCanvas: async () => {
       const state = get();
       if (!state.sessionId) return;
-      const map = await api<DiscussionMap>("/api/canvas/generate", {
-        method: "POST",
-        body: JSON.stringify({ session_id: state.sessionId }),
-      });
-      set({ discussionMap: map });
+      set({ canvasStatus: "syncing" });
+      try {
+        const map = await api<DiscussionMap>("/api/canvas/generate", {
+          method: "POST",
+          body: JSON.stringify({ session_id: state.sessionId }),
+        });
+        set({ discussionMap: map, canvasStatus: "ready" });
+      } catch (error) {
+        set({ canvasStatus: "error" });
+        throw error;
+      }
+    },
+
+    setCanvasNodeStatus: async (nodeId, status) => {
+      const state = get();
+      if (!state.sessionId) return;
+      const map = await api<DiscussionMap>(
+        `/api/canvas/${state.sessionId}/nodes/${encodeURIComponent(nodeId)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ status }),
+        }
+      );
+      set({ discussionMap: map, canvasStatus: "ready" });
     },
 
     generateProductPortrait: async () => {
@@ -456,7 +603,6 @@ export const useSessionStore = create<SessionState>((set, get) => {
       }
     },
 
-    setPhase: (phase) => set({ phase }),
     clearError: () => set({ error: null }),
 
     abortStream: () => {
@@ -485,10 +631,6 @@ export const useSessionStore = create<SessionState>((set, get) => {
     setUserApiKey: async (key, baseUrl, model) => {
       set({ userApiKey: key, userBaseUrl: baseUrl, userModel: model });
       saveApiKeyConfig(key, baseUrl, model);
-      api("/api/user/apikey", {
-        method: "POST",
-        body: JSON.stringify({ api_key: key, base_url: baseUrl, model }),
-      }).catch(() => {});
       if (key) {
         try {
           const result = await api<{ status: string; provider?: string; base_url?: string; model?: string }>("/api/user/test-key", {
@@ -501,7 +643,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
             set({ userBaseUrl: correctedBaseUrl, userModel: correctedModel });
             saveApiKeyConfig(key, correctedBaseUrl, correctedModel);
           }
-          toast("success", "API Key 已保存并验证通过，所有请求将使用你的 Key");
+          toast("success", "API Key 已在当前浏览器保存并验证通过，不会写入服务端数据库");
         } catch (err) {
           toast("error", `API Key 验证失败：${err instanceof Error ? err.message : "连接失败"}`);
         }
@@ -511,10 +653,6 @@ export const useSessionStore = create<SessionState>((set, get) => {
     clearUserApiKey: () => {
       set({ userApiKey: "", userBaseUrl: "", userModel: "" });
       clearApiKeyConfig();
-      api("/api/user/apikey", {
-        method: "POST",
-        body: JSON.stringify({ api_key: "", base_url: "", model: "" }),
-      }).catch(() => {});
       toast("info", "API Key 已清除，将使用平台额度");
     },
 
@@ -552,6 +690,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
         isLoggedIn: true,
         userNickname: result.user?.nickname || result.user?.phone || null,
       });
+      await get().fetchQuota();
       toast("success", "登录成功");
     },
 

@@ -1,9 +1,10 @@
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Request, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from db.user_store import user_store
 from core.config import settings
+from api.deps import get_current_user
 
 router = APIRouter(prefix="/api/user", tags=["user"])
 
@@ -40,26 +41,24 @@ def _validate_base_url(base_url: str) -> str:
 
 
 class SaveApiKeyRequest(BaseModel):
-    api_key: str
-    base_url: str = ""
-    model: str = ""
+    api_key: str = Field(min_length=8, max_length=512)
+    base_url: str = Field(default="", max_length=500)
+    model: str = Field(default="", max_length=160)
 
 
 @router.get("/quota")
 async def get_quota(request: Request):
-    user_token = request.headers.get("X-User-Token", "")
-    if not user_token:
-        raise HTTPException(status_code=400, detail="缺少 X-User-Token Header")
-    return user_store.get_quota(user_token)
+    user = get_current_user(request)
+    return user_store.get_quota(user["user_token"])
 
 
 @router.post("/apikey")
-async def save_api_key(request: Request, req: SaveApiKeyRequest):
-    user_token = request.headers.get("X-User-Token", "")
-    if not user_token:
-        raise HTTPException(status_code=400, detail="缺少 X-User-Token Header")
-    user_store.save_api_key(user_token, req.api_key, req.base_url, req.model)
-    return {"status": "saved"}
+async def save_api_key(request: Request):
+    get_current_user(request)
+    return {
+        "status": "client_only",
+        "message": "BYOK 仅保存在用户浏览器中，服务端不接收或持久化密钥",
+    }
 
 
 PROVIDER_MAP = {
@@ -121,7 +120,8 @@ def _normalize_model_name(model: str) -> str:
 
 
 @router.post("/test-key")
-async def test_api_key(req: SaveApiKeyRequest):
+async def test_api_key(req: SaveApiKeyRequest, request: Request):
+    get_current_user(request)
     try:
         from openai import AsyncOpenAI
         model = _normalize_model_name(req.model) if req.model else ""
@@ -145,26 +145,25 @@ async def test_api_key(req: SaveApiKeyRequest):
 
 @router.get("/diagnose")
 async def diagnose_connection(request: Request):
-    user_token = request.headers.get("X-User-Token", "")
+    user = get_current_user(request)
+    user_token = user["user_token"]
     api_key_raw = request.headers.get("X-API-Key", "") or request.headers.get("X-API_Key", "")
     base_url_raw = request.headers.get("X-Base-URL", "") or request.headers.get("X-Base_URL", "")
     model_raw = request.headers.get("X-Model", "")
 
-    user_data = None
-    if user_token:
-        user_data = user_store.get_or_create_user(user_token)
+    user_data = user
 
     return {
         "received_headers": {
-            "x-user-token": user_token[:8] + "..." if len(user_token) > 8 else user_token,
-            "x-api-key": ("已设置 (" + api_key_raw[:6] + "...)" if api_key_raw else "未设置"),
+            "identity": "已认证",
+            "x-api-key": "已设置" if api_key_raw else "未设置",
             "x-base-url": base_url_raw or "未设置",
             "x-model": model_raw or "未使用默认值",
         },
         "user_info": {
             "token_quota": user_data["token_quota"] if user_data else 0,
             "tokens_used": user_data["tokens_used"] if user_data else 0,
-            "has_stored_api_key": bool(user_data.get("api_key")) if user_data else False,
+            "has_stored_api_key": False,
         } if user_data else None,
         "server_config": {
             "has_default_llm_key": bool(settings.llm_api_key),
