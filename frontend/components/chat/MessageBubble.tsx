@@ -94,7 +94,7 @@ export const MessageBubble = memo(function MessageBubble({
               </div>
             )}
             <div className={cn("pl-3", showMeta && "pr-16")}>
-              <div className="prose prose-sm max-w-none text-foreground leading-relaxed">
+              <div className="chat-markdown prose prose-sm prose-invert max-w-none leading-relaxed">
                 {isStreaming ? (
                   <p className="whitespace-pre-wrap">{message.content}</p>
                 ) : (
@@ -148,7 +148,7 @@ export const MessageBubble = memo(function MessageBubble({
             </div>
           )}
           <div className={cn("pl-2", showMeta && "pr-16")}>
-            <div className="prose prose-sm max-w-none text-foreground leading-relaxed">
+            <div className="chat-markdown prose prose-sm prose-invert max-w-none leading-relaxed">
               {isStreaming ? (
                 <p className="whitespace-pre-wrap">{message.content}</p>
               ) : (

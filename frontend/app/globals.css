@@ -1154,6 +1154,35 @@ body {
   backdrop-filter: blur(16px) saturate(130%);
 }
 
+/* 聊天 Markdown 在深色角色气泡中保持可读，避免列表继承浅色主题的低对比度灰色。 */
+.chat-markdown {
+  --tw-prose-body: #e6edf7;
+  --tw-prose-headings: #f8fbff;
+  --tw-prose-lead: #d8e4f1;
+  --tw-prose-links: #8be9ff;
+  --tw-prose-bold: #ffffff;
+  --tw-prose-counters: #8bdcf0;
+  --tw-prose-bullets: #63d9f4;
+  --tw-prose-hr: rgba(186, 230, 253, 0.18);
+  --tw-prose-quotes: #e6edf7;
+  --tw-prose-quote-borders: #67e8f9;
+  color: #e6edf7;
+}
+
+.chat-markdown :is(p, li) {
+  color: #e6edf7;
+}
+
+.chat-markdown :is(strong, b) {
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.chat-markdown :is(ol, ul) > li::marker {
+  color: #7dd3fc;
+  font-weight: 700;
+}
+
 /* ===== 首次配置任务弹窗 ===== */
 .onboarding-cosmos {
   --background: 222 52% 10%;
