@@ -1,1 +1,24 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 560" fill="none" shape-rendering="auto"><metadata xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/"><rdf:RDF><rdf:Description><dc:title>Notionists</dc:title><dc:creator>Zoish</dc:creator><dc:source xsi:type="dcterms:URI">https://heyzoish.gumroad.com/l/notionists</dc:source><dcterms:license xsi:type="dcterms:URI">https://creativecommons.org/publicdomain/zero/1.0/</dcterms:license><dc:rights>Remix of „Notionists” (https://heyzoish.gumroad.com/l/notionists) by „Zoish”, licensed under „CC0 1.0” (https://creativecommons.org/publicdomain/zero/1.0/)</dc:rights></rdf:Description></rdf:RDF></metadata><mask id="viewboxMask"><rect width="560" height="560" rx="0" ry="0" x="0" y="0" fill="#fff" /></mask><g mask="url(#viewboxMask)"><rect fill="#ffffff" width="560" height="560" x="0" y="0" /><g transform="translate(136 328)"><path d="M175 75.5c8.2-5 11.5-.1 14.5 5.4-11.4 17-50 20.1-60.7 3.4 15-5.2 31.3-1.5 46.1-8.8Z" fill="#000"/></g><g transform="translate(246 125)"><path d="M27 199.5c-7.6-4.6-16.3-6-19.8-14.5-1.8-4.5-3.5-9-1.4-13.5 3-6.4 8.9-8.5 15-6 8.6 3.7 1.8 9 .5 13.6C45 199 75 190.2 95.3 176c7.1-5 4.4-10.5-1.6-14.1-11.2-6.7-21.4-15.5-36.4-13.7 2.5-12.3 10.3-12.6 17-11.2A67.4 67.4 0 0 1 108 154c10.4 10.2 9.5 23.6-1.5 33.3-16 14.2-35.7 17.2-55.9 16-7.4-.3-15.4.3-23.5-3.7Z" fill="#000"/></g><g transform="translate(-45 137)"><path d="M409.2 75.7c13.1.3 25.4 1 37.7 2.5 3 .3 4.9 3.3 5 6.6 0 3.4-1.8 5.7-4.8 7-11.1 4.9-22 8.3-33.7.2-6.5-4.4-8.9-8.6-4.2-16.3ZM254.7 78.4c6.2 3.3 5.2 7 2.1 10.8-6.5 8-28.2 10-36.4 3.5-4.7-3.8-7.3-8.6-4.4-14.4 3-6 8.2-5 13-2.5 8 4 16.4 3 25.7 2.6Z" fill="#000"/></g><g transform="translate(-45 137)"></g><g transform="translate(119 114)"><path d="M107.5 34.6c4.3 5.6 14.4 8.2 8.3 16.8-5.8 8.2-15.6 8.7-24.3 6.4C82 55.5 73 52 64.4 47.2c-12.1-7-23.1-6.2-34.8.2-6.6 3.6-16 9.8-20.4 1.9-5-9.2 7-11.4 12.8-15.4 18-12.8 38.8-14 60-12.2 9.6.8 16.7 7.7 25.5 13ZM231.2 44.2c15.9-7.4 30.7-14.8 48.2-12.7a47.6 47.6 0 0 1 30 15.2c2.9 3.1 5 7.5 1.4 11.4-3.6 3.7-8.6 4.5-12.5.4-10-10.7-20.3-8.4-30.7-1.4-9 6.1-19.6 5.5-29.4 6.4-10.7 1-13.4-6.6-7-19.3Z" fill="#000"/></g></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="9" y1="7" x2="111" y2="116" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#3B286B"/><stop offset=".5" stop-color="#251C53"/><stop offset="1" stop-color="#132846"/>
+    </linearGradient>
+    <linearGradient id="coat" x1="34" y1="75" x2="91" y2="112" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#C084FC"/><stop offset="1" stop-color="#6366F1"/>
+    </linearGradient>
+    <radialGradient id="halo"><stop stop-color="#E9D5FF" stop-opacity=".32"/><stop offset="1" stop-color="#A855F7" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="120" height="120" rx="28" fill="url(#bg)"/>
+  <circle cx="60" cy="50" r="46" fill="url(#halo)"/>
+  <path d="M20 31 31 20m-4 19 16-16M91 23l8 8-8 8-8-8 8-8Z" stroke="#E9D5FF" stroke-opacity=".46" stroke-width="1.5"/>
+  <path d="M24 111c3-23 17-35 36-35s34 12 37 35H24Z" fill="url(#coat)" stroke="#E9D5FF" stroke-opacity=".28"/>
+  <path d="m45 79 15 15 15-15 6 4-8 28H47l-8-28 6-4Z" fill="#F5F3FF" fill-opacity=".9"/>
+  <rect x="39" y="27" width="42" height="50" rx="20" fill="#E7B18F"/>
+  <path d="M37 50c0-22 11-33 27-33 13 0 24 10 22 31-7-1-13-6-18-14-7 8-17 14-31 16Z" fill="#17102E"/>
+  <path d="M40 48c-3 10-1 23 7 30l-1-30h-6ZM81 45c4 10 3 25-6 34l2-35 4 1Z" fill="#17102E"/>
+  <circle cx="51" cy="55" r="2" fill="#35203A"/><circle cx="69" cy="55" r="2" fill="#35203A"/>
+  <path d="M53 66c5 3 10 3 14-1" stroke="#8A4250" stroke-width="2" stroke-linecap="round"/>
+  <path d="m89 65 13 5-10 9-3-14Z" fill="#F0ABFC" fill-opacity=".78"/>
+  <circle cx="94" cy="72" r="3" fill="#E879F9"/>
+  <path d="M17 88c7-2 11-6 13-13 2 7 6 11 13 13-7 2-11 6-13 13-2-7-6-11-13-13Z" stroke="#C4B5FD" stroke-opacity=".5"/>
+</svg>

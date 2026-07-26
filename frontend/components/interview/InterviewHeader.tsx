@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Phone, PhoneOff, Volume2, VolumeX, FileText } from "lucide-react";
+import { ArrowLeft, Phone, PhoneOff, Volume2, VolumeX, FileText, ShieldCheck } from "lucide-react";
 import { useSessionStore } from "@/store/sessionStore";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
@@ -80,7 +80,7 @@ export function InterviewHeader({
   const { sessionId, interviewMode, setInterviewMode } = useSessionStore();
 
   return (
-    <header className="interview-dark-header h-14 flex items-center justify-between px-4 shrink-0 shadow-sm">
+    <header className="interview-command-header interview-dark-header flex items-center justify-between px-4 md:px-6 shrink-0 shadow-sm">
       <div className="flex items-center gap-3">
         <Button
           variant="ghost"
@@ -99,13 +99,16 @@ export function InterviewHeader({
         </Button>
 
         <div className="flex items-center gap-2">
-          <Avatar className="h-8 w-8 border border-primary/30">
+          <Avatar className="h-10 w-10 border border-cyan-200/30 shadow-[0_0_20px_rgba(34,211,238,0.16)]">
             <AvatarImage src={INTERVIEWER_AVATAR} alt="AI 面试官" />
             <AvatarFallback>AI</AvatarFallback>
           </Avatar>
           <div className="flex flex-col">
-            <span className="text-sm font-bold text-slate-200 leading-tight">AI 压力面试官</span>
-            <Badge variant="secondary" className="flex items-center gap-1 text-[11px] py-0 px-1.5 w-fit">
+            <span className="text-[9px] font-medium tracking-[0.2em] text-cyan-200/45 leading-tight">
+              AI AUDIT ROOM / SECURE
+            </span>
+            <span className="text-sm font-bold text-slate-100 leading-tight">AI 审计专业通话</span>
+            <Badge variant="secondary" className="mt-0.5 flex items-center gap-1 text-[10px] py-0 px-1.5 w-fit border-cyan-200/15 bg-cyan-300/5 text-cyan-100">
               <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
               面试进行中
             </Badge>
@@ -129,7 +132,7 @@ export function InterviewHeader({
 
         <Button
           variant={interviewMode === "voice" ? "default" : "outline"}
-          size="icon"
+          size="sm"
           onClick={() => setInterviewMode(interviewMode === "voice" ? "text" : "voice")}
           aria-label={interviewMode === "voice" ? "关闭语音" : "开启语音"}
           aria-pressed={interviewMode === "voice"}
@@ -144,14 +147,19 @@ export function InterviewHeader({
 
         <Button
           variant={phoneMode ? "destructive" : "outline"}
-          size="icon"
+          size="sm"
           onClick={onTogglePhoneMode}
-          aria-label="电话模式"
+          aria-label="AI 审计通话模式"
           aria-pressed={phoneMode}
-          className="h-10 w-10 text-slate-300 hover:text-white"
+          className="h-10 min-w-10 px-3 text-slate-200 hover:text-white"
         >
           {phoneMode ? <PhoneOff className="h-4 w-4" /> : <Phone className="h-4 w-4" />}
+          <span className="hidden sm:inline">{phoneMode ? "退出通话" : "审计通话"}</span>
         </Button>
+        <div className="hidden items-center gap-1.5 rounded-lg border border-emerald-300/15 bg-emerald-300/5 px-2.5 py-1.5 text-[10px] text-emerald-200 lg:flex">
+          <ShieldCheck className="h-3.5 w-3.5" />
+          加密会话
+        </div>
       </div>
     </header>
   );

@@ -120,7 +120,7 @@
 body {
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-family: "Inter", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: "Microsoft YaHei", "微软雅黑", "PingFang SC", "Noto Sans SC", "Hiragino Sans GB", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -592,9 +592,10 @@ body {
 .product-cinema {
   position: relative;
   background:
-    radial-gradient(circle at 75% 18%, rgba(34, 211, 238, 0.12), transparent 27rem),
-    radial-gradient(circle at 18% 72%, rgba(59, 130, 246, 0.09), transparent 32rem),
-    #06090e;
+    radial-gradient(ellipse 80% 60% at 74% 12%, rgba(52, 211, 153, 0.10), transparent 56%),
+    radial-gradient(ellipse 72% 65% at 90% 58%, rgba(37, 99, 235, 0.22), transparent 64%),
+    radial-gradient(ellipse 58% 55% at 12% 78%, rgba(124, 58, 237, 0.2), transparent 62%),
+    linear-gradient(145deg, #101d36 0%, #07182c 34%, #101438 66%, #061421 100%);
   color-scheme: dark;
 }
 
@@ -603,8 +604,8 @@ body {
   inset: 0;
   pointer-events: none;
   background-image:
-    linear-gradient(rgba(103, 232, 249, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(103, 232, 249, 0.035) 1px, transparent 1px);
+    linear-gradient(rgba(125, 211, 252, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(125, 211, 252, 0.045) 1px, transparent 1px);
   background-size: 64px 64px;
   mask-image: linear-gradient(to bottom, black, transparent 86%);
 }
@@ -613,7 +614,9 @@ body {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  background: radial-gradient(circle at center, transparent 40%, rgba(0, 0, 0, 0.62) 110%);
+  background:
+    linear-gradient(180deg, rgba(3, 10, 25, 0.12), rgba(3, 8, 20, 0.42)),
+    radial-gradient(circle at center, transparent 38%, rgba(1, 5, 16, 0.52) 112%);
 }
 
 .command-panel,
@@ -621,8 +624,15 @@ body {
   position: relative;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  background: linear-gradient(145deg, rgba(15, 23, 34, 0.94), rgba(6, 11, 17, 0.96));
-  box-shadow: 0 40px 100px rgba(0, 0, 0, 0.45), inset 0 1px rgba(255, 255, 255, 0.04);
+  background:
+    linear-gradient(150deg, rgba(19, 43, 70, 0.82), rgba(10, 18, 45, 0.74)),
+    rgba(8, 18, 38, 0.78);
+  backdrop-filter: blur(24px) saturate(145%);
+  box-shadow:
+    0 36px 90px rgba(1, 7, 23, 0.48),
+    0 12px 32px rgba(14, 116, 144, 0.12),
+    inset 0 1px rgba(255, 255, 255, 0.12),
+    inset 0 -1px rgba(14, 165, 233, 0.08);
 }
 
 .command-panel {
@@ -693,6 +703,575 @@ body {
 @keyframes cinemaReveal {
   from { opacity: 0; transform: translateY(24px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* ===== 星空、磨砂交互与渐变层次 ===== */
+.cosmic-stars {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.cosmic-stars::before,
+.cosmic-stars::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(70px);
+  opacity: 0.28;
+  animation: nebulaDrift 18s ease-in-out infinite alternate;
+}
+
+.cosmic-stars::before {
+  width: 34rem;
+  height: 34rem;
+  left: -12rem;
+  top: 18%;
+  background: rgba(99, 102, 241, 0.24);
+}
+
+.cosmic-stars::after {
+  width: 30rem;
+  height: 30rem;
+  right: -10rem;
+  top: 5%;
+  background: rgba(6, 182, 212, 0.2);
+  animation-delay: -7s;
+}
+
+.cosmic-stars span {
+  position: absolute;
+  left: var(--star-x);
+  top: var(--star-y);
+  width: var(--star-size);
+  height: var(--star-size);
+  border-radius: 999px;
+  background: rgba(224, 242, 254, 0.95);
+  box-shadow:
+    0 0 calc(var(--star-size) * 3) rgba(125, 211, 252, 0.9),
+    0 0 calc(var(--star-size) * 7) rgba(96, 165, 250, 0.45);
+  animation:
+    starTwinkle var(--star-duration) ease-in-out var(--star-delay) infinite,
+    starFloat calc(var(--star-duration) * 2.2) ease-in-out var(--star-delay) infinite alternate;
+}
+
+.frost-action,
+.frost-chip {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  backdrop-filter: blur(18px) saturate(145%);
+  box-shadow:
+    0 12px 30px rgba(2, 8, 23, 0.28),
+    0 3px 9px rgba(34, 211, 238, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 -1px 0 rgba(2, 132, 199, 0.12);
+}
+
+.frost-action::before,
+.frost-chip::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: linear-gradient(120deg, rgba(255, 255, 255, 0.14), transparent 38%, rgba(125, 211, 252, 0.08));
+  opacity: 0.8;
+}
+
+.frost-action::after {
+  content: "";
+  position: absolute;
+  inset: -1px auto -1px -45%;
+  width: 36%;
+  transform: skewX(-20deg);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.32), transparent);
+  transition: left 0.55s ease;
+}
+
+.frost-action:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 18px 38px rgba(2, 8, 23, 0.34),
+    0 6px 18px rgba(34, 211, 238, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.frost-action:hover::after {
+  left: 118%;
+}
+
+.frost-action-primary {
+  border: 1px solid rgba(207, 250, 254, 0.54) !important;
+  background: linear-gradient(135deg, rgba(165, 243, 252, 0.96), rgba(56, 189, 248, 0.92) 55%, rgba(129, 140, 248, 0.9)) !important;
+  color: #031521 !important;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.38);
+  box-shadow:
+    0 16px 38px rgba(14, 165, 233, 0.3),
+    0 5px 16px rgba(99, 102, 241, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    inset 0 -1px 0 rgba(3, 105, 161, 0.2);
+}
+
+.landing-shell > header,
+.product-cinema > header {
+  background: linear-gradient(90deg, rgba(8, 22, 45, 0.78), rgba(14, 19, 52, 0.72), rgba(8, 31, 49, 0.78));
+  backdrop-filter: blur(24px) saturate(150%);
+  box-shadow: 0 10px 38px rgba(2, 8, 23, 0.2), inset 0 -1px rgba(125, 211, 252, 0.08);
+}
+
+.landing-shell section[class*="bg-[#"],
+.product-cinema section[class*="bg-[#"] {
+  background:
+    radial-gradient(circle at 78% 20%, rgba(14, 165, 233, 0.11), transparent 40%),
+    linear-gradient(145deg, rgba(9, 30, 55, 0.83), rgba(20, 18, 54, 0.82)) !important;
+  backdrop-filter: blur(12px);
+}
+
+.landing-shell article,
+.product-cinema article {
+  background:
+    linear-gradient(145deg, rgba(21, 47, 77, 0.66), rgba(12, 20, 50, 0.62)) !important;
+  backdrop-filter: blur(16px);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.landing-shell article:hover,
+.product-cinema article:hover {
+  background:
+    linear-gradient(145deg, rgba(27, 62, 96, 0.75), rgba(18, 29, 66, 0.72)) !important;
+  box-shadow:
+    inset 0 1px rgba(255, 255, 255, 0.11),
+    0 16px 36px rgba(2, 8, 23, 0.2);
+}
+
+/* ===== 未来感产品工作台 ===== */
+.workbench-shell {
+  --background: 222 54% 9%;
+  --foreground: 210 40% 96%;
+  --card: 220 42% 13%;
+  --card-foreground: 210 40% 96%;
+  --popover: 222 48% 11%;
+  --popover-foreground: 210 40% 96%;
+  --primary: 188 88% 53%;
+  --primary-foreground: 216 60% 8%;
+  --secondary: 220 33% 18%;
+  --secondary-foreground: 210 34% 92%;
+  --muted: 220 28% 17%;
+  --muted-foreground: 215 18% 67%;
+  --accent: 217 36% 20%;
+  --accent-foreground: 190 85% 88%;
+  --border: 213 35% 23%;
+  --input: 215 34% 25%;
+  --ring: 188 86% 53%;
+  --destructive: 350 82% 58%;
+  --destructive-foreground: 0 0% 100%;
+  --bg-primary: #081225;
+  --bg-secondary: rgba(11, 25, 48, 0.92);
+  --bg-tertiary: rgba(19, 38, 68, 0.82);
+  --text-primary: #eaf7ff;
+  --text-secondary: #b7cde0;
+  --text-muted: #7891a8;
+  --border-color: rgba(125, 211, 252, 0.16);
+  position: relative;
+  isolation: isolate;
+  color-scheme: dark;
+  background:
+    radial-gradient(ellipse 72% 72% at 15% 90%, rgba(79, 70, 229, 0.16), transparent 64%),
+    radial-gradient(ellipse 62% 60% at 88% 10%, rgba(6, 182, 212, 0.14), transparent 62%),
+    linear-gradient(145deg, #0b1b34, #091226 52%, #101334);
+}
+
+.workbench-shell::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(125, 211, 252, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(125, 211, 252, 0.035) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(circle at center, black 22%, transparent 88%);
+}
+
+.workbench-shell::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.45;
+  background:
+    radial-gradient(circle at 18% 24%, rgba(34, 211, 238, 0.55) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 72% 16%, rgba(165, 180, 252, 0.5) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 84% 72%, rgba(125, 211, 252, 0.35) 0 1px, transparent 1.5px);
+  background-size: 180px 180px, 230px 230px, 270px 270px;
+}
+
+.workbench-header {
+  border-color: rgba(125, 211, 252, 0.15) !important;
+  background: linear-gradient(90deg, rgba(8, 25, 49, 0.88), rgba(13, 19, 49, 0.86)) !important;
+  backdrop-filter: blur(24px) saturate(145%);
+  box-shadow: 0 12px 32px rgba(2, 8, 23, 0.22), inset 0 -1px rgba(125, 211, 252, 0.06) !important;
+}
+
+.workbench-canvas-panel,
+.workbench-chat-panel {
+  background:
+    radial-gradient(ellipse at 50% 46%, rgba(14, 165, 233, 0.055), transparent 58%),
+    linear-gradient(145deg, rgba(10, 25, 49, 0.72), rgba(11, 18, 43, 0.78));
+  backdrop-filter: blur(18px);
+}
+
+.workbench-chat-panel {
+  border-color: rgba(125, 211, 252, 0.16) !important;
+  box-shadow: -18px 0 48px rgba(2, 8, 23, 0.18);
+}
+
+.workbench-shell .chat-area-bg {
+  background:
+    radial-gradient(ellipse at 50% 8%, rgba(14, 165, 233, 0.08), transparent 56%),
+    linear-gradient(180deg, rgba(8, 23, 45, 0.9), rgba(10, 17, 39, 0.94));
+}
+
+.workbench-shell .text-warm-500,
+.workbench-shell .text-warm-600,
+.workbench-shell .text-warm-700 {
+  color: hsl(var(--muted-foreground)) !important;
+}
+
+.workbench-shell .bg-warm-50,
+.workbench-shell .bg-white {
+  background: hsl(var(--background)) !important;
+}
+
+.workbench-shell .bg-warm-100 {
+  background: hsl(var(--muted)) !important;
+}
+
+.workbench-shell .border-warm-200 {
+  border-color: hsl(var(--border)) !important;
+}
+
+.workbench-shell .bubble-user-bg {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.26), rgba(79, 70, 229, 0.22));
+}
+
+.workbench-shell [data-radix-scroll-area-viewport] {
+  scroll-behavior: smooth;
+}
+
+.nav-frost-control {
+  border: 1px solid rgba(125, 211, 252, 0.11);
+  background: linear-gradient(145deg, rgba(26, 47, 76, 0.34), rgba(14, 25, 56, 0.42));
+  color: #a8bdd0;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.045);
+  backdrop-filter: blur(14px);
+}
+
+.nav-frost-control:hover {
+  transform: translateY(-1px);
+  border-color: rgba(125, 211, 252, 0.25);
+  color: #e0f7ff;
+  background: linear-gradient(145deg, rgba(28, 68, 101, 0.42), rgba(21, 34, 76, 0.5));
+  box-shadow: 0 10px 24px rgba(2, 8, 23, 0.2), inset 0 1px rgba(255, 255, 255, 0.07);
+}
+
+.nav-audit-control {
+  border-color: rgba(34, 211, 238, 0.22);
+  color: #a5f3fc;
+  background: linear-gradient(135deg, rgba(8, 145, 178, 0.15), rgba(79, 70, 229, 0.18));
+  box-shadow: 0 8px 24px rgba(8, 145, 178, 0.1), inset 0 1px rgba(255, 255, 255, 0.07);
+}
+
+.nav-audit-control:hover {
+  border-color: rgba(103, 232, 249, 0.4);
+  color: #ecfeff;
+  box-shadow: 0 12px 28px rgba(8, 145, 178, 0.18), inset 0 1px rgba(255, 255, 255, 0.1);
+}
+
+/* ===== 首次配置任务弹窗 ===== */
+.onboarding-cosmos {
+  --background: 222 52% 10%;
+  --foreground: 210 40% 96%;
+  --card: 220 42% 14%;
+  --card-foreground: 210 40% 96%;
+  --primary: 188 88% 53%;
+  --primary-foreground: 216 60% 8%;
+  --secondary: 220 34% 18%;
+  --secondary-foreground: 210 34% 92%;
+  --muted: 220 28% 18%;
+  --muted-foreground: 215 18% 68%;
+  --accent: 217 38% 21%;
+  --accent-foreground: 190 85% 90%;
+  --border: 212 35% 25%;
+  --input: 214 35% 25%;
+  --ring: 188 86% 53%;
+  overflow: hidden;
+  border: 1px solid rgba(125, 211, 252, 0.2) !important;
+  color: hsl(var(--foreground));
+  background:
+    radial-gradient(circle at 88% 8%, rgba(34, 211, 238, 0.16), transparent 34%),
+    radial-gradient(circle at 8% 92%, rgba(99, 102, 241, 0.2), transparent 38%),
+    linear-gradient(145deg, rgba(13, 34, 62, 0.98), rgba(14, 17, 48, 0.98)) !important;
+  backdrop-filter: blur(28px) saturate(145%);
+  box-shadow:
+    0 42px 120px rgba(1, 5, 18, 0.66),
+    0 10px 40px rgba(14, 165, 233, 0.13),
+    inset 0 1px rgba(255, 255, 255, 0.12) !important;
+}
+
+.onboarding-cosmos::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.34;
+  background-image:
+    linear-gradient(rgba(125, 211, 252, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(125, 211, 252, 0.05) 1px, transparent 1px);
+  background-size: 36px 36px;
+  mask-image: linear-gradient(to bottom, black, transparent 76%);
+}
+
+.onboarding-cosmos > * {
+  position: relative;
+  z-index: 1;
+}
+
+.onboarding-choice {
+  border: 1px solid rgba(125, 211, 252, 0.16) !important;
+  background: linear-gradient(145deg, rgba(25, 52, 82, 0.68), rgba(17, 27, 60, 0.72)) !important;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.08), 0 14px 34px rgba(2, 8, 23, 0.2);
+  backdrop-filter: blur(18px);
+}
+
+.onboarding-choice:hover {
+  transform: translateY(-3px);
+  border-color: rgba(103, 232, 249, 0.5) !important;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.12), 0 18px 42px rgba(8, 145, 178, 0.2);
+}
+
+.onboarding-cosmos input,
+.onboarding-cosmos select {
+  border-color: rgba(125, 211, 252, 0.2) !important;
+  color: #eaf7ff !important;
+  background: rgba(4, 15, 34, 0.62) !important;
+  box-shadow: inset 0 1px 8px rgba(2, 8, 23, 0.28);
+}
+
+.onboarding-cosmos select option {
+  color: #eaf7ff;
+  background: #0d1d35;
+}
+
+/* ===== AI 审计面试空间 ===== */
+.interview-dark-container {
+  --background: 222 58% 7%;
+  --foreground: 210 40% 96%;
+  --card: 220 46% 11%;
+  --card-foreground: 210 40% 96%;
+  --primary: 190 92% 52%;
+  --primary-foreground: 218 70% 7%;
+  --secondary: 219 34% 17%;
+  --secondary-foreground: 210 32% 91%;
+  --muted: 219 29% 15%;
+  --muted-foreground: 215 18% 64%;
+  --border: 214 36% 22%;
+  --input: 214 36% 24%;
+  --ring: 190 92% 52%;
+  background:
+    radial-gradient(ellipse 54% 70% at 50% 38%, rgba(8, 145, 178, 0.12), transparent 68%),
+    radial-gradient(ellipse 62% 48% at 8% 88%, rgba(30, 64, 175, 0.16), transparent 62%),
+    linear-gradient(160deg, #07111f 0%, #080d1a 52%, #0b1227 100%) !important;
+  color-scheme: dark;
+}
+
+.interview-dark-container::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(0deg, transparent 0 3px, rgba(125, 211, 252, 0.012) 4px),
+    linear-gradient(90deg, transparent 49.9%, rgba(125, 211, 252, 0.03) 50%, transparent 50.1%);
+}
+
+.interview-command-header {
+  min-height: 68px;
+  border-bottom: 1px solid rgba(125, 211, 252, 0.16) !important;
+  background: linear-gradient(90deg, rgba(7, 20, 38, 0.94), rgba(12, 18, 43, 0.92), rgba(7, 25, 40, 0.94)) !important;
+  box-shadow: 0 16px 38px rgba(2, 8, 23, 0.28), inset 0 -1px rgba(125, 211, 252, 0.06);
+}
+
+.interview-stage {
+  background:
+    linear-gradient(rgba(125, 211, 252, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(125, 211, 252, 0.025) 1px, transparent 1px),
+    radial-gradient(ellipse at center, rgba(14, 116, 144, 0.08), transparent 66%) !important;
+  background-size: 42px 42px, 42px 42px, auto !important;
+}
+
+.interview-transcript {
+  width: min(100%, 980px);
+  margin-inline: auto;
+  padding: 26px 24px 34px;
+}
+
+.interview-dark-bubble-ai,
+.interview-dark-bubble-user {
+  backdrop-filter: blur(18px) saturate(135%);
+  box-shadow:
+    0 16px 34px rgba(1, 6, 20, 0.24),
+    inset 0 1px rgba(255, 255, 255, 0.07) !important;
+}
+
+.interview-dark-bubble-ai {
+  background: linear-gradient(145deg, rgba(16, 37, 66, 0.86), rgba(12, 20, 46, 0.9)) !important;
+  border: 1px solid rgba(125, 211, 252, 0.13) !important;
+  border-left: 3px solid #22d3ee !important;
+}
+
+.interview-dark-bubble-user {
+  background: linear-gradient(135deg, rgba(30, 64, 175, 0.52), rgba(49, 46, 129, 0.48)) !important;
+  border: 1px solid rgba(165, 180, 252, 0.18) !important;
+}
+
+.interview-dark-input {
+  border-top: 1px solid rgba(125, 211, 252, 0.14) !important;
+  background: linear-gradient(90deg, rgba(7, 20, 38, 0.94), rgba(12, 18, 43, 0.92)) !important;
+  box-shadow: 0 -16px 38px rgba(2, 8, 23, 0.24);
+}
+
+.interview-dark-textarea {
+  border-color: rgba(125, 211, 252, 0.18) !important;
+  background: rgba(5, 17, 36, 0.7) !important;
+  box-shadow: inset 0 2px 12px rgba(2, 8, 23, 0.32);
+}
+
+.interview-phone-stage {
+  position: relative;
+  min-height: 460px;
+  background:
+    radial-gradient(circle at center, rgba(6, 182, 212, 0.1), transparent 42%),
+    linear-gradient(145deg, rgba(7, 24, 44, 0.94), rgba(10, 14, 34, 0.96)) !important;
+  overflow: hidden;
+}
+
+.audit-call-frame {
+  min-height: 430px;
+  border: 1px solid rgba(125, 211, 252, 0.17);
+  background: linear-gradient(145deg, rgba(8, 24, 44, 0.88), rgba(9, 13, 34, 0.9));
+  box-shadow:
+    0 32px 90px rgba(1, 5, 18, 0.42),
+    0 8px 32px rgba(8, 145, 178, 0.08),
+    inset 0 1px rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(22px) saturate(135%);
+}
+
+.audit-call-topbar,
+.audit-call-controls {
+  position: relative;
+  z-index: 3;
+  background: linear-gradient(90deg, rgba(9, 26, 49, 0.88), rgba(14, 20, 50, 0.86));
+}
+
+.audit-call-topbar {
+  border-bottom: 1px solid rgba(125, 211, 252, 0.11);
+}
+
+.audit-call-controls {
+  border-top: 1px solid rgba(125, 211, 252, 0.11);
+  box-shadow: 0 -18px 40px rgba(2, 8, 23, 0.22);
+}
+
+.audit-video-feed {
+  isolation: isolate;
+  background:
+    linear-gradient(rgba(125, 211, 252, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(125, 211, 252, 0.025) 1px, transparent 1px),
+    radial-gradient(ellipse at center, rgba(8, 145, 178, 0.12), transparent 54%),
+    linear-gradient(150deg, rgba(4, 17, 34, 0.92), rgba(10, 15, 39, 0.94));
+  background-size: 44px 44px, 44px 44px, auto, auto;
+}
+
+.audit-video-feed::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.45;
+  background: repeating-linear-gradient(0deg, transparent 0 3px, rgba(103, 232, 249, 0.018) 4px);
+}
+
+.audit-video-reticle {
+  position: absolute;
+  z-index: 0;
+  width: min(68vw, 620px);
+  aspect-ratio: 1;
+  border: 1px solid rgba(103, 232, 249, 0.06);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 58px rgba(103, 232, 249, 0.018),
+    0 0 0 118px rgba(103, 232, 249, 0.012);
+}
+
+.audit-video-reticle::before,
+.audit-video-reticle::after {
+  content: "";
+  position: absolute;
+  inset: 50%;
+  background: rgba(103, 232, 249, 0.08);
+  transform: translate(-50%, -50%);
+}
+
+.audit-video-reticle::before {
+  width: 1px;
+  height: 128%;
+}
+
+.audit-video-reticle::after {
+  width: 128%;
+  height: 1px;
+}
+
+.audit-interviewer-portrait {
+  background: linear-gradient(145deg, rgba(14, 116, 144, 0.2), rgba(49, 46, 129, 0.2));
+  box-shadow:
+    0 24px 64px rgba(2, 8, 23, 0.48),
+    0 0 54px rgba(34, 211, 238, 0.14),
+    inset 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.audit-self-view {
+  z-index: 3;
+  box-shadow: 0 18px 48px rgba(1, 6, 20, 0.44), inset 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.interview-entry-button {
+  border: 1px solid rgba(244, 63, 94, 0.28) !important;
+  background: linear-gradient(135deg, rgba(159, 18, 57, 0.24), rgba(30, 64, 175, 0.22)) !important;
+  color: #fecdd3 !important;
+  box-shadow: 0 10px 24px rgba(76, 5, 25, 0.18), inset 0 1px rgba(255, 255, 255, 0.08);
+}
+
+@keyframes starTwinkle {
+  0%, 100% { opacity: 0.2; transform: scale(0.72); }
+  46% { opacity: 1; transform: scale(1.28); }
+  64% { opacity: 0.48; transform: scale(0.92); }
+}
+
+@keyframes starFloat {
+  from { translate: 0 0; }
+  to { translate: 9px -16px; }
+}
+
+@keyframes nebulaDrift {
+  from { transform: translate3d(-2%, -1%, 0) scale(0.95); }
+  to { transform: translate3d(8%, 5%, 0) scale(1.08); }
 }
 
 /* Respect reduced motion preferences */

@@ -191,12 +191,12 @@ export function InputBox() {
             <Button
               onClick={() => sessionId && router.push(`/session/${sessionId}/interview`)}
               disabled={isStreaming || !sessionId}
-              aria-label="进入面试模式"
+              aria-label="进入 AI 审计间"
               variant="ghost"
               size="sm"
-              className="text-xs text-muted-foreground hover:text-destructive"
+              className="interview-entry-button text-xs"
             >
-              <Target size={14} /> 进入面试
+              <Target size={14} /> 进入 AI 审计间
             </Button>
           </>
         )}

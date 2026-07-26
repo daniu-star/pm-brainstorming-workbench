@@ -18,7 +18,7 @@ export function NavButtons({ currentPage, sessionId, onToggleHistory }: NavButto
     <div className="flex items-center gap-1.5">
       <button
         onClick={onToggleHistory}
-        className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60 rounded-lg transition-all duration-200 min-h-[44px] min-w-[44px] justify-center whitespace-nowrap"
+        className="nav-frost-control flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 whitespace-nowrap rounded-xl px-2.5 py-1.5 text-xs transition-all duration-200"
         aria-label="历史会话"
       >
         <HistoryIcon size={16} />
@@ -27,7 +27,7 @@ export function NavButtons({ currentPage, sessionId, onToggleHistory }: NavButto
 
       <button
         onClick={() => router.push("/")}
-        className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60 rounded-lg transition-all duration-200 min-h-[44px] min-w-[44px] justify-center whitespace-nowrap"
+        className="nav-frost-control flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 whitespace-nowrap rounded-xl px-2.5 py-1.5 text-xs transition-all duration-200"
         aria-label="添加新对话"
       >
         <PlusIcon size={16} />
@@ -38,12 +38,12 @@ export function NavButtons({ currentPage, sessionId, onToggleHistory }: NavButto
         <button
           onClick={() => hasSession && router.push(`/session/${sessionId}/interview`)}
           disabled={!hasSession}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg transition-all duration-200 min-h-[44px] min-w-[44px] justify-center whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed text-red-400 hover:text-red-300 hover:bg-red-900/20 disabled:hover:bg-transparent"
-          aria-label="进入面试环节"
-          title={hasSession ? "进入面试环节" : "请先创建会话"}
+          className="nav-frost-control nav-audit-control flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 whitespace-nowrap rounded-xl px-2.5 py-1.5 text-xs transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label="进入 AI 审计专业通话"
+          title={hasSession ? "进入 AI 审计专业通话" : "请先创建会话"}
         >
           <InterviewIcon size={16} />
-          <span className="hidden sm:inline">进入面试环节</span>
+          <span className="hidden sm:inline">AI 审计通话</span>
         </button>
       )}
     </div>

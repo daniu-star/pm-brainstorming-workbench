@@ -51,7 +51,7 @@ export function Header() {
 
   return (
     <>
-      <header className="h-14 bg-background/90 backdrop-blur border-b border-border shadow-sm flex items-center justify-between px-4 shrink-0">
+      <header className="workbench-header h-16 bg-background/90 backdrop-blur border-b border-border shadow-sm flex items-center justify-between px-4 shrink-0">
         <div className="flex items-center gap-4">
           <Link
             href="/"
@@ -60,6 +60,9 @@ export function Header() {
           >
             <Brain className="h-5 w-5 text-primary" />
             PM Brainstorm
+            <span className="hidden text-[9px] font-medium tracking-[0.18em] text-cyan-200/45 lg:inline">
+              DECISION OS
+            </span>
           </Link>
           <span className="border-l border-border h-4" />
           <Badge variant={phaseInfo.variant}>{phaseInfo.label}</Badge>
@@ -71,7 +74,7 @@ export function Header() {
               variant="outline"
               size="sm"
               onClick={() => setOnboardingOpen(true)}
-              className="text-xs h-8 border-amber-300 bg-amber-50 text-amber-600 hover:bg-amber-100"
+              className="h-8 border-cyan-200/25 bg-cyan-300/[0.08] text-xs text-cyan-100 hover:bg-cyan-300/[0.14]"
             >
               <AlertTriangle className="h-3 w-3 mr-1" />
               未配置 API
@@ -79,7 +82,7 @@ export function Header() {
           )}
 
           {isByok ? (
-            <Badge variant="secondary" className="text-xs bg-emerald-50 text-emerald-600 border-emerald-200">
+            <Badge variant="secondary" className="border-emerald-200/20 bg-emerald-300/[0.07] text-xs text-emerald-200">
               <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full mr-1" />
               自带 Key
             </Badge>

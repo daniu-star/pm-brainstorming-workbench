@@ -95,10 +95,10 @@ function WorkbenchContent() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-warm-50 bg-warm-workbench bg-grid-warm">
+      <div className="workbench-shell min-h-screen flex items-center justify-center">
         <div className="text-center">
           <div className="mb-6 flex justify-center">
-            <BrainIcon size={48} className="text-amber-500 animate-pulse" />
+            <BrainIcon size={48} className="text-cyan-300 animate-pulse" />
           </div>
           <div className="text-warm-600 text-lg font-medium mb-2">正在召集专家团队...</div>
           <div className="text-warm-500 text-sm mb-6">技术负责人 · 设计师 · 运营负责人 · 目标用户</div>
@@ -116,8 +116,8 @@ function WorkbenchContent() {
               </div>
             ))}
           </div>
-          <div className="mt-4 w-48 h-1 bg-warm-100 rounded-full mx-auto overflow-hidden">
-            <div className="h-full bg-amber-500/50 rounded-full animate-pulse" style={{ width: "60%" }} />
+          <div className="mt-4 w-48 h-1 bg-white/10 rounded-full mx-auto overflow-hidden">
+            <div className="h-full bg-gradient-to-r from-cyan-300 to-indigo-400 rounded-full animate-pulse" style={{ width: "60%" }} />
           </div>
         </div>
       </div>
@@ -126,8 +126,8 @@ function WorkbenchContent() {
 
   if (loadError) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-warm-50">
-        <div className="text-center max-w-md bg-white border border-warm-200 rounded-2xl p-8 shadow-md">
+      <div className="workbench-shell min-h-screen flex items-center justify-center">
+        <div className="text-center max-w-md bg-card/80 border border-border rounded-2xl p-8 shadow-2xl backdrop-blur-xl">
           <div className="w-14 h-14 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center mx-auto mb-4">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
@@ -149,16 +149,16 @@ function WorkbenchContent() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-warm-50 bg-warm-workbench">
+    <div className="workbench-shell h-screen flex flex-col">
       <Header />
       <HistoryDrawer isOpen={isHistoryOpen} onClose={toggleHistory} />
       <div className="flex-1 flex overflow-hidden relative">
-        <div className="md:hidden flex border-b border-warm-200 bg-white shrink-0">
+        <div className="md:hidden flex border-b border-border bg-background/85 backdrop-blur-xl shrink-0">
           <button
             onClick={() => setMobileTab("canvas")}
             aria-label="切换到画布视图"
             className={`flex-1 py-2.5 text-sm font-medium text-center transition-all duration-200 min-h-[44px] focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none ${
-              mobileTab === "canvas" ? "text-amber-600 border-b-2 border-amber-500" : "text-warm-500 hover:text-warm-600"
+              mobileTab === "canvas" ? "text-cyan-200 border-b-2 border-cyan-300" : "text-muted-foreground hover:text-foreground"
             }`}
           >
             画布
@@ -167,20 +167,20 @@ function WorkbenchContent() {
             onClick={() => setMobileTab("chat")}
             aria-label="切换到聊天视图"
             className={`flex-1 py-2.5 text-sm font-medium text-center transition-all duration-200 min-h-[44px] focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none ${
-              mobileTab === "chat" ? "text-amber-600 border-b-2 border-amber-500" : "text-warm-500 hover:text-warm-600"
+              mobileTab === "chat" ? "text-cyan-200 border-b-2 border-cyan-300" : "text-muted-foreground hover:text-foreground"
             }`}
           >
             聊天
           </button>
         </div>
 
-        <div className={`flex-1 flex flex-col bg-warm-50 min-w-0 ${
+        <div className={`workbench-canvas-panel flex-1 flex flex-col min-w-0 ${
           mobileTab === "canvas" ? "flex" : "hidden md:flex"
         }`}>
           <CanvasPanel />
         </div>
 
-        <div className={`border-l border-warm-200 flex flex-col bg-warm-50 ${
+        <div className={`workbench-chat-panel border-l border-border flex flex-col ${
           mobileTab === "chat" ? "flex w-full" : "hidden md:flex"
         } md:w-[480px] md:min-w-[400px]`}>
           <ChatPanel />
@@ -193,8 +193,8 @@ function WorkbenchContent() {
 export default function WorkbenchClientPage() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center bg-warm-50 bg-warm-workbench bg-grid-warm">
-        <div className="w-10 h-10 border-2 border-amber-500/30 border-t-amber-500 rounded-full animate-spin" />
+      <div className="workbench-shell min-h-screen flex items-center justify-center">
+        <div className="w-10 h-10 border-2 border-cyan-300/30 border-t-cyan-300 rounded-full animate-spin" />
       </div>
     }>
       <WorkbenchContent />

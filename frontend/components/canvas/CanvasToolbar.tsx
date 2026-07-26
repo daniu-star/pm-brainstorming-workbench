@@ -41,7 +41,7 @@ export function CanvasToolbar() {
           onClick={generateCanvas}
           disabled={isStreaming}
           aria-label="刷新讨论地图"
-          className="text-xs px-2.5 py-1 min-h-[44px] min-w-[44px] bg-amber-600/20 text-amber-600 border border-amber-500/30 rounded-md hover:bg-amber-600/30 active:bg-amber-600/40 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none"
+          className="nav-frost-control flex min-h-[44px] min-w-[44px] items-center gap-1.5 rounded-xl border-cyan-200/20 bg-cyan-300/[0.07] px-2.5 py-1 text-xs text-cyan-100 transition-all duration-200 hover:bg-cyan-300/[0.13] active:bg-cyan-300/[0.18] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/50"
         >
           {isStreaming && (
             <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
