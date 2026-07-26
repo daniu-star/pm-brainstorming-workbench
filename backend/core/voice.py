@@ -3,6 +3,7 @@ import logging
 import os
 from io import BytesIO
 
+from huggingface_hub import InferenceClient
 from openai import AsyncOpenAI
 
 from .config import settings
@@ -59,68 +60,29 @@ async def transcribe_audio(
 
 HF_API_TOKEN = os.getenv("HF_API_TOKEN", "")
 
-# 多模型回退链：优先使用 turbo（更快），回退到 large-v3（更准），再回退到 distil（轻量）
+# 多模型回退链：turbo 优先保证响应速度，large-v3 负责中文识别回退。
 HF_WHISPER_MODELS = [
     os.getenv("HF_WHISPER_MODEL_PRIMARY", "openai/whisper-large-v3-turbo"),
     os.getenv("HF_WHISPER_MODEL_FALLBACK", "openai/whisper-large-v3"),
-    os.getenv("HF_WHISPER_MODEL_FALLBACK_2", "distil-whisper/distil-large-v3"),
 ]
 
 
 async def _call_hf_whisper(model: str, audio_bytes: bytes, content_type: str) -> str:
-    """调用单个 HF Whisper 模型进行语音识别"""
+    """Call one Whisper model through the current HF Inference Providers API."""
     if not HF_API_TOKEN:
         raise RuntimeError("HF_API_TOKEN 未配置")
 
-    import time
-    import requests
+    client = InferenceClient(
+        provider="hf-inference",
+        api_key=HF_API_TOKEN,
+        timeout=min(settings.stt_timeout_seconds, 30.0),
+    )
 
-    extension_by_type = {
-        "audio/wav": "wav",
-        "audio/mp4": "mp4",
-        "audio/ogg": "ogg",
-        "audio/mpeg": "mp3",
-        "audio/webm": "webm",
-    }
-    ext = extension_by_type.get(content_type, "webm")
-    filename = f"audio.{ext}"
+    def _transcribe():
+        return client.automatic_speech_recognition(audio_bytes, model=model)
 
-    def _post():
-        last_error = None
-        for attempt in range(3):  # 共 3 次（1 次原始 + 2 次重试）
-            try:
-                return requests.post(
-                    f"https://api-inference.huggingface.co/models/{model}",
-                    headers={"Authorization": f"Bearer {HF_API_TOKEN}"},
-                    files={"file": (filename, audio_bytes, content_type)},
-                    timeout=60.0,
-                )
-            except requests.exceptions.ConnectionError as e:
-                last_error = e
-                if attempt < 2:
-                    time.sleep(1)
-                    continue
-                raise RuntimeError(
-                    f"后端网络无法连接 HuggingFace API（DNS解析失败）。"
-                    f"建议使用支持 Web Speech API 的浏览器（Chrome/Edge）进行语音输入。"
-                    f"错误详情: {e}"
-                ) from e
-        raise RuntimeError(f"连接 HuggingFace API 失败: {last_error}")
-
-    response = await asyncio.to_thread(_post)
-
-    if response.status_code == 503:
-        # 模型正在加载，等待后重试一次
-        logger.warning("HF model %s loading (503), retrying after 5s...", model)
-        await asyncio.sleep(5)
-        response = await asyncio.to_thread(_post)
-
-    if response.status_code != 200:
-        error_detail = response.text[:200]
-        raise RuntimeError(f"HF Whisper API 错误 ({response.status_code}): {error_detail}")
-
-    result = response.json()
-    text = result.get("text", "") if isinstance(result, dict) else str(result)
+    result = await asyncio.to_thread(_transcribe)
+    text = (getattr(result, "text", "") or "").strip()
     logger.info("HF STT (%s) transcribed %s bytes -> %s chars", model, len(audio_bytes), len(text))
     return text
 
