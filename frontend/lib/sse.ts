@@ -1,5 +1,5 @@
 import { apiUrl } from "./api";
-import { getUserHeaders } from "./user";
+import { getUserHeaders, handleExpiredSession } from "./user";
 
 export interface SSEEvent {
   type: string;
@@ -107,6 +107,9 @@ export function createSSEConnection(
       .then(async (response) => {
         if (!response.ok) {
           const text = await response.text();
+          if (response.status === 401) {
+            handleExpiredSession();
+          }
           onStatusChange?.("disconnected");
           onError(`HTTP ${response.status}: ${text}`);
           return;

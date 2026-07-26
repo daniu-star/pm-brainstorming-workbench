@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useSessionStore } from "@/store/sessionStore";
 import { api } from "@/lib/api";
 import { CosmicBackground } from "@/components/CosmicBackground";
+import { clearJwtToken, consumeAuthReturnPath } from "@/lib/user";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -22,7 +23,14 @@ export default function LoginPage() {
   const login = useSessionStore((s) => s.login);
   const guestLogin = useSessionStore((s) => s.guestLogin);
 
-  useEffect(() => { setMounted(true); }, []);
+  useEffect(() => {
+    setMounted(true);
+    if (new URLSearchParams(window.location.search).get("reason") === "expired") {
+      clearJwtToken();
+      useSessionStore.setState({ isLoggedIn: false, userNickname: null });
+      setError("登录状态已过期，请重新登录或直接进入体验模式");
+    }
+  }, []);
 
   useEffect(() => {
     if (countdown <= 0) return;
@@ -66,7 +74,7 @@ export default function LoginPage() {
     setError(null);
     try {
       await login(phone, code);
-      router.push("/");
+      router.replace(consumeAuthReturnPath());
     } catch (err) {
       setError(err instanceof Error ? err.message : "登录失败");
     } finally {
@@ -80,7 +88,7 @@ export default function LoginPage() {
     setError(null);
     try {
       await guestLogin();
-      router.push("/");
+      router.replace(consumeAuthReturnPath());
     } catch (err) {
       setError(err instanceof Error ? err.message : "体验模式登录失败");
     } finally {
