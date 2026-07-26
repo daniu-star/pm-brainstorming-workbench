@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
-const EMPTY_HUB: DecisionHub = { evidence: [], initiatives: [], experiments: [], roadmap_items: [], prd_versions: [], updated_at: "" };
+const EMPTY_HUB: DecisionHub = { evidence: [], initiatives: [], experiments: [], roadmap_items: [], prd_versions: [], review_space: { comments: [], votes: [], approvals: [], audit_log: [], share_token: "", share_enabled: false }, agent_config: { template: "saas", company_knowledge: "", audit_rules: [], agents: [] }, metric_reviews: [], updated_at: "" };
 function sessionIdFrom(params: ReturnType<typeof useParams>) { const value = params?.id; return Array.isArray(value) ? value[0] : value; }
 function initiativeTitle(id: string, initiatives: DecisionInitiative[]) { return initiatives.find((item) => item.id === id)?.title || "未关联候选方案"; }
 function dateLabel(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? "刚刚" : new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric" }).format(date); }
