@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
-const EMPTY_HUB: DecisionHub = { evidence: [], initiatives: [], experiments: [], roadmap_items: [], prd_versions: [], updated_at: "" };
+const EMPTY_HUB: DecisionHub = { evidence: [], initiatives: [], experiments: [], roadmap_items: [], prd_versions: [], review_space: { comments: [], votes: [], approvals: [], audit_log: [], share_token: "", share_enabled: false }, agent_config: { template: "saas", company_knowledge: "", audit_rules: [], agents: [] }, metric_reviews: [], updated_at: "" };
 const HORIZONS: { value: RoadmapHorizon; label: string; helper: string }[] = [
   { value: "now", label: "NOW", helper: "本周期必须推动" },
   { value: "next", label: "NEXT", helper: "下一阶段重点验证" },
