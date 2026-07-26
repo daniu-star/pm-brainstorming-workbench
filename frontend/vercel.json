@@ -1,6 +1,6 @@
 {
   "framework": "nextjs",
   "env": {
-    "NEXT_PUBLIC_API_URL": "https://123chenjunliang-pm-brainstorm-workbench.hf.space"
+    "NEXT_PUBLIC_API_URL": "/backend"
   }
 }
