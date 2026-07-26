@@ -912,7 +912,7 @@ body {
 
 .workbench-cosmic-stars {
   z-index: 0;
-  opacity: 0.88;
+  opacity: 0.38;
   mask-image: radial-gradient(ellipse at 48% 46%, transparent 16%, black 62%);
 }
 
@@ -1509,4 +1509,13 @@ body {
   .timeline-node-enter {
     animation: none;
   }
+}
+
+/* 可访问性基线：界面元数据不得小于 12px。 */
+[class~="text-[8px]"],
+[class~="text-[9px]"],
+[class~="text-[10px]"],
+[class~="text-[11px]"] {
+  font-size: 0.75rem !important;
+  line-height: 1rem !important;
 }

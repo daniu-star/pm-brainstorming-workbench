@@ -24,6 +24,9 @@ export function TimelineView({ map }: Props) {
     <ScrollArea className="flex-1 h-full">
       <div className="text-center pt-6 pb-4 px-4">
         <h2 className="text-xl font-semibold text-foreground">{map.topic}</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          版本 {map.version || 1} · {map.sources?.length || 0} 条可追溯来源
+        </p>
       </div>
 
       <div className="relative px-4 pb-8" style={{ minHeight: timeline.length * 100 }}>

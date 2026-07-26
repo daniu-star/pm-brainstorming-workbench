@@ -24,6 +24,9 @@ export function InputBox() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sendMessage = useSessionStore((s) => s.sendMessage);
   const sendToCoach = useSessionStore((s) => s.sendToCoach);
+  const skipClarification = useSessionStore((s) => s.skipClarification);
+  const confirmClarification = useSessionStore((s) => s.confirmClarification);
+  const clarificationState = useSessionStore((s) => s.clarificationState);
   const answerInterview = useSessionStore((s) => s.answerInterview);
   const phase = useSessionStore((s) => s.phase);
   const isStreaming = useSessionStore((s) => s.isStreaming);
@@ -99,9 +102,9 @@ export function InputBox() {
         : `[附件: ${fileList}]`;
     }
 
-    if (phase === "interview") {
+    if (phase === "audit") {
       answerInterview(messageContent);
-    } else if (phase === "coach") {
+    } else if (phase === "clarify") {
       sendToCoach(messageContent);
     } else {
       sendMessage(messageContent, targetRole);
@@ -134,18 +137,16 @@ export function InputBox() {
   return (
     <div className="px-4 py-3 border-t border-border bg-background/95 backdrop-blur-sm">
       <div className="flex items-center gap-3 mb-2">
-        {phase === "coach" && (
+        {phase === "clarify" && (
           <>
             <span className="text-xs text-primary flex items-center gap-1">
               <span className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse" />
               产品教练正在帮你理清思路
             </span>
             <Button
-              onClick={() => {
-                if (!isStreaming) {
-                  useSessionStore.getState().setPhase("brainstorm");
-                }
-              }}
+              onClick={() => void skipClarification().catch((error) => {
+                toast("error", error instanceof Error ? error.message : "暂时无法跳过澄清");
+              })}
               disabled={isStreaming}
               aria-label="跳过引导直接脑暴"
               variant="ghost"
@@ -155,6 +156,19 @@ export function InputBox() {
               跳过引导，直接脑暴 <ArrowRight size={14} />
             </Button>
           </>
+        )}
+        {phase === "clarify" && clarificationState?.status === "awaiting_confirmation" && (
+          <Button
+            onClick={() => void confirmClarification().catch((error) => {
+              toast("error", error instanceof Error ? error.message : "需求确认失败");
+            })}
+            disabled={isStreaming}
+            aria-label="确认需求并进入多角色脑暴"
+            size="sm"
+            className="ml-2 text-xs"
+          >
+            <CheckCircle size={14} /> 确认需求，进入脑暴
+          </Button>
         )}
         {phase === "brainstorm" && (
           <>
@@ -200,7 +214,7 @@ export function InputBox() {
             </Button>
           </>
         )}
-        {phase === "interview" && (
+        {phase === "audit" && (
           <span className="text-xs text-destructive flex items-center gap-1">
             <span className="w-1.5 h-1.5 bg-destructive rounded-full animate-pulse" />
             面试模式中 — 回答每个问题以继续
@@ -274,9 +288,9 @@ export function InputBox() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder={
-              phase === "interview"
+              phase === "audit"
                 ? "回答面试官的问题..."
-                : phase === "coach"
+                : phase === "clarify"
                   ? "回答产品教练的问题，帮助理清你的想法..."
                   : targetRole === "all"
                     ? "插话、追问或提出你的想法..."
@@ -284,9 +298,9 @@ export function InputBox() {
             }
             rows={2}
             aria-label={
-              phase === "interview"
+              phase === "audit"
                 ? "回答面试官问题"
-                : phase === "coach"
+                : phase === "clarify"
                   ? "回答产品教练的问题"
                   : "输入你的想法或追问"
             }

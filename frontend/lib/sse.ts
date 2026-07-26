@@ -9,12 +9,18 @@ export interface SSEEvent {
   tokens?: number;
   phase?: string;
   message?: string;
+  error_code?: string;
+  retryable?: boolean;
   action?: string;
   node?: string;
   interview_id?: string;
   dimensions_covered?: string[];
   question_count?: number;
   interview_completed?: boolean;
+  current_dimension?: string | null;
+  audit_run_id?: string;
+  audit_status?: "not_started" | "active" | "completed" | "aborted" | "superseded";
+  audit_report?: string | null;
   // Pipeline 相关字段
   output?: string;
   canvas_tree?: Record<string, unknown>;
@@ -27,6 +33,9 @@ export interface SSEEvent {
   prd?: string;
   product_portrait?: Record<string, unknown>;
   session_id?: string;
+  clarification_state?: import("./types").ClarificationState;
+  round_id?: string;
+  opinion?: Record<string, unknown>;
 }
 
 export type SSEConnectionStatus = "connecting" | "connected" | "reconnecting" | "disconnected";
@@ -43,11 +52,24 @@ export function createSSEConnection(
   onStatusChange?: (status: SSEConnectionStatus) => void
 ): AbortController {
   const controller = new AbortController();
-
   let retryCount = 0;
+  let finalized = false;
+  let activeRequest: AbortController | null = null;
+
+  controller.signal.addEventListener("abort", () => activeRequest?.abort());
+
+  function finishOnce() {
+    if (finalized || controller.signal.aborted) return;
+    finalized = true;
+    onStatusChange?.("connected");
+    onDone();
+  }
 
   function attemptConnect() {
-    if (controller.signal.aborted) return;
+    if (controller.signal.aborted || finalized) return;
+    const requestController = new AbortController();
+    activeRequest = requestController;
+    let timedOut = false;
 
     onStatusChange?.(retryCount > 0 ? "reconnecting" : "connecting");
 
@@ -56,12 +78,15 @@ export function createSSEConnection(
     function resetTimeout() {
       if (timeoutId) clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
+        timedOut = true;
+        requestController.abort();
         onError("连接超时，正在重连...");
         retryWithBackoff();
       }, TIMEOUT_MS);
     }
 
     function retryWithBackoff() {
+      if (controller.signal.aborted || finalized) return;
       if (retryCount >= MAX_RETRIES) {
         onStatusChange?.("disconnected");
         onError("连接失败，请检查网络后重试");
@@ -77,7 +102,7 @@ export function createSSEConnection(
       method: "POST",
       headers: { "Content-Type": "application/json", ...getUserHeaders() },
       body: JSON.stringify(body),
-      signal: controller.signal,
+      signal: requestController.signal,
     })
       .then(async (response) => {
         if (!response.ok) {
@@ -101,7 +126,8 @@ export function createSSEConnection(
         const decoder = new TextDecoder();
         let buffer = "";
 
-        while (true) {
+        let serverDone = false;
+        while (!serverDone) {
           const { done, value } = await reader.read();
           if (done) break;
 
@@ -120,7 +146,10 @@ export function createSSEConnection(
                 }
                 if (data.type === "done") {
                   if (timeoutId) clearTimeout(timeoutId);
-                  onDone();
+                  serverDone = true;
+                  finishOnce();
+                  await reader.cancel();
+                  break;
                 } else {
                   onEvent(data as SSEEvent);
                 }
@@ -132,11 +161,12 @@ export function createSSEConnection(
         }
 
         if (timeoutId) clearTimeout(timeoutId);
-        onDone();
+        if (!serverDone) finishOnce();
       })
       .catch((err) => {
         if (timeoutId) clearTimeout(timeoutId);
-        if (err.name !== "AbortError") {
+        if (err.name === "AbortError" && timedOut) return;
+        if (err.name !== "AbortError" && !finalized) {
           if (err.message?.includes("Failed to fetch") || err.message?.includes("NetworkError")) {
             onStatusChange?.("disconnected");
             onError("无法连接到服务器，请确认后端服务已启动");

@@ -18,9 +18,10 @@ function WorkbenchContent() {
   const {
     sessionId,
     loadSession,
-    sendToCoach,
+    startClarification,
     abortStream,
     messages,
+    phase,
     isHistoryOpen,
     toggleHistory,
   } = useSessionStore();
@@ -83,16 +84,13 @@ function WorkbenchContent() {
 
   useEffect(() => {
     if (!loading && sessionId && !triggeredRef.current) {
-      const problem = searchParams.get("problem");
-      if (problem) {
-        const hasCoachMessages = messages.some((m) => m.role_name === "coach" || m.role === "assistant");
-        if (!hasCoachMessages) {
-          triggeredRef.current = true;
-          sendToCoach(problem);
-        }
+      const hasCoachMessages = messages.some((m) => m.role_name === "coach");
+      if (phase === "clarify" && !hasCoachMessages) {
+        triggeredRef.current = true;
+        startClarification();
       }
     }
-  }, [loading, sessionId, searchParams, sendToCoach, messages]);
+  }, [loading, sessionId, phase, startClarification, messages]);
 
   if (loading) {
     return (
@@ -151,7 +149,7 @@ function WorkbenchContent() {
 
   return (
     <div className="workbench-shell h-screen flex flex-col">
-      <CosmicBackground density={78} className="workbench-cosmic-stars" />
+      <CosmicBackground density={42} className="workbench-cosmic-stars" />
       <Header />
       <HistoryDrawer isOpen={isHistoryOpen} onClose={toggleHistory} />
       <div className="flex-1 flex overflow-hidden relative">

@@ -43,9 +43,9 @@ export default function LoginPage() {
       });
       if (result.success) {
         setCountdown(60);
-        if (result.code) {
+        if (result.hint === "短信服务暂未配置" || result.code) {
           setSmsStatus("failed");
-          setDisplayCode(result.code);
+          setDisplayCode(result.code || null);
         } else {
           setSmsStatus("sent");
         }

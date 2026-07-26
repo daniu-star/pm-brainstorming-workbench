@@ -70,10 +70,13 @@ export function logout(): void {
 
 export function getUserHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
-  const token = getUserToken();
-  if (token) headers["X-User-Token"] = token;
   const jwtToken = getJwtToken();
-  if (jwtToken) headers["Authorization"] = `Bearer ${jwtToken}`;
+  if (jwtToken) {
+    headers["Authorization"] = `Bearer ${jwtToken}`;
+  } else {
+    const token = getUserToken();
+    if (token) headers["X-User-Token"] = token;
+  }
   const apiKey = getStoredApiKey();
   if (apiKey) {
     headers["X-API-Key"] = apiKey;

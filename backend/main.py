@@ -1,5 +1,6 @@
 import os
 import time
+import hashlib
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
@@ -18,6 +19,7 @@ from api.product_routes import router as product_router
 from api.attachment_routes import router as attachment_router
 from api.decision_hub_routes import router as decision_hub_router
 from core.config import settings
+from db.user_store import user_store
 
 RATE_LIMIT_MAX = 20
 RATE_LIMIT_WINDOW = 60
@@ -25,13 +27,12 @@ _rate_requests: dict[str, list[float]] = defaultdict(list)
 
 
 def _get_client_id(request: Request) -> str:
-    return (
-        request.headers.get("x-user-token")
-        or request.headers.get("authorization", "").replace("Bearer ", "")
-        or request.client.host
-        if request.client
-        else "unknown"
+    credential = (
+        request.headers.get("authorization", "")
+        or request.headers.get("x-user-token", "")
+        or (request.client.host if request.client else "unknown")
     )
+    return hashlib.sha256(credential.encode("utf-8")).hexdigest()
 
 
 def _cleanup_timestamps(client_id: str, now: float) -> None:
@@ -65,6 +66,9 @@ def _has_static_files() -> bool:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    removed_keys = user_store.migrate_remove_plaintext_api_keys()
+    if removed_keys:
+        print(f"Removed {removed_keys} legacy plaintext BYOK secret(s)")
     if not settings.llm_api_key:
         print("WARNING: LLM_API_KEY 未设置，仅支持 BYOK 模式（用户自带 API Key）")
     if _has_static_files():
@@ -80,7 +84,7 @@ app.middleware("http")(rate_limit_middleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_allowed_origins,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],

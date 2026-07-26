@@ -8,25 +8,42 @@ app_port: 7860
 pinned: false
 ---
 
-# AI产品头脑风暴工作台
+# 产品脑暴工作台
 
-AI-powered product brainstorming workbench with multi-role agents and visual canvas.
+面向产品经理的 AI 决策推演与审计工作台。
 
-## Features
-- 🎭 Multi-Role Brainstorming (CTO/Designer/Ops/User)
-- 🎨 Visual Canvas (Timeline View)
-- 🔍 AI Interviewer Mode
-- 📚 RAG Knowledge Base
-- 🎙️ Voice Interaction (edge-tts)
-- ⚡ SSE Streaming
+## 当前已实现
 
-## Tech Stack
-- **Frontend**: Next.js 14 (Static Export) + Zustand + Tailwind CSS
-- **Backend**: FastAPI + SSE + edge-tts
-- **AI**: OpenAI-compatible API + RAG
-- **Deployment**: Docker (Frontend + Backend in one container)
+- 结构化需求澄清：逐项确认目标用户、替代方案、产品形态、成功指标与约束
+- 独立多角色评审：CTO、设计师、运营和目标用户基于相同冻结上下文分别作答
+- 冲突综合：汇总共识、分歧、证据缺口、隐含假设与待讨论事项
+- 可追溯决策图谱：节点关联真实消息来源，包含版本和同步状态
+- AI 专业语音审计：固定六维审计计划、进度恢复和最终报告
+- 决策中心、Now/Next/Later 路线图、PRD 版本、团队评审、Agent 配置和指标复盘
+- BYOK、自带 API 地址与模型；SSE 流式响应；语音输入和 TTS
 
-## Usage
-This Space hosts both the **frontend and backend** in a single Docker container.
+审计通话是语音交互界面，不是 WebRTC 视频会议；产品也不宣称端到端加密。
 
-Users can bring their own API key (BYOK mode) if no default key is configured.
+## 技术与部署
+
+- 前端：Next.js 16、Zustand、Tailwind CSS，部署在 Vercel
+- 后端：FastAPI、SSE、OpenAI-compatible API、edge-tts，部署在 Hugging Face Space
+- 生产站点：[www.brainstorming.top](https://www.brainstorming.top)
+
+## 本地启动
+
+1. 复制 `backend/.env.example` 为 `backend/.env`。
+2. 配置 `LLM_API_KEY`、`LLM_BASE_URL` 和 `LLM_MODEL`，或在网页设置中使用 BYOK。
+   本地没有短信服务时，可临时设置 `ALLOW_SMS_CODE_ECHO=true`；生产环境必须保持为 `false` 并配置真实短信服务。
+3. 安装依赖：根目录执行 `npm ci`，后端执行 `pip install -r backend/requirements.txt`。
+4. 启动后端：`uvicorn main:app --reload --port 8000`（工作目录为 `backend`）。
+5. 启动前端：`npm run dev --workspace frontend`。
+
+`.env` 已被 Git 忽略。不要提交真实 API Key；发现泄露后应立即在服务商后台撤销并重新生成。
+
+## 质量检查
+
+- 前端生产构建：`npm run build --workspace frontend`
+- 后端测试：`pytest -q backend/tests`
+- 后端语法检查：`python -m compileall -q backend`
+- Pull Request 和 main 分支推送会自动执行构建、测试与密钥扫描。

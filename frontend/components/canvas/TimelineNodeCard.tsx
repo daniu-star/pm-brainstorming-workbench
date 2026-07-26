@@ -3,12 +3,15 @@
 import type { TimelineNode } from "@/lib/types";
 import { TIMELINE_NODE_CONFIG, ROLE_MAP } from "@/lib/types";
 import { getRoleAvatar } from "@/components/icons";
+import { useSessionStore } from "@/store/sessionStore";
+import { toast } from "@/components/Toast";
 
 interface Props {
   node: TimelineNode;
 }
 
 export function TimelineNodeCard({ node }: Props) {
+  const setCanvasNodeStatus = useSessionStore((state) => state.setCanvasNodeStatus);
   const config = TIMELINE_NODE_CONFIG[node.type] || TIMELINE_NODE_CONFIG.consensus;
 
   const gradientMap: Record<string, string> = {
@@ -42,11 +45,24 @@ export function TimelineNodeCard({ node }: Props) {
       <div className="relative p-3.5 pl-5">
         <div className="flex items-center justify-between mb-2">
           <span
-            className="text-[10px] px-2 py-0.5 rounded-full font-medium"
+            className="text-xs px-2 py-0.5 rounded-full font-medium"
             style={{ backgroundColor: config.bg, color: config.color }}
           >
-            {config.label}
+          {config.label}
           </span>
+          <button
+            type="button"
+            onClick={() => {
+              const next = node.status === "confirmed" ? "draft" : "confirmed";
+              void setCanvasNodeStatus(node.id, next).catch((error) => {
+                toast("error", error instanceof Error ? error.message : "节点状态更新失败");
+              });
+            }}
+            className="ml-2 min-h-8 rounded-full border border-warm-200 px-2 text-xs text-warm-500 hover:border-cyan-300/40 hover:text-cyan-700"
+            aria-label={node.status === "confirmed" ? "将节点改为草稿" : "确认该决策节点"}
+          >
+            {node.status === "confirmed" ? "已确认" : "草稿 · 点击确认"}
+          </button>
           <div className="flex items-center -space-x-1.5">
             {node.roles?.slice(0, 4).map((role) => {
               const roleInfo = ROLE_MAP[role];
@@ -71,6 +87,12 @@ export function TimelineNodeCard({ node }: Props) {
         <p className={`text-sm leading-relaxed ${textColorMap[node.type] || "text-warm-600"}`}>
           {node.content}
         </p>
+
+        {!!node.source_refs?.length && (
+          <p className="mt-2 text-xs text-warm-500">
+            来源 {node.source_refs.length} 条
+          </p>
+        )}
 
         {node.type === "disagreement" && node.positions?.length > 0 && (
           <div className="mt-2 space-y-1">

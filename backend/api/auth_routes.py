@@ -1,21 +1,22 @@
 import re
 
-from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, Header, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from core.auth import create_jwt_token, send_sms_code, verify_sms_code
 from db.user_store import user_store
+from core.config import settings
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 class SmsSendRequest(BaseModel):
-    phone: str
+    phone: str = Field(pattern=r"^1[3-9]\d{9}$")
 
 
 class SmsVerifyRequest(BaseModel):
-    phone: str
-    code: str
+    phone: str = Field(pattern=r"^1[3-9]\d{9}$")
+    code: str = Field(pattern=r"^\d{6}$")
 
 
 @router.post("/sms/send")
@@ -27,7 +28,8 @@ async def sms_send(req: SmsSendRequest, request: Request):
     if hint:
         if hint == "sms_unavailable":
             response["hint"] = "短信服务暂未配置"
-            response["code"] = code
+            if settings.allow_sms_code_echo:
+                response["code"] = code
     return response
 
 
@@ -51,7 +53,7 @@ async def sms_verify(req: SmsVerifyRequest):
 
 
 @router.get("/me")
-async def get_me(authorization: str = ""):
+async def get_me(authorization: str = Header(default="")):
     if not authorization:
         raise HTTPException(status_code=401, detail="缺少 Authorization Header")
     parts = authorization.split(" ")

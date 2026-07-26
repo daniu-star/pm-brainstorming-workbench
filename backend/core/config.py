@@ -11,6 +11,10 @@ class Settings:
     llm_api_key: str = os.getenv("LLM_API_KEY", "")
     llm_base_url: str = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
     llm_model: str = os.getenv("LLM_MODEL", "gpt-4o")
+    llm_max_output_tokens: int = max(
+        256,
+        min(8000, int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "2500"))),
+    )
 
     stt_model: str = os.getenv("STT_MODEL", "whisper-1")
     stt_timeout_seconds: float = float(os.getenv("STT_TIMEOUT_SECONDS", "45"))
@@ -24,6 +28,20 @@ class Settings:
     session_data_dir: str = os.getenv("SESSION_DATA_DIR", "./data/sessions")
     user_data_dir: str = os.getenv("USER_DATA_DIR", "./data/users")
     initial_quota: int = int(os.getenv("INITIAL_QUOTA", "100000"))
+    allow_anonymous_tokens: bool = os.getenv(
+        "ALLOW_ANONYMOUS_TOKENS", "false"
+    ).lower() in ("1", "true", "yes")
+    allow_sms_code_echo: bool = os.getenv(
+        "ALLOW_SMS_CODE_ECHO", "false"
+    ).lower() in ("1", "true", "yes")
+    cors_allowed_origins: list[str] = [
+        origin.strip()
+        for origin in os.getenv(
+            "CORS_ALLOWED_ORIGINS",
+            "https://www.brainstorming.top,https://brainstorming.top,http://localhost:3000",
+        ).split(",")
+        if origin.strip()
+    ]
 
 
 settings = Settings()

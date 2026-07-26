@@ -54,7 +54,7 @@ function DimensionRing({ dimensionsCovered }: { dimensionsCovered: string[] }) {
           })}
         </g>
       </svg>
-      <span className="absolute text-[9px] font-semibold text-slate-400 leading-none">
+      <span className="absolute text-xs font-semibold text-slate-300 leading-none">
         {coveredCount}/{DIMENSIONS.length}
       </span>
     </div>
@@ -78,6 +78,7 @@ export function InterviewHeader({
 }: InterviewHeaderProps) {
   const router = useRouter();
   const { sessionId, interviewMode, setInterviewMode } = useSessionStore();
+  const auditStatus = useSessionStore((s) => s.auditStatus);
 
   return (
     <header className="interview-command-header interview-dark-header flex items-center justify-between px-4 md:px-6 shrink-0 shadow-sm">
@@ -104,13 +105,13 @@ export function InterviewHeader({
             <AvatarFallback>AI</AvatarFallback>
           </Avatar>
           <div className="flex flex-col">
-            <span className="text-[9px] font-medium tracking-[0.2em] text-cyan-200/45 leading-tight">
+            <span className="text-xs font-medium tracking-[0.12em] text-cyan-100/70 leading-tight">
               AI AUDIT ROOM / SECURE
             </span>
             <span className="text-sm font-bold text-slate-100 leading-tight">AI 审计专业通话</span>
-            <Badge variant="secondary" className="mt-0.5 flex items-center gap-1 text-[10px] py-0 px-1.5 w-fit border-cyan-200/15 bg-cyan-300/5 text-cyan-100">
-              <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-              面试进行中
+            <Badge variant="secondary" className="mt-0.5 flex items-center gap-1 text-xs py-0 px-1.5 w-fit border-cyan-200/15 bg-cyan-300/5 text-cyan-100">
+              <span className={`w-1.5 h-1.5 rounded-full ${auditStatus === "completed" ? "bg-emerald-400" : "bg-primary animate-pulse"}`} />
+              {auditStatus === "completed" ? "审计已完成" : "审计进行中"}
             </Badge>
           </div>
         </div>
@@ -156,9 +157,9 @@ export function InterviewHeader({
           {phoneMode ? <PhoneOff className="h-4 w-4" /> : <Phone className="h-4 w-4" />}
           <span className="hidden sm:inline">{phoneMode ? "退出通话" : "审计通话"}</span>
         </Button>
-        <div className="hidden items-center gap-1.5 rounded-lg border border-emerald-300/15 bg-emerald-300/5 px-2.5 py-1.5 text-[10px] text-emerald-200 lg:flex">
+        <div className="hidden items-center gap-1.5 rounded-lg border border-emerald-300/15 bg-emerald-300/5 px-2.5 py-1.5 text-xs text-emerald-200 lg:flex">
           <ShieldCheck className="h-3.5 w-3.5" />
-          加密会话
+          独立审计记录
         </div>
       </div>
     </header>

@@ -96,7 +96,7 @@ export default function LandingPage() {
       const sessionId = useSessionStore.getState().sessionId;
       if (sessionId) {
         sessionStorage.removeItem("pm-brainstorm-pending-problem");
-        router.push(`/session/${sessionId}?problem=${encodeURIComponent(problem.trim())}`);
+        router.push(`/session/${sessionId}`);
       }
     } catch (err) {
       setIsCreating(false);
@@ -226,7 +226,7 @@ export default function LandingPage() {
             </Link>
           </div>
           <dl className="mt-12 grid max-w-2xl grid-cols-3 divide-x divide-white/10 border-y border-white/10 py-5">
-            {[["04", "AI 专家角色"], ["06", "专业审计维度"], ["LIVE", "实时结构化画布"]].map(([value, label]) => (
+            {[["04", "AI 专家角色"], ["06", "专业审计维度"], ["SYNC", "结构化决策图谱"]].map(([value, label]) => (
               <div key={label} className="px-4 first:pl-0">
                 <dt className="text-[10px] uppercase text-zinc-500">{label}</dt>
                 <dd className="mt-1 font-mono text-xl font-semibold text-cyan-200 tabular-nums">{value}</dd>
@@ -240,10 +240,10 @@ export default function LandingPage() {
           <div className="relative z-10">
             <div className="flex items-start justify-between border-b border-white/10 px-5 py-4">
               <div>
-                <p className="text-[10px] font-semibold uppercase text-cyan-200/60">Decision Room</p>
+                <p className="text-xs font-semibold uppercase text-cyan-100/75">Decision Room</p>
                 <h2 className="mt-1 text-base font-semibold text-white">创建一次产品推演</h2>
               </div>
-              <span className="inline-flex items-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-300/5 px-2.5 py-1 text-[10px] text-emerald-200">
+              <span className="inline-flex items-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-300/5 px-2.5 py-1 text-xs text-emerald-200">
                 <span className="size-1.5 rounded-full bg-emerald-300" />
                 系统就绪
               </span>
@@ -258,7 +258,7 @@ export default function LandingPage() {
                     </span>
                     <span>
                       <span className="block text-xs font-semibold text-zinc-100">{expert.name}</span>
-                      <span className="block text-[10px] text-zinc-500">{expert.caption}</span>
+                      <span className="block text-xs text-zinc-400">{expert.caption}</span>
                     </span>
                   </div>
                 );
@@ -284,7 +284,7 @@ export default function LandingPage() {
               />
               <div className="mt-3 flex flex-wrap gap-2">
                 {QUICK_STARTS.map((item) => (
-                  <button key={item} type="button" onClick={() => setProblem(item)} className="frost-chip rounded-md border border-white/10 px-2.5 py-1.5 text-left text-[10px] text-zinc-500 hover:border-cyan-300/30 hover:text-cyan-100">
+                  <button key={item} type="button" onClick={() => setProblem(item)} className="frost-chip rounded-md border border-white/10 px-2.5 py-1.5 text-left text-xs text-zinc-400 hover:border-cyan-300/30 hover:text-cyan-100">
                     {item}
                   </button>
                 ))}

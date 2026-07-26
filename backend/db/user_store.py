@@ -184,6 +184,23 @@ class UserStore:
             "model": user.get("model", ""),
         }
 
+    def migrate_remove_plaintext_api_keys(self) -> int:
+        """Remove legacy BYOK secrets that older versions persisted as plaintext."""
+        removed = 0
+        for filename in os.listdir(self.data_dir):
+            if not filename.endswith(".json") or filename.startswith("_"):
+                continue
+            path = os.path.join(self.data_dir, filename)
+            with open(path, "r", encoding="utf-8") as file:
+                user = json.load(file)
+            if user.get("api_key"):
+                user["api_key"] = ""
+                user["base_url"] = ""
+                user["model"] = ""
+                self._save(user)
+                removed += 1
+        return removed
+
     def create_recharge_request(self, user_token: str, tier_name: str, amount: int, price: float) -> dict:
         request_id = str(uuid.uuid4())[:8]
         verify_code = str(uuid.uuid4())[:6].upper()

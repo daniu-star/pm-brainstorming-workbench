@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from db.session_store import session_store
 from api.deps import get_current_user
 
@@ -7,7 +7,7 @@ router = APIRouter(prefix="/api/session", tags=["session"])
 
 
 class CreateSessionRequest(BaseModel):
-    problem_statement: str
+    problem_statement: str = Field(min_length=3, max_length=12000)
 
 
 @router.post("")

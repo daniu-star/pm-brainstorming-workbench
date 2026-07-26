@@ -151,6 +151,7 @@ async def llm_stream(
             model=model_name,
             messages=messages,
             temperature=temperature,
+            max_tokens=settings.llm_max_output_tokens,
             stream=True,
             stream_options={"include_usage": True},
         )
@@ -159,6 +160,7 @@ async def llm_stream(
             model=model_name,
             messages=messages,
             temperature=temperature,
+            max_tokens=settings.llm_max_output_tokens,
             stream=True,
         )
     total_tokens = 0
@@ -184,6 +186,7 @@ async def llm_complete(
         model=model_name,
         messages=messages,
         temperature=temperature,
+        max_tokens=settings.llm_max_output_tokens,
     )
     content = response.choices[0].message.content or ""
     total_tokens = response.usage.total_tokens if response.usage else 0

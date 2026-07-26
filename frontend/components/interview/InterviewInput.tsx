@@ -67,6 +67,7 @@ export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputP
   ];
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sessionId = useSessionStore((s) => s.sessionId);
+  const auditStatus = useSessionStore((s) => s.auditStatus);
   const { answerInterview, interviewMode, isStreaming, isPlayingAudio, setInterviewMode } = useSessionStore();
   const {
     isRecording,
@@ -182,6 +183,15 @@ export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputP
     reset();
     setAttachments([]);
   }, [transcript, isStreaming, answerInterview, reset, attachments]);
+
+  if (auditStatus === "completed") {
+    return (
+      <div className="interview-dark-input border-t border-emerald-300/15 px-4 py-4 text-center">
+        <p className="text-sm font-medium text-emerald-200">六维审计已完成，最终报告已生成</p>
+        <p className="mt-1 text-xs text-slate-400">返回工作台后可继续整理决策与行动项。</p>
+      </div>
+    );
+  }
 
   if (phoneMode) {
     return (
@@ -583,18 +593,18 @@ function PhoneModeView({
     <div className="interview-phone-stage flex min-h-0 flex-1 p-3 md:p-6">
       <section className="audit-call-frame relative mx-auto flex w-full max-w-6xl flex-1 flex-col overflow-hidden rounded-3xl">
         <div className="audit-call-topbar flex items-center justify-between px-4 py-3 md:px-5">
-          <div className="flex items-center gap-2 text-[10px] font-semibold tracking-[0.18em] text-cyan-100/70">
-            <Camera className="h-3.5 w-3.5" />
-            AI AUDIT · PROFESSIONAL CALL
+          <div className="flex items-center gap-2 text-xs font-semibold tracking-[0.14em] text-cyan-100/80">
+            <Mic className="h-3.5 w-3.5" />
+            AI AUDIT · VOICE SESSION
           </div>
-          <div className="flex items-center gap-3 text-[10px] text-slate-300">
+          <div className="flex items-center gap-3 text-xs text-slate-300">
             <span className="hidden items-center gap-1.5 sm:flex">
               <Signal className="h-3.5 w-3.5 text-emerald-300" />
               CHANNEL STABLE
             </span>
             <span className="flex items-center gap-1.5 rounded-full border border-emerald-300/15 bg-emerald-300/[0.06] px-2.5 py-1 text-emerald-200">
               <ShieldCheck className="h-3.5 w-3.5" />
-              端到端加密
+              独立审计记录
             </span>
           </div>
         </div>
@@ -612,13 +622,13 @@ function PhoneModeView({
                   className="h-full w-full object-cover"
                 />
               </div>
-              <span className="absolute -bottom-2 left-1/2 flex -translate-x-1/2 items-center gap-1 whitespace-nowrap rounded-full border border-cyan-200/20 bg-slate-950/80 px-2.5 py-1 text-[9px] tracking-[0.14em] text-cyan-100 backdrop-blur-xl">
+              <span className="absolute -bottom-2 left-1/2 flex -translate-x-1/2 items-center gap-1 whitespace-nowrap rounded-full border border-cyan-200/20 bg-slate-950/80 px-2.5 py-1 text-xs tracking-[0.1em] text-cyan-100 backdrop-blur-xl">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-300" />
                 AI AUDITOR ONLINE
               </span>
             </div>
 
-            <p className="text-[10px] font-semibold tracking-[0.22em] text-cyan-200/50">
+            <p className="text-xs font-semibold tracking-[0.16em] text-cyan-100/70">
               SIX-DIMENSION PRESSURE TEST
             </p>
             <h2 className="mt-2 text-xl font-semibold text-slate-50 md:text-2xl">
@@ -689,9 +699,9 @@ function PhoneModeView({
                 <UserRound className="h-5 w-5 text-slate-300" />
               </div>
               <span className="mt-2 text-xs font-medium text-slate-200">产品负责人</span>
-              <span className="mt-0.5 text-[9px] tracking-[0.14em] text-slate-500">LOCAL PARTICIPANT</span>
+              <span className="mt-0.5 text-xs tracking-[0.1em] text-slate-400">LOCAL PARTICIPANT</span>
             </div>
-            <span className="absolute left-2.5 top-2.5 flex items-center gap-1 rounded-full bg-slate-950/70 px-2 py-1 text-[9px] text-slate-300">
+            <span className="absolute left-2.5 top-2.5 flex items-center gap-1 rounded-full bg-slate-950/70 px-2 py-1 text-xs text-slate-300">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" />
               已接入
             </span>
