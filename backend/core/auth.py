@@ -4,6 +4,8 @@ import random
 import time
 import logging
 import secrets
+import hashlib
+import hmac
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -80,6 +82,16 @@ def verify_jwt_token(token: str) -> dict | None:
         return None
     except jwt.InvalidTokenError:
         return None
+
+
+def derive_guest_user_id(installation_id: str) -> str:
+    """Derive a stable, non-enumerable tenant id from a browser-held UUID."""
+    digest = hmac.new(
+        JWT_SECRET.encode("utf-8"),
+        f"guest:{installation_id}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"guest_{digest[:32]}"
 
 
 def generate_sms_code() -> str:

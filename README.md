@@ -21,6 +21,7 @@ pinned: false
 - AI 专业语音审计：固定六维审计计划、进度恢复和最终报告
 - 决策中心、Now/Next/Later 路线图、PRD 版本、团队评审、Agent 配置和指标复盘
 - BYOK、自带 API 地址与模型；SSE 流式响应；语音输入和 TTS
+- 手机号登录与安全体验模式；体验身份由服务端签名并与其他用户数据隔离
 
 审计通话是语音交互界面，不是 WebRTC 视频会议；产品也不宣称端到端加密。
 
@@ -34,7 +35,7 @@ pinned: false
 
 1. 复制 `backend/.env.example` 为 `backend/.env`。
 2. 配置 `LLM_API_KEY`、`LLM_BASE_URL` 和 `LLM_MODEL`，或在网页设置中使用 BYOK。
-   本地没有短信服务时，可临时设置 `ALLOW_SMS_CODE_ECHO=true`；生产环境必须保持为 `false` 并配置真实短信服务。
+   本地没有短信服务时可使用体验模式；若需调试短信流程，可临时设置 `ALLOW_SMS_CODE_ECHO=true`。生产环境必须保持为 `false` 并配置真实短信服务。
 3. 安装依赖：根目录执行 `npm ci`，后端执行 `pip install -r backend/requirements.txt`。
 4. 启动后端：`uvicorn main:app --reload --port 8000`（工作目录为 `backend`）。
 5. 启动前端：`npm run dev --workspace frontend`。

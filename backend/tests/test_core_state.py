@@ -6,6 +6,7 @@ from core.config import settings
 from fastapi import HTTPException
 from starlette.requests import Request
 from core.agent_loop import _next_clarification_field
+from core.auth import derive_guest_user_id
 from core.canvas_parser import _enrich_decision_graph
 from db.session_store import InterviewSessionStore, SessionStore
 
@@ -133,3 +134,15 @@ def test_data_endpoints_require_authenticated_identity(monkeypatch):
         assert error.status_code == 401
     else:
         raise AssertionError("anonymous token unexpectedly authenticated")
+
+
+def test_guest_identity_is_stable_and_not_the_browser_uuid():
+    installation_id = "8420a2aa-4ddc-4d3c-a7ec-4b4548245358"
+    first = derive_guest_user_id(installation_id)
+    second = derive_guest_user_id(installation_id)
+    other = derive_guest_user_id("99f18c5b-1ffd-4f25-b694-fc6549392643")
+
+    assert first == second
+    assert first != other
+    assert installation_id not in first
+    assert first.startswith("guest_")
