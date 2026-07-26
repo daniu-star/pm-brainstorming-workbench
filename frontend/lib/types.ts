@@ -279,11 +279,26 @@ export interface PrdDiff {
   development_tasks: { added: string[]; removed: string[] };
 }
 
+export type ReviewTargetType = "initiative" | "roadmap" | "prd" | "general";
+export interface ReviewComment { id: string; target_type: ReviewTargetType; target_id: string; author_name: string; content: string; created_at: string; }
+export interface ReviewVote { id: string; target_type: ReviewTargetType; target_id: string; author_name: string; stance: "support" | "concern"; created_at: string; }
+export interface ReviewApproval { id: string; target_type: ReviewTargetType; target_id: string; author_name: string; status: "approved" | "needs_work"; note: string; created_at: string; }
+export interface ReviewAuditEvent { id: string; action: string; author_name: string; summary: string; created_at: string; }
+export interface ReviewSpace { comments: ReviewComment[]; votes: ReviewVote[]; approvals: ReviewApproval[]; audit_log: ReviewAuditEvent[]; share_token: string; share_enabled: boolean; }
+
+export interface AgentProfile { id: string; name: string; role: string; focus: string; }
+export interface AgentConfig { template: "saas" | "fintech" | "ecommerce" | "consumer"; company_knowledge: string; audit_rules: string[]; agents: AgentProfile[]; }
+
+export interface MetricReview { id: string; name: string; unit: string; baseline: number; target: number; actual: number; period: string; hypothesis: string; initiative_id: string; outcome: "above_target" | "improving" | "below_baseline"; delta_to_target: number; delta_to_baseline: number; created_at: string; }
+
 export interface DecisionHub {
   evidence: DecisionEvidence[];
   initiatives: DecisionInitiative[];
   experiments: DecisionExperiment[];
   roadmap_items: RoadmapItem[];
   prd_versions: PrdVersion[];
+  review_space: ReviewSpace;
+  agent_config: AgentConfig;
+  metric_reviews: MetricReview[];
   updated_at: string;
 }

@@ -35,6 +35,21 @@ class SessionStore:
                 "experiments": [],
                 "roadmap_items": [],
                 "prd_versions": [],
+                "review_space": {
+                    "comments": [],
+                    "votes": [],
+                    "approvals": [],
+                    "audit_log": [],
+                    "share_token": "",
+                    "share_enabled": False,
+                },
+                "agent_config": {
+                    "template": "saas",
+                    "company_knowledge": "",
+                    "audit_rules": [],
+                    "agents": [],
+                },
+                "metric_reviews": [],
                 "updated_at": datetime.now().isoformat(),
             },
             "created_at": datetime.now().isoformat(),
@@ -97,6 +112,15 @@ class SessionStore:
                     "created_at": s["created_at"],
                 })
         sessions.sort(key=lambda s: s["created_at"], reverse=True)
+        return sessions
+
+    def list_all_raw(self) -> List[dict]:
+        """Internal lookup for deliberately shared, read-only session views."""
+        sessions = []
+        for fname in os.listdir(self.data_dir):
+            if fname.endswith(".json"):
+                with open(os.path.join(self.data_dir, fname), "r", encoding="utf-8") as f:
+                    sessions.append(json.load(f))
         return sessions
 
     def delete(self, session_id: str, user_token: str | None = None) -> bool:

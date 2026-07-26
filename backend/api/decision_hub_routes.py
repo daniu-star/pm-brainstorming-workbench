@@ -77,6 +77,46 @@ class PrdVersionCreateRequest(BaseModel):
     parent_version_id: str = Field(default="", max_length=80)
 
 
+class ReviewCommentCreateRequest(BaseModel):
+    target_type: Literal["initiative", "roadmap", "prd", "general"] = "general"
+    target_id: str = Field(default="", max_length=80)
+    author_name: str = Field(default="", min_length=1, max_length=48)
+    content: str = Field(min_length=1, max_length=1500)
+
+
+class ReviewVoteRequest(BaseModel):
+    target_type: Literal["initiative", "roadmap", "prd", "general"] = "general"
+    target_id: str = Field(default="", max_length=80)
+    author_name: str = Field(default="", min_length=1, max_length=48)
+    stance: Literal["support", "concern"]
+
+
+class ReviewApprovalRequest(BaseModel):
+    target_type: Literal["initiative", "roadmap", "prd", "general"] = "general"
+    target_id: str = Field(default="", max_length=80)
+    author_name: str = Field(default="", min_length=1, max_length=48)
+    status: Literal["approved", "needs_work"]
+    note: str = Field(default="", max_length=500)
+
+
+class AgentConfigUpdateRequest(BaseModel):
+    template: Literal["saas", "fintech", "ecommerce", "consumer"] = "saas"
+    company_knowledge: str = Field(default="", max_length=6000)
+    audit_rules: list[str] = Field(default_factory=list, max_length=20)
+    agents: list[dict] = Field(default_factory=list, max_length=8)
+
+
+class MetricReviewCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    unit: str = Field(default="%", max_length=24)
+    baseline: float = Field(default=0)
+    target: float = Field(default=0)
+    actual: float = Field(default=0)
+    period: str = Field(default="", max_length=80)
+    hypothesis: str = Field(default="", max_length=800)
+    initiative_id: str = Field(default="", max_length=80)
+
+
 def _authorized_session(session_id: str, request: Request) -> dict:
     user = get_current_user(request)
     session = session_store.get(session_id)
@@ -96,6 +136,9 @@ def _hub(session: dict) -> dict:
         "experiments": hub.get("experiments", []),
         "roadmap_items": hub.get("roadmap_items", []),
         "prd_versions": hub.get("prd_versions", []),
+        "review_space": hub.get("review_space", {"comments": [], "votes": [], "approvals": [], "audit_log": [], "share_token": "", "share_enabled": False}),
+        "agent_config": hub.get("agent_config", {"template": "saas", "company_knowledge": "", "audit_rules": [], "agents": []}),
+        "metric_reviews": hub.get("metric_reviews", []),
         "updated_at": hub.get("updated_at") or session.get("created_at"),
     }
 
@@ -337,3 +380,144 @@ async def get_prd_diff(session_id: str, version_id: str, base_version_id: str, r
         "acceptance_criteria": {"added": added_values("acceptance_criteria"), "removed": removed_values("acceptance_criteria")},
         "development_tasks": {"added": added_values("development_tasks"), "removed": removed_values("development_tasks")},
     }
+
+
+def _review_space(hub: dict) -> dict:
+    space = hub.get("review_space") or {}
+    return {
+        "comments": space.get("comments", []),
+        "votes": space.get("votes", []),
+        "approvals": space.get("approvals", []),
+        "audit_log": space.get("audit_log", []),
+        "share_token": space.get("share_token", ""),
+        "share_enabled": space.get("share_enabled", False),
+    }
+
+
+def _write_audit(space: dict, action: str, author: str, summary: str) -> None:
+    space["audit_log"].insert(0, {"id": f"audit_{uuid.uuid4().hex[:10]}", "action": action, "author_name": author, "summary": summary, "created_at": datetime.now().isoformat()})
+    del space["audit_log"][80:]
+
+
+@router.get("/{session_id}/decision-hub/review")
+async def get_review_space(session_id: str, request: Request):
+    session = _authorized_session(session_id, request)
+    return _review_space(_hub(session))
+
+
+@router.post("/{session_id}/decision-hub/review/comments", status_code=status.HTTP_201_CREATED)
+async def create_review_comment(session_id: str, req: ReviewCommentCreateRequest, request: Request):
+    session = _authorized_session(session_id, request)
+    hub = _hub(session)
+    space = _review_space(hub)
+    author = req.author_name.strip() or "团队成员"
+    comment = {"id": f"cm_{uuid.uuid4().hex[:10]}", "target_type": req.target_type, "target_id": req.target_id, "author_name": author, "content": req.content.strip(), "created_at": datetime.now().isoformat()}
+    space["comments"].insert(0, comment)
+    _write_audit(space, "commented", author, f"评论了 {req.target_type or '项目'}")
+    hub["review_space"] = space
+    _save_hub(session_id, hub)
+    return comment
+
+
+@router.post("/{session_id}/decision-hub/review/votes")
+async def create_review_vote(session_id: str, req: ReviewVoteRequest, request: Request):
+    session = _authorized_session(session_id, request)
+    hub = _hub(session)
+    space = _review_space(hub)
+    author = req.author_name.strip() or "团队成员"
+    space["votes"] = [vote for vote in space["votes"] if not (vote.get("target_type") == req.target_type and vote.get("target_id") == req.target_id and vote.get("author_name") == author)]
+    vote = {"id": f"vote_{uuid.uuid4().hex[:10]}", "target_type": req.target_type, "target_id": req.target_id, "author_name": author, "stance": req.stance, "created_at": datetime.now().isoformat()}
+    space["votes"].append(vote)
+    _write_audit(space, "voted", author, "支持" if req.stance == "support" else "提出关注")
+    hub["review_space"] = space
+    _save_hub(session_id, hub)
+    return vote
+
+
+@router.post("/{session_id}/decision-hub/review/approvals")
+async def create_review_approval(session_id: str, req: ReviewApprovalRequest, request: Request):
+    session = _authorized_session(session_id, request)
+    hub = _hub(session)
+    space = _review_space(hub)
+    author = req.author_name.strip() or "团队成员"
+    space["approvals"] = [item for item in space["approvals"] if not (item.get("target_type") == req.target_type and item.get("target_id") == req.target_id and item.get("author_name") == author)]
+    approval = {"id": f"ap_{uuid.uuid4().hex[:10]}", "target_type": req.target_type, "target_id": req.target_id, "author_name": author, "status": req.status, "note": req.note.strip(), "created_at": datetime.now().isoformat()}
+    space["approvals"].insert(0, approval)
+    _write_audit(space, "approved" if req.status == "approved" else "requested_changes", author, "已批准" if req.status == "approved" else "请求修改")
+    hub["review_space"] = space
+    _save_hub(session_id, hub)
+    return approval
+
+
+@router.post("/{session_id}/decision-hub/review/share")
+async def enable_review_share(session_id: str, request: Request):
+    session = _authorized_session(session_id, request)
+    hub = _hub(session)
+    space = _review_space(hub)
+    if not space["share_token"]:
+        space["share_token"] = uuid.uuid4().hex
+    space["share_enabled"] = True
+    _write_audit(space, "shared", "系统", "已生成只读评审链接")
+    hub["review_space"] = space
+    _save_hub(session_id, hub)
+    return {"share_token": space["share_token"]}
+
+
+@router.get("/shared/review/{share_token}")
+async def get_shared_review(share_token: str):
+    for session in session_store.list_all_raw():
+        space = _review_space(_hub(session))
+        if space.get("share_enabled") and space.get("share_token") == share_token:
+            return {"problem_statement": session.get("problem_statement", "产品决策评审"), "review_space": {key: space[key] for key in ("comments", "votes", "approvals", "audit_log")}}
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="分享链接不存在或已失效")
+
+
+@router.get("/{session_id}/decision-hub/agent-config")
+async def get_agent_config(session_id: str, request: Request):
+    session = _authorized_session(session_id, request)
+    return _hub(session)["agent_config"]
+
+
+@router.put("/{session_id}/decision-hub/agent-config")
+async def update_agent_config(session_id: str, req: AgentConfigUpdateRequest, request: Request):
+    session = _authorized_session(session_id, request)
+    hub = _hub(session)
+    safe_agents = []
+    for agent in req.agents[:8]:
+        name = str(agent.get("name", "")).strip()[:48]
+        role = str(agent.get("role", "")).strip()[:80]
+        focus = str(agent.get("focus", "")).strip()[:400]
+        if name and role:
+            safe_agents.append({"id": str(agent.get("id") or f"agent_{uuid.uuid4().hex[:8]}")[:48], "name": name, "role": role, "focus": focus})
+    hub["agent_config"] = {"template": req.template, "company_knowledge": req.company_knowledge.strip(), "audit_rules": [rule.strip() for rule in req.audit_rules if rule.strip()][:20], "agents": safe_agents}
+    _save_hub(session_id, hub)
+    return hub["agent_config"]
+
+
+@router.post("/{session_id}/decision-hub/metrics", status_code=status.HTTP_201_CREATED)
+async def create_metric_review(session_id: str, req: MetricReviewCreateRequest, request: Request):
+    session = _authorized_session(session_id, request)
+    hub = _hub(session)
+    initiative_ids = {item.get("id") for item in hub["initiatives"]}
+    delta_to_target = req.actual - req.target
+    delta_to_baseline = req.actual - req.baseline
+    if req.target > req.baseline:
+        outcome = "above_target" if req.actual >= req.target else ("improving" if req.actual > req.baseline else "below_baseline")
+    else:
+        outcome = "above_target" if req.actual <= req.target else ("improving" if req.actual < req.baseline else "below_baseline")
+    review = {"id": f"metric_{uuid.uuid4().hex[:10]}", "name": req.name.strip(), "unit": req.unit.strip(), "baseline": req.baseline, "target": req.target, "actual": req.actual, "period": req.period.strip(), "hypothesis": req.hypothesis.strip(), "initiative_id": req.initiative_id if req.initiative_id in initiative_ids else "", "outcome": outcome, "delta_to_target": round(delta_to_target, 2), "delta_to_baseline": round(delta_to_baseline, 2), "created_at": datetime.now().isoformat()}
+    hub["metric_reviews"].insert(0, review)
+    _save_hub(session_id, hub)
+    return review
+
+
+@router.delete("/{session_id}/decision-hub/metrics/{metric_id}")
+async def delete_metric_review(session_id: str, metric_id: str, request: Request):
+    session = _authorized_session(session_id, request)
+    hub = _hub(session)
+    before = len(hub["metric_reviews"])
+    hub["metric_reviews"] = [item for item in hub["metric_reviews"] if item.get("id") != metric_id]
+    if len(hub["metric_reviews"]) == before:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="指标记录未找到")
+    _save_hub(session_id, hub)
+    return {"status": "deleted"}
