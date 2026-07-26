@@ -1,7 +1,10 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# 始终从 backend/.env 加载，避免启动目录不同导致配置静默丢失。
+ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
+load_dotenv(dotenv_path=ENV_FILE)
 
 
 class Settings:
