@@ -69,26 +69,32 @@ export default function LandingPage() {
   }, []);
 
   useEffect(() => {
-    if (mounted && !storeIsLoggedIn) {
-      router.replace("/login");
-    }
-  }, [mounted, storeIsLoggedIn, router]);
+    if (!mounted || problem) return;
+    const pendingProblem = sessionStorage.getItem("pm-brainstorm-pending-problem");
+    if (pendingProblem) setProblem(pendingProblem);
+  }, [mounted, problem]);
 
   useEffect(() => {
-    if (!hasCompletedOnboarding) {
+    if (storeIsLoggedIn && !hasCompletedOnboarding) {
       const timer = setTimeout(() => setOnboardingOpen(true), 800);
       return () => clearTimeout(timer);
     }
-  }, [hasCompletedOnboarding, setOnboardingOpen]);
+  }, [storeIsLoggedIn, hasCompletedOnboarding, setOnboardingOpen]);
 
   const handleCreate = async () => {
     if (!problem.trim() || isCreating) return;
+    if (!storeIsLoggedIn) {
+      sessionStorage.setItem("pm-brainstorm-pending-problem", problem.trim());
+      router.push("/login");
+      return;
+    }
     setIsCreating(true);
     setError(null);
     try {
       await useSessionStore.getState().createSession(problem.trim());
       const sessionId = useSessionStore.getState().sessionId;
       if (sessionId) {
+        sessionStorage.removeItem("pm-brainstorm-pending-problem");
         router.push(`/session/${sessionId}?problem=${encodeURIComponent(problem.trim())}`);
       }
     } catch (err) {
@@ -127,30 +133,42 @@ export default function LandingPage() {
               <Play size={14} />
               产品全景
             </Link>
-            <span className="hidden max-w-[100px] truncate text-xs font-semibold text-cyan-100 md:inline">
-              {userNickname || "已登录"}
-            </span>
-            <Button
-              onClick={storeLogout}
-              variant="ghost"
-              size="icon"
-              className="h-9 w-9 text-zinc-400 hover:bg-white/10 hover:text-white"
-              aria-label="退出登录"
-            >
-              <LogOut size={15} />
-            </Button>
-            <Button
-              onClick={() => setSettingsOpen(true)}
-              variant="ghost"
-              size="icon"
-              className="h-9 w-9 text-zinc-400 hover:bg-white/10 hover:text-white"
-              aria-label="API 设置"
-            >
-              <Settings size={15} />
-            </Button>
-            <div className="landing-nav-tools">
-              <NavButtons currentPage="landing" sessionId={null} onToggleHistory={toggleHistory} />
-            </div>
+            {storeIsLoggedIn ? (
+              <>
+                <span className="hidden max-w-[100px] truncate text-xs font-semibold text-cyan-100 md:inline">
+                  {userNickname || "已登录"}
+                </span>
+                <Button
+                  onClick={storeLogout}
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-9 text-zinc-400 hover:bg-white/10 hover:text-white"
+                  aria-label="退出登录"
+                >
+                  <LogOut size={15} />
+                </Button>
+                <Button
+                  onClick={() => setSettingsOpen(true)}
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-9 text-zinc-400 hover:bg-white/10 hover:text-white"
+                  aria-label="API 设置"
+                >
+                  <Settings size={15} />
+                </Button>
+                <div className="landing-nav-tools">
+                  <NavButtons currentPage="landing" sessionId={null} onToggleHistory={toggleHistory} />
+                </div>
+              </>
+            ) : (
+              <Link
+                href="/login"
+                className="inline-flex h-10 items-center gap-2 rounded-lg border border-cyan-300/20 bg-cyan-300/10 px-4 text-xs font-semibold text-cyan-100 hover:bg-cyan-300/15"
+              >
+                <User size={14} />
+                登录
+              </Link>
+            )}
           </div>
         </div>
       </header>
@@ -160,7 +178,7 @@ export default function LandingPage() {
       <RechargeModal />
       <OnboardingModal />
 
-      {hasCompletedOnboarding && needsConfig && (
+      {storeIsLoggedIn && hasCompletedOnboarding && needsConfig && (
         <div className="fixed left-0 right-0 top-16 z-20 border-b border-amber-300/20 bg-amber-300/10 backdrop-blur-xl">
           <div className="mx-auto flex max-w-4xl items-center justify-center gap-3 px-4 py-2">
             <span className="text-xs text-amber-100">额度已用尽，请配置 API Key 或充值</span>
