@@ -4,5 +4,13 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  async rewrites() {
+    return [
+      {
+        source: "/backend/:path*",
+        destination: "https://123chenjunliang-pm-brainstorm-workbench.hf.space/:path*",
+      },
+    ];
+  },
 };
 module.exports = nextConfig;
