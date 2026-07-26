@@ -992,6 +992,136 @@ body {
   box-shadow: 0 12px 28px rgba(8, 145, 178, 0.18), inset 0 1px rgba(255, 255, 255, 0.1);
 }
 
+/* ===== 决策中心：证据、优先级与实验 ===== */
+.decision-hub-shell {
+  --background: 222 54% 7%;
+  --foreground: 210 40% 96%;
+  --card: 220 42% 12%;
+  --card-foreground: 210 40% 96%;
+  --primary: 188 88% 53%;
+  --primary-foreground: 216 60% 8%;
+  --secondary: 221 33% 17%;
+  --secondary-foreground: 210 35% 92%;
+  --muted: 220 27% 16%;
+  --muted-foreground: 214 18% 65%;
+  --accent: 217 35% 20%;
+  --accent-foreground: 190 85% 90%;
+  --border: 213 34% 22%;
+  --input: 214 34% 23%;
+  --ring: 188 86% 53%;
+  position: relative;
+  overflow: hidden;
+  color-scheme: dark;
+  background:
+    radial-gradient(ellipse 60% 55% at 82% 8%, rgba(8, 145, 178, 0.16), transparent 62%),
+    radial-gradient(ellipse 52% 62% at 7% 86%, rgba(79, 70, 229, 0.17), transparent 68%),
+    linear-gradient(150deg, #071425, #09122a 48%, #101331);
+  color: hsl(var(--foreground));
+}
+
+.decision-hub-grid {
+  position: fixed;
+  z-index: 0;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  background-image:
+    linear-gradient(rgba(125, 211, 252, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(125, 211, 252, 0.03) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse at center, black 12%, transparent 84%);
+}
+
+.decision-hub-header {
+  position: relative;
+  background: linear-gradient(90deg, rgba(6, 20, 39, 0.86), rgba(13, 19, 49, 0.84));
+  box-shadow: 0 14px 42px rgba(2, 8, 23, 0.2), inset 0 -1px rgba(125, 211, 252, 0.05);
+}
+
+.decision-hub-shell > *:not(.decision-hub-grid) {
+  position: relative;
+  z-index: 1;
+}
+
+.decision-card,
+.decision-metric-card {
+  border: 1px solid rgba(125, 211, 252, 0.14);
+  background: linear-gradient(145deg, rgba(18, 41, 70, 0.62), rgba(11, 17, 43, 0.7));
+  box-shadow: 0 22px 56px rgba(1, 6, 20, 0.22), inset 0 1px rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(20px) saturate(135%);
+}
+
+.decision-item-card {
+  border: 1px solid rgba(125, 211, 252, 0.1);
+  background: linear-gradient(145deg, rgba(14, 31, 56, 0.62), rgba(8, 14, 35, 0.68));
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.04);
+  transition: border-color 180ms ease, transform 180ms ease, background 180ms ease;
+}
+
+.decision-item-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(103, 232, 249, 0.24);
+  background: linear-gradient(145deg, rgba(19, 50, 78, 0.7), rgba(12, 19, 47, 0.74));
+}
+
+.decision-icon-button {
+  border: 1px solid rgba(125, 211, 252, 0.12);
+  color: #a8bdd0;
+  background: rgba(255, 255, 255, 0.035);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.05);
+  transition: all 180ms ease;
+}
+
+.decision-icon-button:hover {
+  border-color: rgba(103, 232, 249, 0.3);
+  color: #e0f7ff;
+  background: rgba(34, 211, 238, 0.08);
+}
+
+.decision-select,
+.decision-form-input {
+  color: #eaf7ff;
+  background: rgba(4, 15, 34, 0.68);
+  box-shadow: inset 0 1px 8px rgba(2, 8, 23, 0.28);
+}
+
+.decision-form-input {
+  height: 2.5rem;
+  width: 100%;
+  border: 1px solid rgba(125, 211, 252, 0.2);
+  border-radius: 0.375rem;
+  padding: 0 0.75rem;
+  font-size: 0.875rem;
+}
+
+.decision-select option {
+  color: #eaf7ff;
+  background: #0d1d35;
+}
+
+.decision-form-dialog {
+  --background: 222 52% 10%;
+  --foreground: 210 40% 96%;
+  --muted-foreground: 215 18% 68%;
+  --border: 212 35% 25%;
+  --input: 214 35% 25%;
+  --ring: 188 86% 53%;
+  border-color: rgba(125, 211, 252, 0.2) !important;
+  background:
+    radial-gradient(circle at 90% 6%, rgba(34, 211, 238, 0.15), transparent 33%),
+    radial-gradient(circle at 7% 94%, rgba(99, 102, 241, 0.18), transparent 38%),
+    linear-gradient(145deg, rgba(13, 34, 62, 0.98), rgba(14, 17, 48, 0.99)) !important;
+  box-shadow: 0 42px 120px rgba(1, 5, 18, 0.7), inset 0 1px rgba(255, 255, 255, 0.12) !important;
+}
+
+.decision-form-dialog input,
+.decision-form-dialog textarea {
+  border-color: rgba(125, 211, 252, 0.2) !important;
+  color: #eaf7ff !important;
+  background: rgba(4, 15, 34, 0.62) !important;
+  box-shadow: inset 0 1px 8px rgba(2, 8, 23, 0.28);
+}
+
 /* ===== 首次配置任务弹窗 ===== */
 .onboarding-cosmos {
   --background: 222 52% 10%;

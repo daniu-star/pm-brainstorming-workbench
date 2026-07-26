@@ -29,6 +29,12 @@ class SessionStore:
             "canvas_tree": None,
             "interview_dimensions_covered": [],
             "interview_question_count": 0,
+            "decision_hub": {
+                "evidence": [],
+                "initiatives": [],
+                "experiments": [],
+                "updated_at": datetime.now().isoformat(),
+            },
             "created_at": datetime.now().isoformat(),
             "user_token": user_token,
         }

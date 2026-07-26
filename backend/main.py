@@ -16,6 +16,7 @@ from api.recharge_routes import router as recharge_router
 from api.auth_routes import router as auth_router
 from api.product_routes import router as product_router
 from api.attachment_routes import router as attachment_router
+from api.decision_hub_routes import router as decision_hub_router
 from core.config import settings
 
 RATE_LIMIT_MAX = 20
@@ -95,6 +96,7 @@ app.include_router(recharge_router)
 app.include_router(auth_router)
 app.include_router(product_router)
 app.include_router(attachment_router)
+app.include_router(decision_hub_router)
 
 
 @app.get("/health")
