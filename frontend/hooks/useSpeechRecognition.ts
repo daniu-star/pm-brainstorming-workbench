@@ -75,6 +75,7 @@ export function useSpeechRecognition(): SpeechRecognitionResult {
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [status, setStatus] = useState<"idle" | "recording" | "transcribing" | "success" | "error">("idle");
   const [engine, setEngine] = useState<"web-speech" | "media-recorder" | null>(null);
+  const [serverSTTAvailable, setServerSTTAvailable] = useState(true);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -83,11 +84,11 @@ export function useSpeechRecognition(): SpeechRecognitionResult {
   const maxDurationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recognitionRef = useRef<any>(null);
 
-  const isSupported =
-    supportsWebSpeech ||
-    (typeof navigator !== "undefined" &&
-      !!navigator.mediaDevices?.getUserMedia &&
-      typeof MediaRecorder !== "undefined");
+  const supportsMediaRecording =
+    typeof navigator !== "undefined" &&
+    !!navigator.mediaDevices?.getUserMedia &&
+    typeof MediaRecorder !== "undefined";
+  const isSupported = supportsWebSpeech || supportsMediaRecording;
 
   const clearTimers = useCallback(() => {
     if (durationTimerRef.current) {
@@ -114,6 +115,24 @@ export function useSpeechRecognition(): SpeechRecognitionResult {
     };
   }, [clearTimers]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(apiUrl("/api/voice/capabilities"), {
+      headers: getUserHeaders(),
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("capabilities unavailable");
+        const data = await response.json();
+        setServerSTTAvailable(Boolean(data.server_stt_available));
+      })
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setServerSTTAvailable(false);
+      });
+    return () => controller.abort();
+  }, []);
+
   const start = useCallback(() => {
     if (!isSupported) {
       const msg = notifyError("unsupported");
@@ -126,7 +145,11 @@ export function useSpeechRecognition(): SpeechRecognitionResult {
     setRecordingDuration(0);
     chunksRef.current = [];
 
-    if (supportsWebSpeech && SpeechRecognitionClass) {
+    if (
+      supportsWebSpeech &&
+      SpeechRecognitionClass &&
+      (!serverSTTAvailable || !supportsMediaRecording)
+    ) {
       setEngine("web-speech");
       try {
         const recognition = new SpeechRecognitionClass();
@@ -300,7 +323,7 @@ export function useSpeechRecognition(): SpeechRecognitionResult {
           setStatus("error");
         }
       });
-  }, [isSupported, clearTimers]);
+  }, [isSupported, clearTimers, serverSTTAvailable, supportsMediaRecording]);
 
   const stop = useCallback(() => {
     if (engine === "web-speech" && recognitionRef.current) {
