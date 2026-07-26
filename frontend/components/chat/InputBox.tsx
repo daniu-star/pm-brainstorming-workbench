@@ -269,6 +269,8 @@ export function InputBox() {
       <div className="flex gap-2 items-end">
         <div className="flex-1 relative">
           <Textarea
+            id="workbench-message"
+            name="workbench-message"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder={

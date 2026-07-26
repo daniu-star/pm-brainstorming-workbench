@@ -227,6 +227,8 @@ export function InterviewInput({ phoneMode, onTogglePhoneMode }: InterviewInputP
         <div className="flex gap-2 items-end">
           <div className="flex-1 relative">
             <Textarea
+              id="audit-answer"
+              name="audit-answer"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="回答面试官的问题..."
