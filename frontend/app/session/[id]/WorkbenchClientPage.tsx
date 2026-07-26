@@ -10,6 +10,7 @@ import { HistoryDrawer } from "@/components/HistoryDrawer";
 import { ROLES } from "@/lib/types";
 import { BrainIcon } from "@/components/icons";
 import { exportSessionAsMarkdown } from "@/lib/export";
+import { CosmicBackground } from "@/components/CosmicBackground";
 
 function WorkbenchContent() {
   const params = useParams();
@@ -150,6 +151,7 @@ function WorkbenchContent() {
 
   return (
     <div className="workbench-shell h-screen flex flex-col">
+      <CosmicBackground density={78} className="workbench-cosmic-stars" />
       <Header />
       <HistoryDrawer isOpen={isHistoryOpen} onClose={toggleHistory} />
       <div className="flex-1 flex overflow-hidden relative">
