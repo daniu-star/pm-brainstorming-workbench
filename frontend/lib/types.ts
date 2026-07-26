@@ -238,9 +238,52 @@ export interface DecisionExperiment {
   updated_at?: string;
 }
 
+export type RoadmapHorizon = "now" | "next" | "later";
+export type RoadmapStatus = "planned" | "in_progress" | "at_risk" | "done";
+
+export interface RoadmapItem {
+  id: string;
+  title: string;
+  horizon: RoadmapHorizon;
+  quarter: string;
+  objective: string;
+  status: RoadmapStatus;
+  progress: number;
+  initiative_id: string;
+  risk_note: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PrdVersion {
+  id: string;
+  title: string;
+  version_label: string;
+  change_reason: string;
+  content: string;
+  initiative_id: string;
+  user_stories: string[];
+  acceptance_criteria: string[];
+  development_tasks: string[];
+  parent_version_id: string;
+  created_at: string;
+}
+
+export interface PrdDiff {
+  from_version: { id: string; label: string };
+  to_version: { id: string; label: string };
+  content_changed: boolean;
+  content: { before: string; after: string };
+  user_stories: { added: string[]; removed: string[] };
+  acceptance_criteria: { added: string[]; removed: string[] };
+  development_tasks: { added: string[]; removed: string[] };
+}
+
 export interface DecisionHub {
   evidence: DecisionEvidence[];
   initiatives: DecisionInitiative[];
   experiments: DecisionExperiment[];
+  roadmap_items: RoadmapItem[];
+  prd_versions: PrdVersion[];
   updated_at: string;
 }

@@ -33,6 +33,8 @@ class SessionStore:
                 "evidence": [],
                 "initiatives": [],
                 "experiments": [],
+                "roadmap_items": [],
+                "prd_versions": [],
                 "updated_at": datetime.now().isoformat(),
             },
             "created_at": datetime.now().isoformat(),

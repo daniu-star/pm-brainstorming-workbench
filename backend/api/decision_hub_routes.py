@@ -45,6 +45,38 @@ class ExperimentUpdateRequest(BaseModel):
     learning: str = Field(default="", max_length=1200)
 
 
+class RoadmapItemCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    horizon: Literal["now", "next", "later"] = "next"
+    quarter: str = Field(default="", max_length=24)
+    objective: str = Field(default="", max_length=500)
+    status: Literal["planned", "in_progress", "at_risk", "done"] = "planned"
+    progress: int = Field(default=0, ge=0, le=100)
+    initiative_id: str = Field(default="", max_length=80)
+    risk_note: str = Field(default="", max_length=500)
+
+
+class RoadmapItemUpdateRequest(BaseModel):
+    horizon: Literal["now", "next", "later"] | None = None
+    quarter: str | None = Field(default=None, max_length=24)
+    objective: str | None = Field(default=None, max_length=500)
+    status: Literal["planned", "in_progress", "at_risk", "done"] | None = None
+    progress: int | None = Field(default=None, ge=0, le=100)
+    risk_note: str | None = Field(default=None, max_length=500)
+
+
+class PrdVersionCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    version_label: str = Field(min_length=1, max_length=32)
+    change_reason: str = Field(min_length=1, max_length=500)
+    content: str = Field(default="", max_length=12000)
+    initiative_id: str = Field(default="", max_length=80)
+    user_stories: list[str] = Field(default_factory=list, max_length=20)
+    acceptance_criteria: list[str] = Field(default_factory=list, max_length=30)
+    development_tasks: list[str] = Field(default_factory=list, max_length=30)
+    parent_version_id: str = Field(default="", max_length=80)
+
+
 def _authorized_session(session_id: str, request: Request) -> dict:
     user = get_current_user(request)
     session = session_store.get(session_id)
@@ -62,6 +94,8 @@ def _hub(session: dict) -> dict:
         "evidence": hub.get("evidence", []),
         "initiatives": hub.get("initiatives", []),
         "experiments": hub.get("experiments", []),
+        "roadmap_items": hub.get("roadmap_items", []),
+        "prd_versions": hub.get("prd_versions", []),
         "updated_at": hub.get("updated_at") or session.get("created_at"),
     }
 
@@ -185,3 +219,121 @@ async def update_experiment(session_id: str, experiment_id: str, req: Experiment
             _save_hub(session_id, hub)
             return experiment
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="实验未找到")
+
+
+@router.post("/{session_id}/decision-hub/roadmap", status_code=status.HTTP_201_CREATED)
+async def create_roadmap_item(session_id: str, req: RoadmapItemCreateRequest, request: Request):
+    session = _authorized_session(session_id, request)
+    hub = _hub(session)
+    initiative_ids = {item.get("id") for item in hub["initiatives"]}
+    item = {
+        "id": f"rm_{uuid.uuid4().hex[:10]}",
+        "title": req.title.strip(),
+        "horizon": req.horizon,
+        "quarter": req.quarter.strip(),
+        "objective": req.objective.strip(),
+        "status": req.status,
+        "progress": req.progress,
+        "initiative_id": req.initiative_id if req.initiative_id in initiative_ids else "",
+        "risk_note": req.risk_note.strip(),
+        "created_at": datetime.now().isoformat(),
+        "updated_at": datetime.now().isoformat(),
+    }
+    hub["roadmap_items"].append(item)
+    _save_hub(session_id, hub)
+    return item
+
+
+@router.patch("/{session_id}/decision-hub/roadmap/{item_id}")
+async def update_roadmap_item(session_id: str, item_id: str, req: RoadmapItemUpdateRequest, request: Request):
+    session = _authorized_session(session_id, request)
+    hub = _hub(session)
+    updates = req.model_dump(exclude_none=True)
+    for item in hub["roadmap_items"]:
+        if item.get("id") == item_id:
+            item.update({key: value.strip() if isinstance(value, str) else value for key, value in updates.items()})
+            item["updated_at"] = datetime.now().isoformat()
+            _save_hub(session_id, hub)
+            return item
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="路线图事项未找到")
+
+
+@router.delete("/{session_id}/decision-hub/roadmap/{item_id}")
+async def delete_roadmap_item(session_id: str, item_id: str, request: Request):
+    session = _authorized_session(session_id, request)
+    hub = _hub(session)
+    before = len(hub["roadmap_items"])
+    hub["roadmap_items"] = [item for item in hub["roadmap_items"] if item.get("id") != item_id]
+    if len(hub["roadmap_items"]) == before:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="路线图事项未找到")
+    _save_hub(session_id, hub)
+    return {"status": "deleted"}
+
+
+@router.post("/{session_id}/decision-hub/prd-versions", status_code=status.HTTP_201_CREATED)
+async def create_prd_version(session_id: str, req: PrdVersionCreateRequest, request: Request):
+    session = _authorized_session(session_id, request)
+    hub = _hub(session)
+    initiative_ids = {item.get("id") for item in hub["initiatives"]}
+    version_ids = {item.get("id") for item in hub["prd_versions"]}
+
+    def clean_list(values: list[str], limit: int) -> list[str]:
+        return [value.strip() for value in values if value.strip()][:limit]
+
+    version = {
+        "id": f"prd_{uuid.uuid4().hex[:10]}",
+        "title": req.title.strip(),
+        "version_label": req.version_label.strip(),
+        "change_reason": req.change_reason.strip(),
+        "content": req.content.strip(),
+        "initiative_id": req.initiative_id if req.initiative_id in initiative_ids else "",
+        "user_stories": clean_list(req.user_stories, 20),
+        "acceptance_criteria": clean_list(req.acceptance_criteria, 30),
+        "development_tasks": clean_list(req.development_tasks, 30),
+        "parent_version_id": req.parent_version_id if req.parent_version_id in version_ids else "",
+        "created_at": datetime.now().isoformat(),
+    }
+    hub["prd_versions"].insert(0, version)
+    _save_hub(session_id, hub)
+    return version
+
+
+@router.delete("/{session_id}/decision-hub/prd-versions/{version_id}")
+async def delete_prd_version(session_id: str, version_id: str, request: Request):
+    session = _authorized_session(session_id, request)
+    hub = _hub(session)
+    before = len(hub["prd_versions"])
+    hub["prd_versions"] = [item for item in hub["prd_versions"] if item.get("id") != version_id]
+    if len(hub["prd_versions"]) == before:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="PRD 版本未找到")
+    for version in hub["prd_versions"]:
+        if version.get("parent_version_id") == version_id:
+            version["parent_version_id"] = ""
+    _save_hub(session_id, hub)
+    return {"status": "deleted"}
+
+
+@router.get("/{session_id}/decision-hub/prd-versions/{version_id}/diff/{base_version_id}")
+async def get_prd_diff(session_id: str, version_id: str, base_version_id: str, request: Request):
+    session = _authorized_session(session_id, request)
+    versions = _hub(session)["prd_versions"]
+    version = next((item for item in versions if item.get("id") == version_id), None)
+    base = next((item for item in versions if item.get("id") == base_version_id), None)
+    if version is None or base is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用于对比的 PRD 版本未找到")
+
+    def added_values(key: str) -> list[str]:
+        return [value for value in version.get(key, []) if value not in base.get(key, [])]
+
+    def removed_values(key: str) -> list[str]:
+        return [value for value in base.get(key, []) if value not in version.get(key, [])]
+
+    return {
+        "from_version": {"id": base["id"], "label": base["version_label"]},
+        "to_version": {"id": version["id"], "label": version["version_label"]},
+        "content_changed": base.get("content", "") != version.get("content", ""),
+        "content": {"before": base.get("content", ""), "after": version.get("content", "")},
+        "user_stories": {"added": added_values("user_stories"), "removed": removed_values("user_stories")},
+        "acceptance_criteria": {"added": added_values("acceptance_criteria"), "removed": removed_values("acceptance_criteria")},
+        "development_tasks": {"added": added_values("development_tasks"), "removed": removed_values("development_tasks")},
+    }
