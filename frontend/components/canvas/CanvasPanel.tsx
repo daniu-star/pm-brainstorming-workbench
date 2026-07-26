@@ -23,7 +23,7 @@ export function CanvasPanel() {
   const showTabs = productPortrait || (!isEmpty);
 
   return (
-    <div className="flex-1 flex flex-col">
+    <div className="workbench-canvas-panel flex-1 flex flex-col">
       <CanvasToolbar />
       {showTabs ? (
         <Tabs

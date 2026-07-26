@@ -1,7 +1,23 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Send, Mic, Square, PhoneOff, AlertCircle, Paperclip, X, File as FileIcon, Loader2, Zap, Type } from "lucide-react";
+import {
+  AlertCircle,
+  Camera,
+  File as FileIcon,
+  Loader2,
+  Mic,
+  Paperclip,
+  PhoneOff,
+  Send,
+  ShieldCheck,
+  Signal,
+  Square,
+  Type,
+  UserRound,
+  X,
+  Zap,
+} from "lucide-react";
 import { useSessionStore } from "@/store/sessionStore";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { Button } from "@/components/ui/button";
@@ -562,104 +578,152 @@ function PhoneModeView({
   }, [isRecording, isTranscribing, errorMessage, isSupported, start, isStreaming, phoneAutoStartRef]);
 
   return (
-    <div className="px-4 py-8 bg-muted/30 flex flex-col items-center gap-6">
-      <div className="flex flex-col items-center gap-2">
-        <div className="relative">
-          {isRecording && (
-            <span className="phone-ring absolute inset-0 rounded-full" />
-          )}
-          <div className="h-16 w-16 rounded-full overflow-hidden border-2 border-primary/30 shadow-md">
-            <img
-              src={INTERVIEWER_AVATAR}
-              alt="AI 面试官"
-              className="w-full h-full object-cover"
-            />
+    <div className="interview-phone-stage flex min-h-0 flex-1 p-3 md:p-6">
+      <section className="audit-call-frame relative mx-auto flex w-full max-w-6xl flex-1 flex-col overflow-hidden rounded-3xl">
+        <div className="audit-call-topbar flex items-center justify-between px-4 py-3 md:px-5">
+          <div className="flex items-center gap-2 text-[10px] font-semibold tracking-[0.18em] text-cyan-100/70">
+            <Camera className="h-3.5 w-3.5" />
+            AI AUDIT · PROFESSIONAL CALL
+          </div>
+          <div className="flex items-center gap-3 text-[10px] text-slate-300">
+            <span className="hidden items-center gap-1.5 sm:flex">
+              <Signal className="h-3.5 w-3.5 text-emerald-300" />
+              CHANNEL STABLE
+            </span>
+            <span className="flex items-center gap-1.5 rounded-full border border-emerald-300/15 bg-emerald-300/[0.06] px-2.5 py-1 text-emerald-200">
+              <ShieldCheck className="h-3.5 w-3.5" />
+              端到端加密
+            </span>
           </div>
         </div>
-        <span className="text-sm font-medium text-foreground">AI 压力面试官</span>
-      </div>
 
-      <div className="h-8 flex items-center justify-center">
-        {status === "recording" && (
-          <Badge variant="destructive" className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-destructive-foreground animate-pulse" />
-            正在聆听 {formatDuration(recordingDuration)}
-          </Badge>
-        )}
-        {status === "transcribing" && (
-          <Badge variant="secondary" className="flex items-center gap-1.5">
-            <Square className="h-3 w-3 animate-pulse" />
-            正在识别...
-          </Badge>
-        )}
-        {status === "success" && (
-          <Badge variant="default">识别成功</Badge>
-        )}
-        {status === "error" && !isRecording && (
-          <div className="flex flex-col items-center gap-2">
-            <Badge variant="destructive" className="flex items-center gap-1.5">
-              <AlertCircle className="h-3 w-3" />
-              {errorMessage}
-            </Badge>
-            <Button onClick={start} variant="destructive" size="sm" className="rounded-full">
-              重试
-            </Button>
+        <div className="audit-video-feed relative flex min-h-0 flex-1 items-center justify-center">
+          <div className="audit-video-reticle" aria-hidden="true" />
+
+          <div className="relative z-10 flex max-w-xl flex-col items-center px-5 text-center">
+            <div className="relative mb-5">
+              {isRecording && <span className="phone-ring absolute inset-0 rounded-[28px]" />}
+              <div className="audit-interviewer-portrait h-28 w-28 overflow-hidden rounded-[28px] border border-cyan-200/35 md:h-32 md:w-32">
+                <img
+                  src={INTERVIEWER_AVATAR}
+                  alt="AI 面试官"
+                  className="h-full w-full object-cover"
+                />
+              </div>
+              <span className="absolute -bottom-2 left-1/2 flex -translate-x-1/2 items-center gap-1 whitespace-nowrap rounded-full border border-cyan-200/20 bg-slate-950/80 px-2.5 py-1 text-[9px] tracking-[0.14em] text-cyan-100 backdrop-blur-xl">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-300" />
+                AI AUDITOR ONLINE
+              </span>
+            </div>
+
+            <p className="text-[10px] font-semibold tracking-[0.22em] text-cyan-200/50">
+              SIX-DIMENSION PRESSURE TEST
+            </p>
+            <h2 className="mt-2 text-xl font-semibold text-slate-50 md:text-2xl">
+              AI 审计压力面试官
+            </h2>
+            <p className="mt-2 max-w-md text-xs leading-6 text-slate-400 md:text-sm">
+              当前通话将围绕问题有效性、方案有效性、技术风险、商业可行性、用户采用与执行风险展开。
+            </p>
+
+            <div className="mt-5 flex min-h-9 items-center justify-center">
+              {status === "recording" && (
+                <Badge variant="destructive" className="flex items-center gap-1.5">
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-destructive-foreground" />
+                  正在聆听 {formatDuration(recordingDuration)}
+                </Badge>
+              )}
+              {status === "transcribing" && (
+                <Badge variant="secondary" className="flex items-center gap-1.5">
+                  <Square className="h-3 w-3 animate-pulse" />
+                  正在生成审计记录
+                </Badge>
+              )}
+              {status === "success" && <Badge variant="default">审计记录已同步</Badge>}
+              {status === "idle" && (
+                <Badge variant="secondary" className="border-cyan-200/15 bg-cyan-300/[0.06] text-cyan-100">
+                  等待你的回答
+                </Badge>
+              )}
+              {status === "error" && !isRecording && (
+                <div className="flex flex-col items-center gap-2">
+                  <Badge variant="destructive" className="flex items-center gap-1.5">
+                    <AlertCircle className="h-3 w-3" />
+                    {errorMessage}
+                  </Badge>
+                  <Button onClick={start} variant="destructive" size="sm" className="rounded-full">
+                    重新连接麦克风
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            <div className="phone-waveform mt-3 flex h-8 items-center gap-1" aria-hidden="true">
+              {Array.from({ length: 18 }).map((_, i) => (
+                <span
+                  key={i}
+                  className={cn(
+                    "phone-waveform-bar w-1 rounded-full",
+                    isRecording ? "bg-cyan-300" : "bg-cyan-200/20"
+                  )}
+                  style={{
+                    animationDelay: `${i * 0.07}s`,
+                    animationPlayState: isRecording ? "running" : "paused",
+                  }}
+                />
+              ))}
+            </div>
+
+            {transcript && (
+              <div className="mt-3 max-w-lg rounded-xl border border-cyan-200/10 bg-slate-950/45 px-4 py-2 text-sm text-slate-300 backdrop-blur-xl">
+                {transcript}
+              </div>
+            )}
           </div>
-        )}
-      </div>
 
-      {isRecording && (
-        <div className="phone-waveform flex items-center gap-1 h-8">
-          {Array.from({ length: 12 }).map((_, i) => (
-            <div
-              key={i}
-              className="phone-waveform-bar w-1 bg-primary rounded-full"
-              style={{ animationDelay: `${i * 0.08}s` }}
-            />
-          ))}
+          <div className="audit-self-view absolute bottom-4 right-4 hidden h-32 w-48 overflow-hidden rounded-2xl border border-white/10 sm:flex md:bottom-5 md:right-5 md:h-36 md:w-52">
+            <div className="flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-slate-800/90 via-slate-900/90 to-indigo-950/90">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.06]">
+                <UserRound className="h-5 w-5 text-slate-300" />
+              </div>
+              <span className="mt-2 text-xs font-medium text-slate-200">产品负责人</span>
+              <span className="mt-0.5 text-[9px] tracking-[0.14em] text-slate-500">LOCAL PARTICIPANT</span>
+            </div>
+            <span className="absolute left-2.5 top-2.5 flex items-center gap-1 rounded-full bg-slate-950/70 px-2 py-1 text-[9px] text-slate-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" />
+              已接入
+            </span>
+          </div>
         </div>
-      )}
 
-      {transcript && (
-        <div className="text-sm text-slate-300 mt-2 px-4 text-center max-w-xs">
-          {transcript}
+        <div className="audit-call-controls flex items-center justify-center gap-4 px-4 py-4">
+          <Button
+            onClick={isRecording ? stop : start}
+            disabled={!isSupported || isTranscribing}
+            aria-label={isRecording ? "停止录音" : "开始录音"}
+            size="icon"
+            className={cn(
+              "h-12 w-12 rounded-2xl",
+              status === "recording" && "bg-cyan-400 text-slate-950 hover:bg-cyan-300",
+              status === "transcribing" && "animate-pulse bg-indigo-500",
+              (status === "success" || status === "idle") && "bg-cyan-400 text-slate-950 hover:bg-cyan-300"
+            )}
+          >
+            {isRecording ? <Square className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+          </Button>
+
+          <Button
+            onClick={onHangUp}
+            variant="destructive"
+            size="icon"
+            className="h-12 min-w-24 rounded-2xl px-5"
+            aria-label="退出 AI 审计专业通话"
+          >
+            <PhoneOff className="h-5 w-5" />
+            <span>退出通话</span>
+          </Button>
         </div>
-      )}
-
-      <div className="relative">
-        {isRecording && (
-          <>
-            <div className="phone-ring absolute inset-0 rounded-full" />
-            <div className="phone-ring absolute inset-0 rounded-full" style={{ animationDelay: "0.6s" }} />
-            <div className="phone-ring absolute inset-0 rounded-full" style={{ animationDelay: "1.2s" }} />
-          </>
-        )}
-        <Button
-          onClick={isRecording ? stop : start}
-          disabled={!isSupported || isTranscribing}
-          aria-label={isRecording ? "停止录音" : "开始录音"}
-          size="icon"
-          className={cn(
-            "relative h-20 w-20 rounded-full",
-            status === "recording" && "bg-destructive hover:bg-destructive/90 shadow-md shadow-destructive/30",
-            status === "transcribing" && "bg-primary animate-pulse shadow-md shadow-primary/30",
-            status === "success" && "bg-primary shadow-md shadow-primary/30",
-            status === "idle" && "bg-primary hover:bg-primary/90 shadow-md shadow-primary/30"
-          )}
-        >
-          {isRecording ? <Square className="h-8 w-8" /> : <Mic className="h-8 w-8" />}
-        </Button>
-      </div>
-
-      <Button
-        onClick={onHangUp}
-        variant="destructive"
-        className="flex items-center gap-2 rounded-full"
-        aria-label="挂断电话模式"
-      >
-        <PhoneOff className="h-4 w-4" />
-        挂断
-      </Button>
+      </section>
     </div>
   );
 }

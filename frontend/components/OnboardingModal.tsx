@@ -110,13 +110,15 @@ export function OnboardingModal() {
 
   return (
     <Dialog open={isOpen} onOpenChange={setOnboardingOpen}>
-      <DialogContent className="max-w-[560px]">
+      <DialogContent className="onboarding-cosmos w-[calc(100%-2rem)] max-w-[580px] p-5 sm:rounded-2xl sm:p-7">
         <div className="flex items-center gap-2 mb-4">
           {STEPS.map((s, i) => (
             <div
               key={s}
               className={`h-1 flex-1 rounded-full transition-all duration-300 ${
-                i <= stepIndex ? "bg-primary" : "bg-muted"
+                i <= stepIndex
+                  ? "bg-gradient-to-r from-cyan-300 via-sky-400 to-indigo-400 shadow-[0_0_12px_rgba(34,211,238,0.38)]"
+                  : "bg-white/10"
               }`}
             />
           ))}
@@ -124,8 +126,11 @@ export function OnboardingModal() {
 
         {step === "welcome" && (
           <div className="text-center">
-            <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center">
-              <Brain className="h-8 w-8 text-white" />
+            <p className="mb-4 text-[10px] font-semibold tracking-[0.24em] text-cyan-200/55">
+              SYSTEM INITIALIZATION / 01
+            </p>
+            <div className="w-16 h-16 mx-auto mb-6 rounded-2xl border border-cyan-200/25 bg-gradient-to-br from-cyan-300/25 via-sky-500/20 to-indigo-500/25 flex items-center justify-center shadow-[0_18px_42px_rgba(14,165,233,0.2),inset_0_1px_rgba(255,255,255,0.16)]">
+              <Brain className="h-8 w-8 text-cyan-100" />
             </div>
             <DialogTitle className="text-2xl font-bold mb-3">
               欢迎使用产品脑暴工作台
@@ -134,7 +139,7 @@ export function OnboardingModal() {
               四位 AI 专家将围绕你的产品想法展开多维度深度讨论，
               AI 面试官帮你压力测试，可视化功能树梳理思路。
             </DialogDescription>
-            <p className="text-primary text-sm leading-relaxed mb-8 max-w-md mx-auto">
+            <p className="text-cyan-200 text-sm leading-relaxed mb-8 max-w-md mx-auto">
               使用本产品需要配置 LLM API。你可以使用自己的 Key，也可以使用平台额度。
             </p>
             <Button variant="gradient" size="lg" onClick={() => setStep("choose")}>
@@ -154,34 +159,34 @@ export function OnboardingModal() {
             <div className="grid grid-cols-2 gap-4 mt-6 mb-6">
               <button
                 onClick={handleChooseByok}
-                className="group p-5 bg-card border border-border rounded-xl text-left hover:border-primary/50 hover:bg-accent transition-all"
+                className="onboarding-choice group p-5 rounded-xl text-left transition-all duration-200"
               >
-                <div className="w-10 h-10 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center mb-3">
-                  <Key className="h-5 w-5 text-emerald-600" />
+                <div className="w-10 h-10 rounded-lg bg-cyan-300/10 border border-cyan-200/20 flex items-center justify-center mb-3 shadow-inner">
+                  <Key className="h-5 w-5 text-cyan-200" />
                 </div>
                 <div className="text-sm font-semibold mb-1">自带 API Key</div>
                 <div className="text-xs text-muted-foreground leading-relaxed">
                   填写你自己的 OpenAI 兼容 Key，所有请求走你的额度
                 </div>
-                <div className="mt-3 inline-flex items-center gap-1 text-xs text-emerald-600">
-                  <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
+                <div className="mt-3 inline-flex items-center gap-1 text-xs text-cyan-200">
+                  <span className="w-1.5 h-1.5 bg-cyan-300 rounded-full shadow-[0_0_8px_rgba(103,232,249,0.7)]" />
                   无限使用
                 </div>
               </button>
 
               <button
                 onClick={handleChoosePlatform}
-                className="group p-5 bg-card border border-border rounded-xl text-left hover:border-orange-300 hover:bg-orange-50 transition-all"
+                className="onboarding-choice group p-5 rounded-xl text-left transition-all duration-200"
               >
-                <div className="w-10 h-10 rounded-lg bg-orange-50 border border-orange-200 flex items-center justify-center mb-3">
-                  <Coins className="h-5 w-5 text-orange-600" />
+                <div className="w-10 h-10 rounded-lg bg-indigo-300/10 border border-indigo-200/20 flex items-center justify-center mb-3 shadow-inner">
+                  <Coins className="h-5 w-5 text-indigo-200" />
                 </div>
                 <div className="text-sm font-semibold mb-1">使用平台额度</div>
                 <div className="text-xs text-muted-foreground leading-relaxed">
                   新用户赠送 10 万 tokens 免费额度
                 </div>
-                <div className="mt-3 inline-flex items-center gap-1 text-xs text-orange-600">
-                  <span className="w-1.5 h-1.5 bg-orange-500 rounded-full" />
+                <div className="mt-3 inline-flex items-center gap-1 text-xs text-indigo-200">
+                  <span className="w-1.5 h-1.5 bg-indigo-300 rounded-full shadow-[0_0_8px_rgba(165,180,252,0.65)]" />
                   赠送 10 万 tokens
                 </div>
               </button>
@@ -271,8 +276,8 @@ export function OnboardingModal() {
 
         {step === "done" && (
           <div className="text-center">
-            <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center">
-              <Check className="h-8 w-8 text-white" />
+            <div className="w-16 h-16 mx-auto mb-6 rounded-2xl border border-emerald-200/25 bg-gradient-to-br from-emerald-300/25 via-cyan-400/20 to-sky-500/25 flex items-center justify-center shadow-[0_18px_42px_rgba(16,185,129,0.18),inset_0_1px_rgba(255,255,255,0.16)]">
+              <Check className="h-8 w-8 text-emerald-100" />
             </div>
             <DialogTitle className="text-xl font-bold mb-3">
               {mode === "byok"

@@ -39,7 +39,7 @@ export function ChatPanel() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="h-12 bg-background border-b border-border flex items-center px-4 shrink-0 relative">
+      <div className="h-14 bg-background/75 backdrop-blur-xl border-b border-border flex items-center px-4 shrink-0 relative">
         <div className={cn("absolute left-0 top-0 bottom-0 w-[3px]", accentColor)} />
         <span className="text-sm font-semibold text-foreground pl-1">
           {phase === "interview" ? "AI 面试官" : phase === "coach" ? "产品教练 · 思路梳理" : "产品脑暴群聊"}

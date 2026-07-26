@@ -10,6 +10,7 @@ import {
   ShieldCheck,
   Video,
 } from "lucide-react";
+import { CosmicBackground } from "@/components/CosmicBackground";
 
 const CAPABILITIES = [
   {
@@ -48,6 +49,7 @@ const STEPS = [
 export default function ProductPage() {
   return (
     <main id="main-content" className="product-cinema min-h-dvh overflow-hidden text-zinc-100">
+      <CosmicBackground density={82} />
       <header className="fixed inset-x-0 top-0 z-30 border-b border-white/10 bg-[#05080c]/90 px-5 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between">
           <Link href="/" className="flex items-center gap-3">
@@ -58,7 +60,7 @@ export default function ProductPage() {
           </Link>
           <Link
             href="/"
-            className="inline-flex h-10 items-center gap-2 rounded-lg bg-cyan-300 px-4 text-xs font-semibold text-[#031014] transition-colors hover:bg-cyan-200"
+            className="frost-action frost-action-primary inline-flex h-10 items-center gap-2 rounded-lg bg-cyan-300 px-4 text-xs font-semibold text-[#031014] transition-colors hover:bg-cyan-200"
           >
             开始使用
             <ArrowRight size={14} />
@@ -82,11 +84,11 @@ export default function ProductPage() {
               而是一间随时待命的产品作战室：负责澄清问题、制造观点冲突、沉淀结构，并审计你的方案。
             </p>
             <div className="mt-9 flex flex-wrap gap-3">
-              <Link href="/" className="inline-flex h-12 items-center gap-2 rounded-lg bg-cyan-300 px-6 text-sm font-semibold text-[#031014] hover:bg-cyan-200">
+              <Link href="/" className="frost-action frost-action-primary inline-flex h-12 items-center gap-2 rounded-lg bg-cyan-300 px-6 text-sm font-semibold text-[#031014] hover:bg-cyan-200">
                 进入决策空间
                 <ArrowRight size={15} />
               </Link>
-              <a href="#how-it-works" className="inline-flex h-12 items-center gap-2 rounded-lg border border-white/15 px-6 text-sm font-medium text-zinc-300 hover:border-white/30 hover:text-white">
+              <a href="#how-it-works" className="frost-action inline-flex h-12 items-center gap-2 rounded-lg border border-white/15 px-6 text-sm font-medium text-zinc-300 hover:border-white/30 hover:text-white">
                 <Play size={15} />
                 观看工作方式
               </a>
@@ -224,7 +226,7 @@ export default function ProductPage() {
           <p className="mx-auto mt-5 max-w-2xl text-pretty text-sm leading-7 text-zinc-500">
             用更低的成本暴露错误假设，用更清晰的证据推动组织共识。
           </p>
-          <Link href="/" className="mt-9 inline-flex h-12 items-center gap-2 rounded-lg bg-cyan-300 px-7 text-sm font-semibold text-[#031014] hover:bg-cyan-200">
+          <Link href="/" className="frost-action frost-action-primary mt-9 inline-flex h-12 items-center gap-2 rounded-lg bg-cyan-300 px-7 text-sm font-semibold text-[#031014] hover:bg-cyan-200">
             创建第一次产品推演
             <ArrowRight size={15} />
           </Link>

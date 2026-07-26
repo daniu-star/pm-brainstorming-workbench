@@ -108,8 +108,8 @@ export function InterviewView({
         onViewPrd={() => setShowPrd(true)}
       />
 
-      <ScrollArea className={cn("flex-1 bg-background", phoneMode && "hidden")}>
-        <div className="px-4 py-4">
+      <ScrollArea className={cn("interview-stage flex-1 bg-background", phoneMode && "hidden")}>
+        <div className="interview-transcript">
           {messages.length === 0 && !isStreaming && (
             <div className="flex items-center justify-center h-full min-h-[300px]">
               <div className="text-center">
@@ -119,8 +119,9 @@ export function InterviewView({
                     <AvatarFallback>AI</AvatarFallback>
                   </Avatar>
                 </div>
-                <p className="text-lg font-semibold text-slate-200 mb-1">准备开始面试</p>
-                <p className="text-sm text-slate-400">AI 压力面试官将对你进行深度提问</p>
+                <p className="text-[10px] tracking-[0.22em] text-cyan-200/45 mb-2">AUDIT CHANNEL READY</p>
+                <p className="text-lg font-semibold text-slate-100 mb-1">准备进入专业审计</p>
+                <p className="text-sm text-slate-400">六维审计框架将连续质询你的产品方案</p>
               </div>
             </div>
           )}

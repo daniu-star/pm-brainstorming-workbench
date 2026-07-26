@@ -22,6 +22,7 @@ import { HistoryDrawer } from "@/components/HistoryDrawer";
 import { SettingsModal } from "@/components/SettingsModal";
 import { RechargeModal } from "@/components/RechargeModal";
 import { OnboardingModal } from "@/components/OnboardingModal";
+import { CosmicBackground } from "@/components/CosmicBackground";
 import { useSessionStore } from "@/store/sessionStore";
 import { Button } from "@/components/ui/button";
 
@@ -112,6 +113,7 @@ export default function LandingPage() {
     <main id="main-content" className="landing-shell min-h-dvh overflow-hidden text-zinc-100">
       <div className="landing-grid" aria-hidden="true" />
       <div className="landing-vignette" aria-hidden="true" />
+      <CosmicBackground density={96} />
 
       <header className="fixed inset-x-0 top-0 z-30 border-b border-white/10 bg-[#06090e]/90 px-5 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between">
@@ -128,7 +130,7 @@ export default function LandingPage() {
           <div className="flex items-center gap-1.5">
             <Link
               href="/product"
-              className="hidden h-10 items-center gap-2 rounded-lg border border-white/10 px-4 text-xs font-medium text-zinc-300 transition-colors hover:border-cyan-300/30 hover:bg-cyan-300/5 hover:text-white sm:flex"
+              className="frost-action hidden h-10 items-center gap-2 rounded-lg border border-white/10 px-4 text-xs font-medium text-zinc-300 transition-colors hover:border-cyan-300/30 hover:bg-cyan-300/5 hover:text-white sm:flex"
             >
               <Play size={14} />
               产品全景
@@ -163,7 +165,7 @@ export default function LandingPage() {
             ) : (
               <Link
                 href="/login"
-                className="inline-flex h-10 items-center gap-2 rounded-lg border border-cyan-300/20 bg-cyan-300/10 px-4 text-xs font-semibold text-cyan-100 hover:bg-cyan-300/15"
+                className="frost-action inline-flex h-10 items-center gap-2 rounded-lg border border-cyan-300/20 bg-cyan-300/10 px-4 text-xs font-semibold text-cyan-100 hover:bg-cyan-300/15"
               >
                 <User size={14} />
                 登录
@@ -214,11 +216,11 @@ export default function LandingPage() {
             将直觉转化为可解释、可验证、可推进的产品方案。
           </p>
           <div className="mt-9 flex flex-wrap items-center gap-3">
-            <a href="#start" className="inline-flex h-12 items-center gap-2 rounded-lg bg-cyan-300 px-6 text-sm font-semibold text-[#031014] shadow-lg shadow-cyan-950/40 transition-transform hover:-translate-y-0.5">
+            <a href="#start" className="frost-action frost-action-primary inline-flex h-12 items-center gap-2 rounded-lg bg-cyan-300 px-6 text-sm font-semibold text-[#031014] shadow-lg shadow-cyan-950/40 transition-transform hover:-translate-y-0.5">
               启动产品推演
               <ArrowRight size={16} />
             </a>
-            <Link href="/product" className="inline-flex h-12 items-center gap-2 rounded-lg border border-white/15 bg-white/[0.03] px-6 text-sm font-medium text-zinc-200 hover:border-white/30 hover:bg-white/[0.06]">
+            <Link href="/product" className="frost-action inline-flex h-12 items-center gap-2 rounded-lg border border-white/15 bg-white/[0.03] px-6 text-sm font-medium text-zinc-200 hover:border-white/30 hover:bg-white/[0.06]">
               <Play size={16} />
               了解产品如何工作
             </Link>
@@ -282,7 +284,7 @@ export default function LandingPage() {
               />
               <div className="mt-3 flex flex-wrap gap-2">
                 {QUICK_STARTS.map((item) => (
-                  <button key={item} type="button" onClick={() => setProblem(item)} className="rounded-md border border-white/10 px-2.5 py-1.5 text-left text-[10px] text-zinc-500 hover:border-cyan-300/30 hover:text-cyan-100">
+                  <button key={item} type="button" onClick={() => setProblem(item)} className="frost-chip rounded-md border border-white/10 px-2.5 py-1.5 text-left text-[10px] text-zinc-500 hover:border-cyan-300/30 hover:text-cyan-100">
                     {item}
                   </button>
                 ))}
@@ -296,7 +298,7 @@ export default function LandingPage() {
                 type="button"
                 onClick={handleCreate}
                 disabled={!problem.trim() || isCreating}
-                className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-cyan-300 text-sm font-semibold text-[#031014] hover:bg-cyan-200 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-600"
+                className="frost-action frost-action-primary mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-cyan-300 text-sm font-semibold text-[#031014] hover:bg-cyan-200 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-600"
               >
                 {isCreating ? (
                   <><span className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent" />正在建立决策空间</>
