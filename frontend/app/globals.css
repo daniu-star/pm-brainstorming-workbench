@@ -587,6 +587,114 @@ body {
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
 }
 
+/* ===== 企业级首页与电影化产品介绍 ===== */
+.landing-shell,
+.product-cinema {
+  position: relative;
+  background:
+    radial-gradient(circle at 75% 18%, rgba(34, 211, 238, 0.12), transparent 27rem),
+    radial-gradient(circle at 18% 72%, rgba(59, 130, 246, 0.09), transparent 32rem),
+    #06090e;
+  color-scheme: dark;
+}
+
+.landing-grid {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(103, 232, 249, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(103, 232, 249, 0.035) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: linear-gradient(to bottom, black, transparent 86%);
+}
+
+.landing-vignette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle at center, transparent 40%, rgba(0, 0, 0, 0.62) 110%);
+}
+
+.command-panel,
+.film-frame {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: linear-gradient(145deg, rgba(15, 23, 34, 0.94), rgba(6, 11, 17, 0.96));
+  box-shadow: 0 40px 100px rgba(0, 0, 0, 0.45), inset 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.command-panel {
+  border-radius: 18px;
+}
+
+.command-scan {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: linear-gradient(180deg, transparent 0%, rgba(103, 232, 249, 0.07) 49%, transparent 51%);
+  background-size: 100% 220%;
+  animation: commandScan 7s linear infinite;
+  pointer-events: none;
+}
+
+.product-cinema::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.2;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.12'/%3E%3C/svg%3E");
+}
+
+.film-frame::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(110deg, transparent 15%, rgba(103, 232, 249, 0.08), transparent 42%);
+  transform: translateX(-120%);
+  animation: filmLight 8s ease-in-out infinite;
+}
+
+.film-rule {
+  height: 1px;
+  background: linear-gradient(90deg, rgba(103, 232, 249, 0.55), rgba(255, 255, 255, 0.08), transparent);
+}
+
+.cinema-reveal {
+  animation: cinemaReveal 0.9s cubic-bezier(.2,.75,.25,1) both;
+}
+
+.cinema-reveal:nth-child(2) {
+  animation-delay: 0.14s;
+}
+
+.landing-nav-tools button {
+  color: rgb(161 161 170);
+}
+
+.landing-nav-tools button:hover {
+  color: white;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+@keyframes commandScan {
+  from { background-position: 0 100%; }
+  to { background-position: 0 -100%; }
+}
+
+@keyframes filmLight {
+  0%, 55% { transform: translateX(-120%); }
+  80%, 100% { transform: translateX(140%); }
+}
+
+@keyframes cinemaReveal {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 /* Respect reduced motion preferences */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

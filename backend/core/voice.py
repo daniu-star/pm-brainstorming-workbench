@@ -34,19 +34,26 @@ async def transcribe_audio(
     client = AsyncOpenAI(
         api_key=effective_key,
         base_url=effective_base_url,
-        timeout=30.0,
+        timeout=settings.stt_timeout_seconds,
     )
 
-    ext = "wav" if "wav" in content_type else "webm"
+    extension_by_type = {
+        "audio/wav": "wav",
+        "audio/mp4": "mp4",
+        "audio/ogg": "ogg",
+        "audio/mpeg": "mp3",
+        "audio/webm": "webm",
+    }
+    ext = extension_by_type.get(content_type, "webm")
     filename = f"audio.{ext}"
 
     response = await client.audio.transcriptions.create(
-        model=model or "whisper-1",
+        model=model or settings.stt_model,
         file=(filename, audio_bytes, content_type),
     )
 
-    text = response.text or ""
-    logger.info(f"STT transcribed {len(audio_bytes)} bytes -> {len(text)} chars")
+    text = (response.text or "").strip()
+    logger.info("STT transcribed %s bytes -> %s chars", len(audio_bytes), len(text))
     return text
 
 
@@ -68,7 +75,14 @@ async def _call_hf_whisper(model: str, audio_bytes: bytes, content_type: str) ->
     import time
     import requests
 
-    ext = "wav" if "wav" in content_type else "webm"
+    extension_by_type = {
+        "audio/wav": "wav",
+        "audio/mp4": "mp4",
+        "audio/ogg": "ogg",
+        "audio/mpeg": "mp3",
+        "audio/webm": "webm",
+    }
+    ext = extension_by_type.get(content_type, "webm")
     filename = f"audio.{ext}"
 
     def _post():
@@ -97,7 +111,7 @@ async def _call_hf_whisper(model: str, audio_bytes: bytes, content_type: str) ->
 
     if response.status_code == 503:
         # 模型正在加载，等待后重试一次
-        logger.warning(f"HF model {model} loading (503), retrying after 5s...")
+        logger.warning("HF model %s loading (503), retrying after 5s...", model)
         await asyncio.sleep(5)
         response = await asyncio.to_thread(_post)
 
@@ -107,7 +121,7 @@ async def _call_hf_whisper(model: str, audio_bytes: bytes, content_type: str) ->
 
     result = response.json()
     text = result.get("text", "") if isinstance(result, dict) else str(result)
-    logger.info(f"HF STT ({model}) transcribed {len(audio_bytes)} bytes -> {len(text)} chars")
+    logger.info("HF STT (%s) transcribed %s bytes -> %s chars", model, len(audio_bytes), len(text))
     return text
 
 
@@ -128,10 +142,10 @@ async def transcribe_audio_hf(
             text = await _call_hf_whisper(m, audio_bytes, content_type)
             if text.strip():
                 return text
-            logger.warning(f"HF STT model {m} returned empty text, trying next...")
+            logger.warning("HF STT model %s returned empty text, trying next...", m)
         except Exception as e:
             last_error = e
-            logger.warning(f"HF STT model {m} failed: {e}, trying next model...")
+            logger.warning("HF STT model %s failed: %s, trying next model...", m, e)
 
     raise RuntimeError(f"所有 HF Whisper 模型均失败，最后错误: {last_error}")
 
@@ -158,5 +172,5 @@ async def synthesize_speech(text: str, voice: str | None = None, rate: str = "+0
     if not audio_bytes:
         raise RuntimeError("TTS 合成失败：未收到音频数据")
 
-    logger.info(f"TTS synthesized {len(audio_bytes)} bytes with voice '{voice}'")
+    logger.info("TTS synthesized %s bytes with voice '%s'", len(audio_bytes), voice)
     return audio_bytes

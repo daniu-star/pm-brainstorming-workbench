@@ -1,16 +1,21 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowRight,
-  Settings,
-  LogOut,
-  User,
-  Code,
-  Palette,
-  TrendingUp,
   Brain,
+  ChartNoAxesCombined,
+  Code2,
+  Layers3,
+  LogOut,
+  Palette,
+  Play,
+  Search,
+  Settings,
+  ShieldCheck,
+  User,
 } from "lucide-react";
 import { NavButtons } from "@/components/NavButtons";
 import { HistoryDrawer } from "@/components/HistoryDrawer";
@@ -19,56 +24,25 @@ import { RechargeModal } from "@/components/RechargeModal";
 import { OnboardingModal } from "@/components/OnboardingModal";
 import { useSessionStore } from "@/store/sessionStore";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 
-const PROMPT_TEMPLATES = [
-  "我想做一个帮助忙碌父母进行 5 分钟家庭健身的 App",
-  "优化现有产品的用户留存率，提高日活",
-  "设计一个面向 Z 世代的社交学习平台",
-  "构建企业级项目管理工具，替代 Jira",
+const QUICK_STARTS = [
+  "为企业知识库设计一套 AI 搜索与决策系统",
+  "重新设计 SaaS 产品的激活与留存路径",
+  "验证一款面向产品经理的 AI 工作台",
 ];
 
-const ROLES_DATA = [
-  {
-    name: "CTO",
-    color: "#3b82f6",
-    bg: "#eff6ff",
-    border: "#bfdbfe",
-    desc: "技术可行性",
-    icon: <Code size={20} />,
-  },
-  {
-    name: "设计师",
-    color: "#a855f7",
-    bg: "#faf5ff",
-    border: "#e9d5ff",
-    desc: "用户体验",
-    icon: <Palette size={20} />,
-  },
-  {
-    name: "运营",
-    color: "#22c55e",
-    bg: "#f0fdf4",
-    border: "#bbf7d0",
-    desc: "增长策略",
-    icon: <TrendingUp size={20} />,
-  },
-  {
-    name: "用户",
-    color: "#f97316",
-    bg: "#fff7ed",
-    border: "#fed7aa",
-    desc: "真实需求",
-    icon: <User size={20} />,
-  },
+const EXPERTS = [
+  { name: "CTO", caption: "技术与可行性", color: "text-sky-300", icon: Code2 },
+  { name: "产品设计", caption: "体验与认知", color: "text-cyan-300", icon: Palette },
+  { name: "商业运营", caption: "市场与增长", color: "text-emerald-300", icon: ChartNoAxesCombined },
+  { name: "目标用户", caption: "需求与采用", color: "text-amber-300", icon: User },
 ];
 
-const FEATURES = [
-  { label: "多角色圆桌", sub: "4位专家讨论", dot: "bg-amber-400" },
-  { label: "可视化画布", sub: "功能树提取", dot: "bg-purple-400" },
-  { label: "压力测试", sub: "AI面试官", dot: "bg-emerald-400" },
+const WORKFLOW = [
+  { index: "01", title: "定义问题", body: "产品教练用关键追问校准用户、场景、替代方案与成功标准。" },
+  { index: "02", title: "多角色推演", body: "四位 AI 专家从技术、体验、商业与真实用户视角进行交叉质询。" },
+  { index: "03", title: "结构化沉淀", body: "把对话实时转化为功能、风险、洞察与待验证假设。" },
+  { index: "04", title: "专业审计", body: "进入 AI 审计专业通话，在六个维度上压力测试产品方案。" },
 ];
 
 export default function LandingPage() {
@@ -88,12 +62,11 @@ export default function LandingPage() {
   const userNickname = useSessionStore((s) => s.userNickname);
   const storeLogout = useSessionStore((s) => s.logout);
 
-  const isByok = !!userApiKey;
-  const remaining = tokenQuota - tokensUsed;
-  const needsConfig = !isByok && remaining <= 0;
-  const showLoginEntry = !storeIsLoggedIn;
+  const needsConfig = !userApiKey && tokenQuota - tokensUsed <= 0;
 
-  useEffect(() => { setMounted(true); }, []);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (mounted && !storeIsLoggedIn) {
@@ -109,7 +82,7 @@ export default function LandingPage() {
   }, [hasCompletedOnboarding, setOnboardingOpen]);
 
   const handleCreate = async () => {
-    if (!problem.trim()) return;
+    if (!problem.trim() || isCreating) return;
     setIsCreating(true);
     setError(null);
     try {
@@ -120,70 +93,67 @@ export default function LandingPage() {
       }
     } catch (err) {
       setIsCreating(false);
-      const msg = err instanceof Error ? err.message : "创建会话失败";
-      if (msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.includes("无法连接")) {
-        setError("无法连接到服务器，请检查网络或稍后重试");
-      } else {
-        setError(msg);
-      }
+      const message = err instanceof Error ? err.message : "创建会话失败";
+      setError(
+        message.includes("Failed to fetch") || message.includes("NetworkError") || message.includes("无法连接")
+          ? "无法连接到服务器，请检查网络或稍后重试"
+          : message,
+      );
     }
   };
 
   return (
-    <div className="min-h-screen relative overflow-hidden bg-background">
-      <div className="landing-blobs" />
-      <div className="landing-dots" />
+    <main id="main-content" className="landing-shell min-h-dvh overflow-hidden text-zinc-100">
+      <div className="landing-grid" aria-hidden="true" />
+      <div className="landing-vignette" aria-hidden="true" />
 
-      <nav
-        className={`fixed top-0 left-0 right-0 h-14 bg-background/80 backdrop-blur border-b border-border flex items-center justify-between px-6 z-30 transition-all duration-500 ${mounted ? "opacity-100" : "opacity-0"}`}
-      >
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center shadow-md">
-            <Brain className="h-[18px] w-[18px] text-primary-foreground" strokeWidth={2.5} />
-          </div>
-          <div>
-            <span className="text-sm font-bold text-foreground tracking-wide">PM Brainstorm</span>
-            <span className="text-xs text-primary ml-2 font-bold">Workbench</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-1">
-          {storeIsLoggedIn ? (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-primary font-semibold max-w-[80px] truncate">{userNickname || "已登录"}</span>
-              <Button
-                onClick={storeLogout}
-                variant="ghost"
-                size="icon"
-                className="h-9 w-9 text-primary hover:text-foreground"
-                aria-label="退出登录"
-              >
-                <LogOut className="h-[15px] w-[15px]" />
-              </Button>
-            </div>
-          ) : showLoginEntry ? (
-            <Button
-              onClick={() => router.push("/login")}
-              variant="outline"
-              size="sm"
-              className="gap-1.5 text-primary"
-              aria-label="登录"
+      <header className="fixed inset-x-0 top-0 z-30 border-b border-white/10 bg-[#06090e]/90 px-5 backdrop-blur-xl">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between">
+          <Link href="/" className="flex items-center gap-3" aria-label="PM Brainstorm 首页">
+            <span className="flex size-9 items-center justify-center rounded-lg border border-cyan-300/30 bg-cyan-300/10 text-cyan-200">
+              <Brain size={18} />
+            </span>
+            <span>
+              <span className="block text-sm font-semibold text-white">PM Brainstorm</span>
+              <span className="block text-[10px] uppercase text-cyan-200/60">Decision Intelligence</span>
+            </span>
+          </Link>
+
+          <div className="flex items-center gap-1.5">
+            <Link
+              href="/product"
+              className="hidden h-10 items-center gap-2 rounded-lg border border-white/10 px-4 text-xs font-medium text-zinc-300 transition-colors hover:border-cyan-300/30 hover:bg-cyan-300/5 hover:text-white sm:flex"
             >
-              <User className="h-[14px] w-[14px]" />
-              登录
+              <Play size={14} />
+              产品全景
+            </Link>
+            <span className="hidden max-w-[100px] truncate text-xs font-semibold text-cyan-100 md:inline">
+              {userNickname || "已登录"}
+            </span>
+            <Button
+              onClick={storeLogout}
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 text-zinc-400 hover:bg-white/10 hover:text-white"
+              aria-label="退出登录"
+            >
+              <LogOut size={15} />
             </Button>
-          ) : null}
-          <Button
-            onClick={() => setSettingsOpen(true)}
-            variant="ghost"
-            size="icon"
-            className="h-9 w-9 text-primary hover:text-foreground"
-            aria-label="API 设置"
-          >
-            <Settings className="h-[15px] w-[15px]" />
-          </Button>
-          <NavButtons currentPage="landing" sessionId={null} onToggleHistory={toggleHistory} />
+            <Button
+              onClick={() => setSettingsOpen(true)}
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 text-zinc-400 hover:bg-white/10 hover:text-white"
+              aria-label="API 设置"
+            >
+              <Settings size={15} />
+            </Button>
+            <div className="landing-nav-tools">
+              <NavButtons currentPage="landing" sessionId={null} onToggleHistory={toggleHistory} />
+            </div>
+          </div>
         </div>
-      </nav>
+      </header>
 
       <HistoryDrawer isOpen={isHistoryOpen} onClose={toggleHistory} />
       <SettingsModal />
@@ -191,141 +161,179 @@ export default function LandingPage() {
       <OnboardingModal />
 
       {hasCompletedOnboarding && needsConfig && (
-        <div className="fixed top-14 left-0 right-0 z-20 bg-primary/10 border-b border-border">
-          <div className="max-w-4xl mx-auto px-4 py-2 flex items-center justify-center gap-3">
-            <span className="text-xs text-primary">额度已用尽，请配置 API Key 或充值</span>
-            <Button onClick={() => setSettingsOpen(true)} variant="outline" size="sm" className="text-xs h-7 px-2.5">
+        <div className="fixed left-0 right-0 top-16 z-20 border-b border-amber-300/20 bg-amber-300/10 backdrop-blur-xl">
+          <div className="mx-auto flex max-w-4xl items-center justify-center gap-3 px-4 py-2">
+            <span className="text-xs text-amber-100">额度已用尽，请配置 API Key 或充值</span>
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              className="rounded-md border border-amber-200/20 px-2.5 py-1 text-xs font-semibold text-amber-100 hover:bg-amber-200/10"
+            >
               配置
-            </Button>
+            </button>
           </div>
         </div>
       )}
 
-      <div id="main-content" className="flex flex-col items-center justify-center px-5 min-h-screen relative z-10 pt-14">
-        <div className="max-w-lg w-full text-center">
-
-          <div className={`mb-8 transition-all duration-500 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-5"}`}>
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-card border border-border shadow-sm mb-6">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-              </span>
-              <span className="text-[11px] text-primary font-bold tracking-wide">AI 驱动的产品脑暴工作台</span>
-            </div>
-
-            <h1 className="text-4xl md:text-5xl font-extrabold leading-[1.25] tracking-tight mb-3">
-              <span className="text-primary">
-                PM Brainstorm
-              </span>
-              <br />
-              <span className="text-foreground text-xl md:text-2xl font-semibold tracking-wide">Workbench</span>
-            </h1>
-
-            <p className="text-foreground text-sm md:text-[15px] leading-relaxed max-w-sm mx-auto font-medium">
-              四位 AI 专家围绕你的产品想法
-              <br />
-              进行多维度深度讨论与压力测试
-            </p>
+      <section className="relative z-10 mx-auto grid min-h-dvh max-w-7xl items-center gap-14 px-5 pb-20 pt-28 lg:grid-cols-[1.08fr_0.92fr] lg:px-8">
+        <div className={`max-w-3xl transition-all duration-700 ${mounted ? "translate-y-0 opacity-100" : "translate-y-5 opacity-0"}`}>
+          <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/5 px-3 py-1.5 text-[11px] font-medium text-cyan-100">
+            <span className="relative flex size-2">
+              <span className="absolute inline-flex size-2 animate-ping rounded-full bg-cyan-300 opacity-50" />
+              <span className="relative inline-flex size-2 rounded-full bg-cyan-300" />
+            </span>
+            面向产品经理的 AI 决策推演系统
           </div>
+          <p className="mb-4 text-xs font-semibold uppercase text-cyan-200/70">Product Decision Intelligence / 01</p>
+          <h1 className="max-w-3xl text-balance text-5xl font-semibold leading-[1.05] text-white md:text-7xl">
+            让每一个产品决策，
+            <span className="mt-2 block bg-gradient-to-r from-cyan-200 to-sky-400 bg-clip-text text-transparent">
+              在上线之前经得住审计。
+            </span>
+          </h1>
+          <p className="mt-7 max-w-2xl text-pretty text-base leading-8 text-zinc-400 md:text-lg">
+            把模糊想法交给四位 AI 专家交叉推演，再通过可视化画布与专业审计通话，
+            将直觉转化为可解释、可验证、可推进的产品方案。
+          </p>
+          <div className="mt-9 flex flex-wrap items-center gap-3">
+            <a href="#start" className="inline-flex h-12 items-center gap-2 rounded-lg bg-cyan-300 px-6 text-sm font-semibold text-[#031014] shadow-lg shadow-cyan-950/40 transition-transform hover:-translate-y-0.5">
+              启动产品推演
+              <ArrowRight size={16} />
+            </a>
+            <Link href="/product" className="inline-flex h-12 items-center gap-2 rounded-lg border border-white/15 bg-white/[0.03] px-6 text-sm font-medium text-zinc-200 hover:border-white/30 hover:bg-white/[0.06]">
+              <Play size={16} />
+              了解产品如何工作
+            </Link>
+          </div>
+          <dl className="mt-12 grid max-w-2xl grid-cols-3 divide-x divide-white/10 border-y border-white/10 py-5">
+            {[["04", "AI 专家角色"], ["06", "专业审计维度"], ["LIVE", "实时结构化画布"]].map(([value, label]) => (
+              <div key={label} className="px-4 first:pl-0">
+                <dt className="text-[10px] uppercase text-zinc-500">{label}</dt>
+                <dd className="mt-1 font-mono text-xl font-semibold text-cyan-200 tabular-nums">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
 
-          <div className={`mb-6 transition-all duration-500 delay-100 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-5"}`}>
-            <div className="flex justify-center gap-3" role="group" aria-label="AI 专家角色">
-              {ROLES_DATA.map((role) => (
-                <div key={role.name} className="flex flex-col items-center gap-1.5 group cursor-default">
-                  <div
-                    className="w-11 h-11 rounded-xl flex items-center justify-center transition-all duration-300 group-hover:scale-110 group-hover:shadow-md"
-                    style={{
-                      background: role.bg,
-                      border: `1.5px solid ${role.border}`,
-                      color: role.color,
-                    }}
-                  >
-                    {role.icon}
+        <div id="start" className={`command-panel scroll-mt-24 transition-all delay-150 duration-700 ${mounted ? "translate-y-0 opacity-100" : "translate-y-5 opacity-0"}`}>
+          <div className="command-scan" aria-hidden="true" />
+          <div className="relative z-10">
+            <div className="flex items-start justify-between border-b border-white/10 px-5 py-4">
+              <div>
+                <p className="text-[10px] font-semibold uppercase text-cyan-200/60">Decision Room</p>
+                <h2 className="mt-1 text-base font-semibold text-white">创建一次产品推演</h2>
+              </div>
+              <span className="inline-flex items-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-300/5 px-2.5 py-1 text-[10px] text-emerald-200">
+                <span className="size-1.5 rounded-full bg-emerald-300" />
+                系统就绪
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-px border-b border-white/10 bg-white/10">
+              {EXPERTS.map((expert) => {
+                const Icon = expert.icon;
+                return (
+                  <div key={expert.name} className="flex items-center gap-3 bg-[#0b1119] px-4 py-3.5">
+                    <span className={`flex size-9 items-center justify-center rounded-lg bg-white/[0.04] ${expert.color}`}>
+                      <Icon size={17} />
+                    </span>
+                    <span>
+                      <span className="block text-xs font-semibold text-zinc-100">{expert.name}</span>
+                      <span className="block text-[10px] text-zinc-500">{expert.caption}</span>
+                    </span>
                   </div>
-                  <span className="text-[11px] text-foreground font-bold">{role.name}</span>
-                </div>
-              ))}
+                );
+              })}
             </div>
-          </div>
-
-          <div className={`transition-all duration-500 delay-100 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-5"}`}>
-            <Card className="border-border p-5 rounded-2xl shadow-md">
-              <label className="block text-xs text-foreground mb-3 text-left font-semibold">
-                你想探索什么产品方向？
+            <div className="p-5">
+              <label htmlFor="product-direction" className="mb-3 block text-xs font-medium text-zinc-300">
+                描述你正在思考的产品问题
               </label>
-              <Textarea
+              <textarea
+                id="product-direction"
                 value={problem}
-                onChange={(e) => setProblem(e.target.value)}
-                placeholder="例如：我想做一个帮助忙碌父母进行 5 分钟家庭健身的 App..."
-                rows={3}
-                aria-label="输入你想探索的产品方向"
-                className="resize-none text-sm leading-relaxed font-medium"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
+                onChange={(event) => setProblem(event.target.value)}
+                placeholder="例如：我们需要重新设计企业 SaaS 的新用户激活路径，但不确定流失发生在哪个关键环节……"
+                rows={5}
+                className="w-full resize-none rounded-xl border border-white/10 bg-black/20 px-4 py-3.5 text-sm leading-6 text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-cyan-300/50 focus:ring-2 focus:ring-cyan-300/10"
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
                     handleCreate();
                   }
                 }}
               />
-              {!problem.trim() && (
-                <div className="mt-2.5 flex flex-wrap gap-1.5">
-                  {PROMPT_TEMPLATES.map((tpl) => (
-                    <Button
-                      key={tpl}
-                      variant="outline"
-                      size="sm"
-                      onMouseDown={() => setProblem(tpl)}
-                      className="text-xs h-auto py-1.5 px-2.5 leading-snug text-left whitespace-normal"
-                    >
-                      {tpl}
-                    </Button>
-                  ))}
-                </div>
-              )}
+              <div className="mt-3 flex flex-wrap gap-2">
+                {QUICK_STARTS.map((item) => (
+                  <button key={item} type="button" onClick={() => setProblem(item)} className="rounded-md border border-white/10 px-2.5 py-1.5 text-left text-[10px] text-zinc-500 hover:border-cyan-300/30 hover:text-cyan-100">
+                    {item}
+                  </button>
+                ))}
+              </div>
               {error && (
-                <div role="alert" className="mt-2.5 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-red-600 text-xs font-medium">
+                <p role="alert" className="mt-4 rounded-lg border border-red-400/20 bg-red-400/5 px-3 py-2 text-xs text-red-300">
                   {error}
-                </div>
+                </p>
               )}
-              <Button
+              <button
+                type="button"
                 onClick={handleCreate}
                 disabled={!problem.trim() || isCreating}
-                size="lg"
-                aria-label="开始脑暴"
-                className="mt-4 w-full h-11 font-semibold rounded-xl shadow-md disabled:shadow-none"
+                className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-cyan-300 text-sm font-semibold text-[#031014] hover:bg-cyan-200 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-600"
               >
                 {isCreating ? (
-                  <>
-                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    创建中...
-                  </>
+                  <><span className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent" />正在建立决策空间</>
                 ) : (
-                  <>
-                    开始脑暴
-                    <ArrowRight size={15} />
-                  </>
+                  <>开始脑暴与审计<ArrowRight size={16} /></>
                 )}
-              </Button>
-            </Card>
-          </div>
-
-          <div className={`mt-8 transition-all duration-500 delay-200 ${mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-5"}`}>
-            <div className="flex flex-wrap justify-center gap-2">
-              {FEATURES.map((f) => (
-                <Badge key={f.label} variant="secondary" className="gap-1.5 px-3 py-1.5 text-xs">
-                  <span className={`w-2 h-2 rounded-full ${f.dot}`} />
-                  <span className="font-bold">{f.label}</span>
-                  <span className="text-muted-foreground font-normal">{f.sub}</span>
-                </Badge>
-              ))}
+              </button>
             </div>
           </div>
+        </div>
+      </section>
 
-          <div className={`mt-10 text-xs text-muted-foreground font-medium transition-all duration-500 delay-200 ${mounted ? "opacity-100" : "opacity-0"}`}>
-            Powered by AI · OpenAI Compatible · BYOK Supported
+      <section className="relative z-10 border-y border-white/10 bg-[#080d14]/90 px-5 py-20 lg:px-8">
+        <div className="mx-auto max-w-7xl">
+          <div className="flex flex-col justify-between gap-6 md:flex-row md:items-end">
+            <div>
+              <p className="text-xs font-semibold uppercase text-cyan-200/60">From ambiguity to evidence</p>
+              <h2 className="mt-3 max-w-2xl text-balance text-3xl font-semibold text-white md:text-4xl">
+                一条为产品经理设计的决策流水线
+              </h2>
+            </div>
+            <Link href="/product" className="inline-flex items-center gap-2 text-sm font-medium text-cyan-200 hover:text-cyan-100">
+              查看完整产品介绍<ArrowRight size={15} />
+            </Link>
+          </div>
+          <div className="mt-10 grid gap-px overflow-hidden rounded-xl border border-white/10 bg-white/10 md:grid-cols-4">
+            {WORKFLOW.map((item) => (
+              <article key={item.index} className="group bg-[#0a1018] p-6 transition-colors hover:bg-[#0d1620]">
+                <span className="font-mono text-xs text-cyan-200/50 tabular-nums">{item.index}</span>
+                <h3 className="mt-8 text-lg font-semibold text-white">{item.title}</h3>
+                <p className="mt-3 text-pretty text-sm leading-6 text-zinc-500">{item.body}</p>
+              </article>
+            ))}
+          </div>
+          <div className="mt-10 grid gap-4 md:grid-cols-3">
+            {[
+              { icon: Layers3, title: "结构化，不止是聊天", body: "功能、风险、问题和洞察持续沉淀到同一张产品画布。" },
+              { icon: ShieldCheck, title: "审计式压力测试", body: "六维问题框架主动寻找方案中的盲区、依赖与不可证伪假设。" },
+              { icon: Search, title: "为决策保留证据", body: "每一个结论都能回到提出它的角色和上下文，减少拍脑袋决策。" },
+            ].map((item) => {
+              const Icon = item.icon;
+              return (
+                <article key={item.title} className="rounded-xl border border-white/10 bg-white/[0.02] p-5">
+                  <Icon size={19} className="text-cyan-200" />
+                  <h3 className="mt-5 text-sm font-semibold text-white">{item.title}</h3>
+                  <p className="mt-2 text-pretty text-xs leading-5 text-zinc-500">{item.body}</p>
+                </article>
+              );
+            })}
           </div>
         </div>
-      </div>
-    </div>
+      </section>
+      <footer className="relative z-10 px-5 py-8 text-center text-[11px] text-zinc-600">
+        PM Brainstorm · Product Decision Intelligence System
+      </footer>
+    </main>
   );
 }
