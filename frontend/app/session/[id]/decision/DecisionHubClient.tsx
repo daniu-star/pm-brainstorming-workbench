@@ -61,7 +61,7 @@ const EXPERIMENT_META: Record<ExperimentStatus, { label: string; className: stri
   invalidated: { label: "未成立", className: "border-rose-300/20 bg-rose-300/[0.08] text-rose-100" },
 };
 
-const EMPTY_HUB: DecisionHub = { evidence: [], initiatives: [], experiments: [], updated_at: "" };
+const EMPTY_HUB: DecisionHub = { evidence: [], initiatives: [], experiments: [], roadmap_items: [], prd_versions: [], updated_at: "" };
 
 function getSessionId(params: ReturnType<typeof useParams>) {
   const value = params?.id;
@@ -188,6 +188,8 @@ export default function DecisionHubClient() {
             </div>
           </div>
           <div className="hidden items-center gap-2 text-xs text-slate-400 md:flex">
+            <Link href={`/session/${sessionId}/roadmap`} className="decision-nav-link">产品路线图</Link>
+            <Link href={`/session/${sessionId}/prd`} className="decision-nav-link">PRD 中心</Link>
             <ShieldCheck className="h-4 w-4 text-emerald-300" />
             结论均可追溯至证据与实验
           </div>
