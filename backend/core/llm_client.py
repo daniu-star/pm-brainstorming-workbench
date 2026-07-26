@@ -47,7 +47,7 @@ def _get_default_client():
 
 
 PROVIDER_MAP = {
-    "deepseek": {"base_url": "https://api.deepseek.com/v1", "model": "deepseek-v4-flash"},
+    "deepseek": {"base_url": "https://api.deepseek.com/v1", "model": "deepseek-chat"},
     "openai": {"base_url": "https://api.openai.com/v1", "model": "gpt-4o"},
     "anthropic": {"base_url": "https://api.anthropic.com/v1", "model": "claude-3-sonnet-20240229"},
     "moonshot": {"base_url": "https://api.moonshot.cn/v1", "model": "moonshot-v1-8k"},
