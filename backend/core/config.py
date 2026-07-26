@@ -28,6 +28,10 @@ class Settings:
     session_data_dir: str = os.getenv("SESSION_DATA_DIR", "./data/sessions")
     user_data_dir: str = os.getenv("USER_DATA_DIR", "./data/users")
     initial_quota: int = int(os.getenv("INITIAL_QUOTA", "100000"))
+    guest_initial_quota: int = max(
+        1000,
+        min(50000, int(os.getenv("GUEST_INITIAL_QUOTA", "20000"))),
+    )
     allow_anonymous_tokens: bool = os.getenv(
         "ALLOW_ANONYMOUS_TOKENS", "false"
     ).lower() in ("1", "true", "yes")

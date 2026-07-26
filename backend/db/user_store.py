@@ -116,16 +116,22 @@ class UserStore:
         self._save_index(QQ_INDEX_FILE, self._qq_index)
         return user
 
-    def get_or_create_user(self, user_token: str) -> dict:
+    def get_or_create_user(
+        self,
+        user_token: str,
+        nickname: str = "",
+        token_quota: int | None = None,
+    ) -> dict:
         user = self._load(user_token)
         if user is not None:
             return user
         user = {
             "user_token": user_token,
+            "nickname": nickname,
             "api_key": "",
             "base_url": "",
             "model": "",
-            "token_quota": INITIAL_QUOTA,
+            "token_quota": token_quota if token_quota is not None else INITIAL_QUOTA,
             "tokens_used": 0,
             "created_at": datetime.now().isoformat(),
         }

@@ -3,7 +3,7 @@ import type { Message, Role, DiscussionMap, SessionSummary, ProductPortrait, Pip
 import { PIPELINE_NODE_ORDER } from "@/lib/types";
 import { createSSEConnection, type SSEEvent, type SSEConnectionStatus } from "@/lib/sse";
 import { api } from "@/lib/api";
-import { saveApiKeyConfig, clearApiKeyConfig, getStoredApiKey, getStoredBaseUrl, getStoredModel, saveJwtToken, clearJwtToken, isLoggedIn as checkIsLoggedIn, getJwtToken } from "@/lib/user";
+import { saveApiKeyConfig, clearApiKeyConfig, getStoredApiKey, getStoredBaseUrl, getStoredModel, saveJwtToken, clearJwtToken, isLoggedIn as checkIsLoggedIn, getJwtToken, getUserToken } from "@/lib/user";
 import { toast } from "@/components/Toast";
 
 const ONBOARDING_KEY = "pm-brainstorm-onboarded";
@@ -70,6 +70,7 @@ interface SessionState {
   setOnboardingOpen: (open: boolean) => void;
   completeOnboarding: () => void;
   login: (phone: string, code: string) => Promise<void>;
+  guestLogin: () => Promise<void>;
   logout: () => void;
 
   createSession: (problem: string) => Promise<void>;
@@ -692,6 +693,20 @@ export const useSessionStore = create<SessionState>((set, get) => {
       });
       await get().fetchQuota();
       toast("success", "登录成功");
+    },
+
+    guestLogin: async () => {
+      const result = await api<{ token: string; user: { nickname?: string } }>("/api/auth/guest", {
+        method: "POST",
+        body: JSON.stringify({ installation_id: getUserToken() }),
+      });
+      saveJwtToken(result.token);
+      set({
+        isLoggedIn: true,
+        userNickname: result.user?.nickname || "体验用户",
+      });
+      await get().fetchQuota();
+      toast("success", "已进入安全体验模式");
     },
 
     logout: () => {

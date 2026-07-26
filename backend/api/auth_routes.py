@@ -1,9 +1,10 @@
 import re
+from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from core.auth import create_jwt_token, send_sms_code, verify_sms_code
+from core.auth import create_jwt_token, derive_guest_user_id, send_sms_code, verify_sms_code
 from db.user_store import user_store
 from core.config import settings
 
@@ -17,6 +18,28 @@ class SmsSendRequest(BaseModel):
 class SmsVerifyRequest(BaseModel):
     phone: str = Field(pattern=r"^1[3-9]\d{9}$")
     code: str = Field(pattern=r"^\d{6}$")
+
+
+class GuestLoginRequest(BaseModel):
+    installation_id: UUID
+
+
+@router.post("/guest")
+async def guest_login(req: GuestLoginRequest):
+    user_id = derive_guest_user_id(str(req.installation_id))
+    user = user_store.get_or_create_user(
+        user_id,
+        nickname="体验用户",
+        token_quota=settings.guest_initial_quota,
+    )
+    token = create_jwt_token(user["user_token"])
+    return {
+        "token": token,
+        "user": {
+            "nickname": user.get("nickname") or "体验用户",
+            "mode": "guest",
+        },
+    }
 
 
 @router.post("/sms/send")
