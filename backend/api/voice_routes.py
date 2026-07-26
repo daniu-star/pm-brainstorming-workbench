@@ -20,8 +20,8 @@ router = APIRouter(prefix="/api/voice", tags=["voice"])
 class TTSRequest(BaseModel):
     text: str = Field(min_length=1, max_length=settings.tts_max_characters)
     voice: str | None = Field(default=None, max_length=80)
-    rate: str = Field(default="+0%", max_length=12)
-    pitch: str = Field(default="+0%", max_length=12)
+    rate: str = Field(default="+0%", pattern=r"^[+-]\d+%$", max_length=12)
+    pitch: str = Field(default="+0Hz", pattern=r"^[+-]\d+Hz$", max_length=12)
 
 
 class InterviewerTTSRequest(BaseModel):
@@ -73,7 +73,7 @@ async def text_to_speech(
         )
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="语音合成超时，请缩短文本后重试")
-    except RuntimeError:
+    except (RuntimeError, ValueError):
         logger.exception("TTS synthesis failed")
         raise HTTPException(status_code=503, detail="语音合成服务暂不可用，请稍后重试")
     return Response(content=audio, media_type="audio/mpeg")
@@ -99,7 +99,7 @@ async def interviewer_text_to_speech(req: InterviewerTTSRequest, request: Reques
         )
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="语音合成超时，请缩短文本后重试")
-    except RuntimeError:
+    except (RuntimeError, ValueError):
         logger.exception("Interviewer TTS synthesis failed")
         raise HTTPException(status_code=503, detail="语音合成服务暂不可用，请稍后重试")
     return Response(content=audio, media_type="audio/mpeg")

@@ -16,7 +16,7 @@ DEFAULT_VOICE = "zh-CN-YunjianNeural"
 INTERVIEWER_VOICE_PROFILE = {
     "voice": "zh-CN-YunxiNeural",
     "rate": "-5%",
-    "pitch": "-2%",
+    "pitch": "-2Hz",
 }
 
 
@@ -76,6 +76,7 @@ async def _call_hf_whisper(model: str, audio_bytes: bytes, content_type: str) ->
         provider="hf-inference",
         api_key=HF_API_TOKEN,
         timeout=min(settings.stt_timeout_seconds, 30.0),
+        headers={"Content-Type": content_type},
     )
 
     def _transcribe():
@@ -112,7 +113,7 @@ async def transcribe_audio_hf(
     raise RuntimeError(f"所有 HF Whisper 模型均失败，最后错误: {last_error}")
 
 
-async def synthesize_speech(text: str, voice: str | None = None, rate: str = "+0%", pitch: str = "+0%") -> bytes:
+async def synthesize_speech(text: str, voice: str | None = None, rate: str = "+0%", pitch: str = "+0Hz") -> bytes:
     """TTS 合成，支持语速和音调参数"""
     voice = voice or DEFAULT_VOICE
 

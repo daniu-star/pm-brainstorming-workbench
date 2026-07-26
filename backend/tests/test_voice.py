@@ -1,8 +1,10 @@
 import asyncio
 
 import pytest
+from pydantic import ValidationError
 
 import core.voice as voice
+from api.voice_routes import TTSRequest
 
 
 def test_hf_stt_uses_inference_providers_client(monkeypatch):
@@ -34,6 +36,7 @@ def test_hf_stt_uses_inference_providers_client(monkeypatch):
     assert text == "这是一次语音测试"
     assert captured["client"]["provider"] == "hf-inference"
     assert captured["client"]["api_key"] == "test-token"
+    assert captured["client"]["headers"] == {"Content-Type": "audio/webm"}
     assert captured["audio"] == b"fake-audio"
     assert captured["model"] == "openai/whisper-large-v3-turbo"
 
@@ -73,3 +76,13 @@ def test_hf_stt_reports_all_provider_failures(monkeypatch):
 
     with pytest.raises(RuntimeError, match="所有 HF Whisper 模型均失败"):
         asyncio.run(voice.transcribe_audio_hf(b"fake-audio", "audio/webm"))
+
+
+def test_tts_pitch_uses_edge_tts_hertz_format():
+    request = TTSRequest(text="测试")
+
+    assert request.pitch == "+0Hz"
+    assert voice.INTERVIEWER_VOICE_PROFILE["pitch"] == "-2Hz"
+
+    with pytest.raises(ValidationError):
+        TTSRequest(text="测试", pitch="+0%")
