@@ -205,10 +205,10 @@ export default function LandingPage() {
             面向产品经理的 AI 决策推演系统
           </div>
           <p className="mb-4 text-xs font-semibold uppercase text-cyan-200/70">Product Decision Intelligence / 01</p>
-          <h1 className="max-w-3xl text-balance text-5xl font-semibold leading-[1.05] text-white md:text-7xl">
-            让每一个产品决策，
-            <span className="mt-2 block bg-gradient-to-r from-cyan-200 to-sky-400 bg-clip-text text-transparent">
-              在上线之前经得住审计。
+          <h1 className="max-w-3xl text-[clamp(3.6rem,7.5vw,6rem)] font-semibold leading-[0.96] tracking-[-0.055em] text-white">
+            <span className="block">产品脑暴</span>
+            <span className="mt-2 block bg-gradient-to-r from-cyan-200 via-sky-300 to-sky-400 bg-clip-text text-transparent">
+              工作台
             </span>
           </h1>
           <p className="mt-7 max-w-2xl text-pretty text-base leading-8 text-zinc-400 md:text-lg">
