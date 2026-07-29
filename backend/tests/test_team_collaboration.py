@@ -99,6 +99,8 @@ def test_smtp_ssl_delivery(monkeypatch):
     monkeypatch.setattr(email_service.settings, "smtp_password", "secret")
     monkeypatch.setattr(email_service.settings, "smtp_use_ssl", True)
     monkeypatch.setattr(email_service.settings, "smtp_use_tls", True)
+    monkeypatch.setattr(email_service.settings, "email_proxy_url", "")
+    monkeypatch.setattr(email_service.settings, "email_proxy_key", "")
     monkeypatch.setattr(email_service.smtplib, "SMTP_SSL", FakeSmtp)
 
     email_service.send_team_invitation(
@@ -109,3 +111,48 @@ def test_smtp_ssl_delivery(monkeypatch):
     )
 
     assert calls == {"started_tls": False, "sent": True, "logged_in": True}
+
+
+def test_email_proxy_is_preferred_when_configured(monkeypatch):
+    captured = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"success": True}
+
+    def fake_post(url, headers, json, timeout):
+        captured.update(
+            {
+                "url": url,
+                "has_key": bool(headers.get("X-API-Key")),
+                "recipient": json["to_email"],
+                "timeout": timeout,
+            }
+        )
+        return FakeResponse()
+
+    monkeypatch.setattr(email_service.settings, "smtp_host", "smtp.163.com")
+    monkeypatch.setattr(email_service.settings, "smtp_port", 465)
+    monkeypatch.setattr(email_service.settings, "smtp_username", "sender@example.com")
+    monkeypatch.setattr(email_service.settings, "smtp_password", "secret")
+    monkeypatch.setattr(email_service.settings, "smtp_from_email", "sender@example.com")
+    monkeypatch.setattr(email_service.settings, "email_proxy_url", "https://mail.example.com/api/team")
+    monkeypatch.setattr(email_service.settings, "email_proxy_key", "proxy-secret")
+    monkeypatch.setattr(email_service.requests, "post", fake_post)
+
+    email_service.send_team_invitation(
+        "pm@example.com",
+        "增长产品组",
+        "负责人",
+        "https://www.brainstorming.top/team/invite?token=test",
+    )
+
+    assert captured == {
+        "url": "https://mail.example.com/api/team",
+        "has_key": True,
+        "recipient": "pm@example.com",
+        "timeout": 25,
+    }

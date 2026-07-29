@@ -47,6 +47,8 @@ class Settings:
     smtp_from_name: str = os.getenv("SMTP_FROM_NAME", "产品脑暴工作台")
     smtp_use_tls: bool = os.getenv("SMTP_USE_TLS", "true").lower() in ("1", "true", "yes")
     smtp_use_ssl: bool = os.getenv("SMTP_USE_SSL", "false").lower() in ("1", "true", "yes")
+    email_proxy_url: str = os.getenv("VERCEL_EMAIL_PROXY_URL", "")
+    email_proxy_key: str = os.getenv("VERCEL_EMAIL_PROXY_KEY", "")
     frontend_base_url: str = os.getenv("FRONTEND_BASE_URL", "https://www.brainstorming.top").rstrip("/")
     team_invite_expiry_hours: int = max(
         1,
