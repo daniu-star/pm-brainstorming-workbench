@@ -16,6 +16,7 @@ import {
   Settings,
   ShieldCheck,
   User,
+  UsersRound,
 } from "lucide-react";
 import { NavButtons } from "@/components/NavButtons";
 import { HistoryDrawer } from "@/components/HistoryDrawer";
@@ -137,6 +138,13 @@ export default function LandingPage() {
             </Link>
             {storeIsLoggedIn ? (
               <>
+                <Link
+                  href="/team"
+                  className="frost-action hidden h-10 items-center gap-2 rounded-lg border border-white/10 px-4 text-xs font-medium text-zinc-300 transition-colors hover:border-cyan-300/30 hover:bg-cyan-300/5 hover:text-white md:flex"
+                >
+                  <UsersRound size={14} />
+                  团队账号
+                </Link>
                 <span className="hidden max-w-[100px] truncate text-xs font-semibold text-cyan-100 md:inline">
                   {userNickname || "已登录"}
                 </span>

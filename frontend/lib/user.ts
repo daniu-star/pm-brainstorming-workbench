@@ -80,6 +80,13 @@ export function handleExpiredSession(): void {
   }
 }
 
+export function rememberAuthReturnPath(path: string): void {
+  if (typeof window === "undefined") return;
+  if (path.startsWith("/") && !path.startsWith("//")) {
+    sessionStorage.setItem(AUTH_RETURN_PATH_KEY, path);
+  }
+}
+
 export function consumeAuthReturnPath(): string {
   if (typeof window === "undefined") return "/";
   const returnPath = sessionStorage.getItem(AUTH_RETURN_PATH_KEY);

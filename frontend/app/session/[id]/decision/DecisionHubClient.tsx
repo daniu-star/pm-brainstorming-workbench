@@ -21,6 +21,8 @@ import {
   Sparkles,
   Target,
   Trash2,
+  UserPlus,
+  UsersRound,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import type {
@@ -84,6 +86,7 @@ export default function DecisionHubClient() {
   const sessionId = getSessionId(params);
   const [hub, setHub] = useState<DecisionHub>(EMPTY_HUB);
   const [problem, setProblem] = useState("");
+  const [teamId, setTeamId] = useState("");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [openForm, setOpenForm] = useState<FormKind>(null);
@@ -100,10 +103,11 @@ export default function DecisionHubClient() {
     if (!sessionId) return;
     const [nextHub, session] = await Promise.all([
       api<DecisionHub>(`/api/session/${sessionId}/decision-hub`),
-      api<{ problem_statement?: string }>(`/api/session/${sessionId}`),
+      api<{ problem_statement?: string; team_id?: string }>(`/api/session/${sessionId}`),
     ]);
     setHub(nextHub);
     setProblem(session.problem_statement || "产品决策空间");
+    setTeamId(session.team_id || "");
   };
 
   useEffect(() => {
@@ -158,6 +162,17 @@ export default function DecisionHubClient() {
     }
   };
 
+  const shareWithTeam = async () => {
+    if (!sessionId) return;
+    try {
+      const result = await api<{ team_id: string }>(`/api/team/share-session/${sessionId}`, { method: "POST" });
+      setTeamId(result.team_id);
+      toast("success", "项目已共享到团队，成员现在可以共同评审");
+    } catch (error) {
+      toast("error", error instanceof Error ? error.message : "共享失败，请重试");
+    }
+  };
+
   if (loading) {
     return (
       <main className="decision-hub-shell flex min-h-screen items-center justify-center">
@@ -193,6 +208,7 @@ export default function DecisionHubClient() {
             <Link href={`/session/${sessionId}/review`} className="decision-nav-link">团队评审</Link>
             <Link href={`/session/${sessionId}/agents`} className="decision-nav-link">Agent 配置</Link>
             <Link href={`/session/${sessionId}/metrics`} className="decision-nav-link">数据复盘</Link>
+            <Link href="/team" className="decision-nav-link">团队账号</Link>
             <ShieldCheck className="h-4 w-4 text-emerald-300" />
             结论均可追溯至证据与实验
           </div>
@@ -213,6 +229,30 @@ export default function DecisionHubClient() {
           <MetricCard icon={<Target />} label="候选方案" value={hub.initiatives.length} note="按 RICE 逻辑自动排序" />
           <MetricCard icon={<FlaskConical />} label="验证闭环" value={`${validatedExperiments}/${hub.experiments.length}`} note={activeExperiments ? `${activeExperiments} 个实验进行中` : "等待启动第一个实验"} />
         </div>
+
+        <section className="decision-card mt-5 rounded-3xl p-5 sm:p-6">
+          <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
+            <div>
+              <p className="text-[11px] font-semibold tracking-[0.18em] text-cyan-200/60">COLLABORATION PLAYBOOK</p>
+              <h3 className="mt-2 text-lg font-semibold text-slate-100">第一次使用？按这条路径完成团队决策。</h3>
+              <div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-300">
+                {["1. 收集证据", "2. 比较候选方案", "3. 生成 PRD", "4. 邀请成员评审", "5. 投票并记录结论"].map((step) => (
+                  <span key={step} className="rounded-xl border border-cyan-200/10 bg-cyan-300/[0.05] px-3 py-2">{step}</span>
+                ))}
+              </div>
+            </div>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <Button asChild variant="outline"><Link href="/team"><UsersRound className="h-4 w-4" />管理成员与聊天</Link></Button>
+              <Button asChild variant="outline"><Link href={`/session/${sessionId}/review`}><UserPlus className="h-4 w-4" />进入团队评审</Link></Button>
+              {teamId ? (
+                <span className="inline-flex items-center gap-2 rounded-xl border border-emerald-300/15 bg-emerald-300/[0.07] px-4 py-2 text-xs font-medium text-emerald-200"><CheckCircle2 className="h-4 w-4" />已共享到团队</span>
+              ) : (
+                <Button variant="gradient" onClick={shareWithTeam}><UsersRound className="h-4 w-4" />共享当前项目</Button>
+              )}
+            </div>
+          </div>
+          <p className="mt-4 text-xs leading-5 text-slate-500">共享后，团队成员能查看并编辑这个项目的证据、路线图、PRD 和评审记录；其他未共享的历史项目仍保持私有。</p>
+        </section>
 
         <div className="mt-9 grid gap-5 xl:grid-cols-[1.04fr_0.96fr]">
           <section className="decision-card overflow-hidden rounded-3xl">

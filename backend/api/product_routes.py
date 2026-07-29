@@ -4,6 +4,7 @@ from core.product_generator import generate_product_portrait
 from db.session_store import session_store
 from db.user_store import user_store
 from api.deps import get_current_user, get_user_llm_config, check_quota
+from core.team_access import require_session_access
 
 router = APIRouter(prefix="/api/product", tags=["product"])
 
@@ -18,9 +19,7 @@ async def create_portrait(req: PortraitRequest, request: Request):
     llm_config = get_user_llm_config(request)
     check_quota(user, llm_config)
 
-    session = session_store.get(req.session_id, user_token=user["user_token"])
-    if session is None:
-        raise HTTPException(status_code=404, detail="会话未找到")
+    session = require_session_access(req.session_id, user)
 
     messages = session.get("messages", [])
     if not messages:
@@ -47,7 +46,5 @@ async def create_portrait(req: PortraitRequest, request: Request):
 @router.get("/{session_id}")
 async def get_portrait(session_id: str, request: Request):
     user = get_current_user(request)
-    session = session_store.get(session_id, user_token=user["user_token"])
-    if session is None:
-        raise HTTPException(status_code=404, detail="会话未找到")
+    session = require_session_access(session_id, user)
     return session.get("product_portrait") or {}

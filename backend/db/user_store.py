@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -20,6 +21,7 @@ def _validate_id(value: str) -> str:
 class UserStore:
     def __init__(self):
         self.data_dir = USER_DATA_DIR
+        self._lock = threading.RLock()
         os.makedirs(self.data_dir, exist_ok=True)
         self._phone_index = self._load_index(PHONE_INDEX_FILE)
         self._wechat_index = self._load_index(WECHAT_INDEX_FILE)
@@ -168,6 +170,15 @@ class UserStore:
             return
         user["token_quota"] += amount
         self._save(user)
+
+    def set_active_team(self, user_token: str, team_id: str) -> dict:
+        with self._lock:
+            user = self._load(user_token)
+            if user is None:
+                user = self.get_or_create_user(user_token)
+            user["active_team_id"] = team_id
+            self._save(user)
+            return user
 
     def save_api_key(self, user_token: str, api_key: str, base_url: str, model: str):
         user = self._load(user_token)
@@ -361,8 +372,13 @@ class UserStore:
     def _save(self, user: dict):
         _validate_id(user['user_token'])
         path = os.path.join(self.data_dir, f"{user['user_token']}.json")
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(user, f, ensure_ascii=False, indent=2)
+        temp_path = f"{path}.{uuid.uuid4().hex}.tmp"
+        with self._lock:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(user, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, path)
 
 
 user_store = UserStore()

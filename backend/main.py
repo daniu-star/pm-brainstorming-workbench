@@ -18,6 +18,7 @@ from api.auth_routes import router as auth_router
 from api.product_routes import router as product_router
 from api.attachment_routes import router as attachment_router
 from api.decision_hub_routes import router as decision_hub_router
+from api.team_routes import router as team_router
 from core.config import settings
 from db.user_store import user_store
 
@@ -101,6 +102,7 @@ app.include_router(auth_router)
 app.include_router(product_router)
 app.include_router(attachment_router)
 app.include_router(decision_hub_router)
+app.include_router(team_router)
 
 
 @app.get("/health")

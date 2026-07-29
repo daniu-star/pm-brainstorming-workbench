@@ -5,6 +5,7 @@ from typing import Optional
 from core.attachment_store import attachment_store
 from db.session_store import session_store
 from api.deps import get_current_user
+from core.team_access import require_session_access
 
 router = APIRouter(prefix="/api/attachments", tags=["attachments"])
 
@@ -23,18 +24,15 @@ ALLOWED_EXTENSIONS = {
 }
 
 
-def _owned_session(session_id: str, user_token: str) -> dict:
-    session = session_store.get(session_id, user_token=user_token)
-    if session is None:
-        raise HTTPException(status_code=404, detail="会话未找到或无权访问")
-    return session
+def _owned_session(session_id: str, user: dict) -> dict:
+    return require_session_access(session_id, user)
 
 
-def _owned_attachment(attachment_id: str, user_token: str) -> dict:
+def _owned_attachment(attachment_id: str, user: dict) -> dict:
     attachment = attachment_store.get_attachment(attachment_id)
     if not attachment:
         raise HTTPException(status_code=404, detail="附件不存在")
-    _owned_session(attachment.get("session_id", ""), user_token)
+    _owned_session(attachment.get("session_id", ""), user)
     return attachment
 
 
@@ -45,7 +43,7 @@ async def upload_attachment(
     session_id: str = Form(...),
 ):
     user = get_current_user(request)
-    _owned_session(session_id, user["user_token"])
+    _owned_session(session_id, user)
     if not file.filename:
         raise HTTPException(status_code=400, detail="文件名不能为空")
     extension = os.path.splitext(file.filename)[1].lower()
@@ -75,7 +73,7 @@ async def list_attachments(
     request: Request,
 ):
     user = get_current_user(request)
-    _owned_session(session_id, user["user_token"])
+    _owned_session(session_id, user)
     return attachment_store.get_attachments_by_session(session_id)
 
 
@@ -85,7 +83,7 @@ async def delete_attachment(
     request: Request,
 ):
     user = get_current_user(request)
-    _owned_attachment(attachment_id, user["user_token"])
+    _owned_attachment(attachment_id, user)
     success = attachment_store.delete_attachment(attachment_id)
     if not success:
         raise HTTPException(status_code=404, detail="附件不存在")
@@ -98,7 +96,7 @@ async def get_file(
     request: Request,
 ):
     user = get_current_user(request)
-    attachment = _owned_attachment(attachment_id, user["user_token"])
+    attachment = _owned_attachment(attachment_id, user)
     file_path = attachment_store.get_file_path(attachment_id)
     if not file_path or not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="文件不存在")

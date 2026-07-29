@@ -4,6 +4,7 @@ from core.canvas_parser import parse_conversation_to_map, parse_incremental_map
 from db.session_store import session_store
 from db.user_store import user_store
 from api.deps import get_current_user, get_user_llm_config, check_quota
+from core.team_access import require_session_access
 
 router = APIRouter(prefix="/api/canvas", tags=["canvas"])
 
@@ -21,13 +22,8 @@ class NodeStatusRequest(BaseModel):
     status: str = Field(pattern="^(draft|confirmed)$")
 
 
-def _owned_session(session_id: str, user_token: str) -> dict:
-    session = session_store.get(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="会话未找到")
-    if session.get("user_token") and session.get("user_token") != user_token:
-        raise HTTPException(status_code=403, detail="无权访问此会话")
-    return session
+def _owned_session(session_id: str, user: dict) -> dict:
+    return require_session_access(session_id, user)
 
 
 @router.post("/generate")
@@ -36,7 +32,7 @@ async def generate_canvas(req: GenerateCanvasRequest, request: Request):
     llm_config = get_user_llm_config(request)
     check_quota(user, llm_config)
 
-    session = _owned_session(req.session_id, user["user_token"])
+    session = _owned_session(req.session_id, user)
 
     messages = session.get("messages", [])
     if not messages:
@@ -72,7 +68,7 @@ async def incremental_canvas(req: GenerateCanvasRequest, request: Request):
     llm_config = get_user_llm_config(request)
     check_quota(user, llm_config)
 
-    session = _owned_session(req.session_id, user["user_token"])
+    session = _owned_session(req.session_id, user)
 
     messages = session.get("messages", [])
     existing = session.get("discussion_map")
@@ -107,14 +103,14 @@ async def incremental_canvas(req: GenerateCanvasRequest, request: Request):
 @router.get("/{session_id}")
 async def get_canvas(session_id: str, request: Request):
     user = get_current_user(request)
-    session = _owned_session(session_id, user["user_token"])
+    session = _owned_session(session_id, user)
     return session.get("discussion_map") or {"topic": "", "timeline": []}
 
 
 @router.put("/{session_id}")
 async def update_canvas(session_id: str, req: UpdateCanvasRequest, request: Request):
     user = get_current_user(request)
-    session = _owned_session(session_id, user["user_token"])
+    session = _owned_session(session_id, user)
     session_store.update(session_id, {"discussion_map": req.tree})
     return {"status": "updated"}
 
@@ -127,7 +123,7 @@ async def update_canvas_node_status(
     request: Request,
 ):
     user = get_current_user(request)
-    session = _owned_session(session_id, user["user_token"])
+    session = _owned_session(session_id, user)
     graph = session.get("discussion_map") or {}
     timeline = graph.get("timeline", [])
     node = next((item for item in timeline if item.get("id") == node_id), None)

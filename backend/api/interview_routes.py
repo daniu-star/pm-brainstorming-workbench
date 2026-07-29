@@ -11,6 +11,7 @@ from core.interviewer import (
 from db.session_store import session_store, interview_session_store
 from db.user_store import user_store
 from api.deps import get_current_user, get_user_llm_config, check_quota
+from core.team_access import require_session_access
 from rag.retriever import rag_retriever
 
 router = APIRouter(prefix="/api/interview", tags=["interview"])
@@ -55,15 +56,21 @@ class SpaceRespondRequest(BaseModel):
     answer: str = Field(min_length=1, max_length=8000)
 
 
+def _accessible_interview_space(interview_id: str, user: dict) -> tuple[dict, dict]:
+    space = interview_session_store.get(interview_id)
+    if space is None:
+        raise HTTPException(status_code=404, detail="面试空间未找到")
+    parent = require_session_access(space.get("parent_session_id", ""), user)
+    return space, parent
+
+
 @router.post("/start")
 async def interview_start(req: InterviewStartRequest, request: Request):
     user = get_current_user(request)
     llm_config = get_user_llm_config(request)
     check_quota(user, llm_config)
 
-    session = session_store.get(req.session_id, user_token=user["user_token"])
-    if session is None:
-        raise HTTPException(status_code=404, detail="会话未找到")
+    require_session_access(req.session_id, user)
 
     generator = run_interview_start(req.session_id, **llm_config)
 
@@ -90,9 +97,7 @@ async def interview_respond(req: InterviewRespondRequest, request: Request):
     llm_config = get_user_llm_config(request)
     check_quota(user, llm_config)
 
-    session = session_store.get(req.session_id, user_token=user["user_token"])
-    if session is None:
-        raise HTTPException(status_code=404, detail="会话未找到")
+    require_session_access(req.session_id, user)
 
     generator = run_interview_respond(req.session_id, req.answer, **llm_config)
 
@@ -121,13 +126,10 @@ async def create_interview_space(req: CreateSpaceRequest, request: Request):
     """创建独立面试空间，从父会话继承 problem_statement 和 canvas_tree。"""
     user = get_current_user(request)
 
-    parent = session_store.get(req.parent_session_id, user_token=user["user_token"])
-    if parent is None:
-        raise HTTPException(status_code=404, detail="父会话未找到")
+    parent = require_session_access(req.parent_session_id, user)
 
     existing = interview_session_store.get_latest_by_parent(
         req.parent_session_id,
-        user_token=user["user_token"],
     )
     if existing and not req.restart:
         space = existing
@@ -158,9 +160,7 @@ async def create_interview_space(req: CreateSpaceRequest, request: Request):
 async def get_interview_space(interview_id: str, request: Request):
     """获取面试空间完整状态。"""
     user = get_current_user(request)
-    space = interview_session_store.get(interview_id, user_token=user.get("user_token"))
-    if space is None:
-        raise HTTPException(status_code=404, detail="面试空间未找到")
+    space, _ = _accessible_interview_space(interview_id, user)
     return {
         "id": space["id"],
         "parent_session_id": space.get("parent_session_id"),
@@ -182,14 +182,7 @@ async def start_interview_space(interview_id: str, request: Request):
     llm_config = get_user_llm_config(request)
     check_quota(user, llm_config)
 
-    space = interview_session_store.get(interview_id, user_token=user.get("user_token"))
-    if space is None:
-        raise HTTPException(status_code=404, detail="面试空间未找到")
-
-    parent = session_store.get(
-        space.get("parent_session_id", ""),
-        user_token=user["user_token"],
-    )
+    space, parent = _accessible_interview_space(interview_id, user)
     generator = run_interview_start_space(
         interview_id,
         rag_context=(
@@ -223,14 +216,7 @@ async def respond_interview_space(interview_id: str, req: SpaceRespondRequest, r
     llm_config = get_user_llm_config(request)
     check_quota(user, llm_config)
 
-    space = interview_session_store.get(interview_id, user_token=user.get("user_token"))
-    if space is None:
-        raise HTTPException(status_code=404, detail="面试空间未找到")
-
-    parent = session_store.get(
-        space.get("parent_session_id", ""),
-        user_token=user["user_token"],
-    )
+    space, parent = _accessible_interview_space(interview_id, user)
     generator = run_interview_respond_space(
         interview_id,
         req.answer,

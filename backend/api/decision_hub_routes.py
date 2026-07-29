@@ -6,7 +6,9 @@ from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from api.deps import get_current_user
+from core.team_access import require_session_access
 from db.session_store import session_store
+from db.team_store import team_store
 
 
 router = APIRouter(prefix="/api/session", tags=["decision-hub"])
@@ -117,15 +119,26 @@ class MetricReviewCreateRequest(BaseModel):
     initiative_id: str = Field(default="", max_length=80)
 
 
-def _authorized_session(session_id: str, request: Request) -> dict:
-    user = get_current_user(request)
-    session = session_store.get(session_id)
-    if session is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="会话未找到")
-    owner = session.get("user_token", "")
-    if owner and owner != user["user_token"]:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="无权访问此决策空间")
-    return session
+def _authorized_session(session_id: str, request: Request, user: dict | None = None) -> dict:
+    user = user or get_current_user(request)
+    return require_session_access(session_id, user)
+
+
+def _review_author(session: dict, user: dict) -> str:
+    team_id = session.get("team_id", "")
+    if team_id:
+        team = team_store.get(team_id)
+        member = next(
+            (
+                item
+                for item in (team or {}).get("members", [])
+                if item.get("user_token") == user["user_token"]
+            ),
+            None,
+        )
+        if member:
+            return member.get("nickname") or "团队成员"
+    return user.get("nickname") or "项目创建者"
 
 
 def _hub(session: dict) -> dict:
@@ -407,10 +420,11 @@ async def get_review_space(session_id: str, request: Request):
 
 @router.post("/{session_id}/decision-hub/review/comments", status_code=status.HTTP_201_CREATED)
 async def create_review_comment(session_id: str, req: ReviewCommentCreateRequest, request: Request):
-    session = _authorized_session(session_id, request)
+    user = get_current_user(request)
+    session = _authorized_session(session_id, request, user)
     hub = _hub(session)
     space = _review_space(hub)
-    author = req.author_name.strip() or "团队成员"
+    author = _review_author(session, user)
     comment = {"id": f"cm_{uuid.uuid4().hex[:10]}", "target_type": req.target_type, "target_id": req.target_id, "author_name": author, "content": req.content.strip(), "created_at": datetime.now().isoformat()}
     space["comments"].insert(0, comment)
     _write_audit(space, "commented", author, f"评论了 {req.target_type or '项目'}")
@@ -421,10 +435,11 @@ async def create_review_comment(session_id: str, req: ReviewCommentCreateRequest
 
 @router.post("/{session_id}/decision-hub/review/votes")
 async def create_review_vote(session_id: str, req: ReviewVoteRequest, request: Request):
-    session = _authorized_session(session_id, request)
+    user = get_current_user(request)
+    session = _authorized_session(session_id, request, user)
     hub = _hub(session)
     space = _review_space(hub)
-    author = req.author_name.strip() or "团队成员"
+    author = _review_author(session, user)
     space["votes"] = [vote for vote in space["votes"] if not (vote.get("target_type") == req.target_type and vote.get("target_id") == req.target_id and vote.get("author_name") == author)]
     vote = {"id": f"vote_{uuid.uuid4().hex[:10]}", "target_type": req.target_type, "target_id": req.target_id, "author_name": author, "stance": req.stance, "created_at": datetime.now().isoformat()}
     space["votes"].append(vote)
@@ -436,10 +451,11 @@ async def create_review_vote(session_id: str, req: ReviewVoteRequest, request: R
 
 @router.post("/{session_id}/decision-hub/review/approvals")
 async def create_review_approval(session_id: str, req: ReviewApprovalRequest, request: Request):
-    session = _authorized_session(session_id, request)
+    user = get_current_user(request)
+    session = _authorized_session(session_id, request, user)
     hub = _hub(session)
     space = _review_space(hub)
-    author = req.author_name.strip() or "团队成员"
+    author = _review_author(session, user)
     space["approvals"] = [item for item in space["approvals"] if not (item.get("target_type") == req.target_type and item.get("target_id") == req.target_id and item.get("author_name") == author)]
     approval = {"id": f"ap_{uuid.uuid4().hex[:10]}", "target_type": req.target_type, "target_id": req.target_id, "author_name": author, "status": req.status, "note": req.note.strip(), "created_at": datetime.now().isoformat()}
     space["approvals"].insert(0, approval)

@@ -13,7 +13,7 @@ COPY scripts/ ./scripts/
 
 RUN python scripts/build_knowledge_base.py
 
-RUN mkdir -p /app/static /app/data/sessions /app/data/users
+RUN mkdir -p /app/static /app/data/sessions /app/data/users /app/data/teams
 
 EXPOSE 7860
 
@@ -26,6 +26,7 @@ ENV ALLOW_SMS_CODE_ECHO="false"
 ENV HF_WHISPER_MODEL="openai/whisper-large-v3"
 ENV SESSION_DATA_DIR="/app/data/sessions"
 ENV USER_DATA_DIR="/app/data/users"
+ENV TEAM_DATA_DIR="/app/data/teams"
 ENV BACKEND_PORT=7860
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860"]

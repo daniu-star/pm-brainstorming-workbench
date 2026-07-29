@@ -52,12 +52,12 @@ def _validate_id(value: str) -> str:
 
 
 class SessionStore:
-    def __init__(self):
-        self.data_dir = SESSION_DATA_DIR
+    def __init__(self, data_dir: str | None = None):
+        self.data_dir = data_dir or SESSION_DATA_DIR
         self._lock = threading.RLock()
         os.makedirs(self.data_dir, exist_ok=True)
 
-    def create(self, problem_statement: str, user_token: str = "") -> dict:
+    def create(self, problem_statement: str, user_token: str = "", team_id: str = "") -> dict:
         session_id = uuid.uuid4().hex[:12]
         session = {
             "id": session_id,
@@ -104,6 +104,7 @@ class SessionStore:
             },
             "created_at": datetime.now().isoformat(),
             "user_token": user_token,
+            "team_id": team_id,
         }
         self._save(session)
         return session
@@ -206,14 +207,20 @@ class SessionStore:
             remaining -= len(copy["content"])
         return list(reversed(selected))
 
-    def list_sessions(self, user_token: str | None = None) -> List[dict]:
+    def list_sessions(
+        self,
+        user_token: str | None = None,
+        team_ids: set[str] | None = None,
+    ) -> List[dict]:
         sessions = []
         for fname in os.listdir(self.data_dir):
             if fname.endswith(".json"):
                 path = os.path.join(self.data_dir, fname)
                 with open(path, "r", encoding="utf-8") as f:
                     s = json.load(f)
-                if user_token is not None and s.get("user_token") != user_token:
+                is_owner = user_token is not None and s.get("user_token") == user_token
+                is_team_member = bool(team_ids and s.get("team_id") in team_ids)
+                if user_token is not None and not is_owner and not is_team_member:
                     continue
                 sessions.append({
                     "id": s["id"],
@@ -221,9 +228,17 @@ class SessionStore:
                     "phase": s["phase"],
                     "message_count": len(s["messages"]),
                     "created_at": s["created_at"],
+                    "team_id": s.get("team_id", ""),
                 })
         sessions.sort(key=lambda s: s["created_at"], reverse=True)
         return sessions
+
+    def list_by_team(self, team_id: str) -> List[dict]:
+        return [
+            session
+            for session in self.list_all_raw()
+            if session.get("team_id") == team_id
+        ]
 
     def list_all_raw(self) -> List[dict]:
         """Internal lookup for deliberately shared, read-only session views."""

@@ -8,6 +8,7 @@ from db.session_store import session_store
 from db.user_store import user_store
 from rag.retriever import rag_retriever
 from api.deps import get_current_user, get_user_llm_config, check_quota
+from core.team_access import require_session_access
 
 router = APIRouter(prefix="/api/brainstorm", tags=["brainstorm"])
 
@@ -22,13 +23,8 @@ class PipelineRequest(BaseModel):
     session_id: str = Field(min_length=1, max_length=64)
 
 
-def _owned_session(session_id: str, user_token: str) -> dict:
-    session = session_store.get(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="会话未找到")
-    if session.get("user_token") and session.get("user_token") != user_token:
-        raise HTTPException(status_code=403, detail="无权访问此会话")
-    return session
+def _owned_session(session_id: str, user: dict) -> dict:
+    return require_session_access(session_id, user)
 
 
 async def _rag_context(query: str) -> str:
@@ -44,7 +40,7 @@ async def brainstorm_message(req: BrainstormMessage, request: Request):
     llm_config = get_user_llm_config(request)
     check_quota(user, llm_config)
 
-    session = _owned_session(req.session_id, user["user_token"])
+    session = _owned_session(req.session_id, user)
     if session.get("phase") == "clarify":
         raise HTTPException(status_code=409, detail="请先完成或跳过需求澄清")
 
@@ -89,7 +85,7 @@ async def coach_clarify(req: CoachRequest, request: Request):
     llm_config = get_user_llm_config(request)
     check_quota(user, llm_config)
 
-    _owned_session(req.session_id, user["user_token"])
+    _owned_session(req.session_id, user)
 
     generator = run_coach(
         req.session_id,
@@ -120,7 +116,7 @@ async def coach_start(req: CoachSessionRequest, request: Request):
     user = get_current_user(request)
     llm_config = get_user_llm_config(request)
     check_quota(user, llm_config)
-    session = _owned_session(req.session_id, user["user_token"])
+    session = _owned_session(req.session_id, user)
 
     generator = run_coach(
         req.session_id,
@@ -146,7 +142,7 @@ async def coach_start(req: CoachSessionRequest, request: Request):
 @router.post("/coach/skip")
 async def coach_skip(req: CoachSessionRequest, request: Request):
     user = get_current_user(request)
-    session = _owned_session(req.session_id, user["user_token"])
+    session = _owned_session(req.session_id, user)
     state = session.get("clarification_state") or {}
     state["status"] = "skipped"
     state["current_field"] = None
@@ -158,7 +154,7 @@ async def coach_skip(req: CoachSessionRequest, request: Request):
 @router.post("/coach/confirm")
 async def coach_confirm(req: CoachSessionRequest, request: Request):
     user = get_current_user(request)
-    session = _owned_session(req.session_id, user["user_token"])
+    session = _owned_session(req.session_id, user)
     state = session.get("clarification_state") or {}
     if state.get("status") != "awaiting_confirmation":
         raise HTTPException(status_code=409, detail="需求澄清尚未完成")
@@ -182,7 +178,7 @@ async def run_brainstorm_pipeline(req: PipelineRequest, request: Request):
     llm_config = get_user_llm_config(request)
     check_quota(user, llm_config)
 
-    session = _owned_session(req.session_id, user["user_token"])
+    session = _owned_session(req.session_id, user)
     if session.get("phase") == "clarify":
         raise HTTPException(status_code=409, detail="请先完成或跳过需求澄清")
 

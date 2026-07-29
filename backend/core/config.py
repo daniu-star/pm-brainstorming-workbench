@@ -27,6 +27,7 @@ class Settings:
 
     session_data_dir: str = os.getenv("SESSION_DATA_DIR", "./data/sessions")
     user_data_dir: str = os.getenv("USER_DATA_DIR", "./data/users")
+    team_data_dir: str = os.getenv("TEAM_DATA_DIR", "./data/teams")
     initial_quota: int = int(os.getenv("INITIAL_QUOTA", "100000"))
     guest_initial_quota: int = max(
         1000,
@@ -38,11 +39,24 @@ class Settings:
     allow_sms_code_echo: bool = os.getenv(
         "ALLOW_SMS_CODE_ECHO", "false"
     ).lower() in ("1", "true", "yes")
+    smtp_host: str = os.getenv("SMTP_HOST", "")
+    smtp_port: int = int(os.getenv("SMTP_PORT", "587"))
+    smtp_username: str = os.getenv("SMTP_USERNAME", "")
+    smtp_password: str = os.getenv("SMTP_PASSWORD", "")
+    smtp_from_email: str = os.getenv("SMTP_FROM_EMAIL", "")
+    smtp_from_name: str = os.getenv("SMTP_FROM_NAME", "产品脑暴工作台")
+    smtp_use_tls: bool = os.getenv("SMTP_USE_TLS", "true").lower() in ("1", "true", "yes")
+    smtp_use_ssl: bool = os.getenv("SMTP_USE_SSL", "false").lower() in ("1", "true", "yes")
+    frontend_base_url: str = os.getenv("FRONTEND_BASE_URL", "https://www.brainstorming.top").rstrip("/")
+    team_invite_expiry_hours: int = max(
+        1,
+        min(168, int(os.getenv("TEAM_INVITE_EXPIRY_HOURS", "72"))),
+    )
     cors_allowed_origins: list[str] = [
         origin.strip()
         for origin in os.getenv(
             "CORS_ALLOWED_ORIGINS",
-            "https://www.brainstorming.top,https://brainstorming.top,http://localhost:3000",
+            "https://www.brainstorming.top,https://brainstorming.top,http://localhost:3000,http://127.0.0.1:3000,http://127.0.0.1:3100",
         ).split(",")
         if origin.strip()
     ]

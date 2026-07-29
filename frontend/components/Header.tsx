@@ -3,7 +3,7 @@
 import { useSessionStore } from "@/store/sessionStore";
 import { exportSessionAsMarkdown } from "@/lib/export";
 import Link from "next/link";
-import { Brain, Download, Settings, AlertTriangle, Wallet, LayoutDashboard } from "lucide-react";
+import { Brain, Download, Settings, AlertTriangle, Wallet, LayoutDashboard, UsersRound } from "lucide-react";
 import { NavButtons } from "@/components/NavButtons";
 import { SettingsModal } from "@/components/SettingsModal";
 import { RechargeModal } from "@/components/RechargeModal";
@@ -159,6 +159,15 @@ export function Header() {
               决策中心
             </Link>
           )}
+
+          <Link
+            href="/team"
+            className="nav-frost-control hidden h-9 items-center gap-1.5 rounded-xl px-3 text-xs xl:flex"
+            aria-label="打开团队账号与聊天室"
+          >
+            <UsersRound className="h-3.5 w-3.5" />
+            团队账号
+          </Link>
 
           <NavButtons
             currentPage="workbench"
