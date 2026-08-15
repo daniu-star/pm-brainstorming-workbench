@@ -22,7 +22,7 @@ pinned: false
 - 决策中心、Now/Next/Later 路线图、PRD 版本、团队评审、Agent 配置和指标复盘
 - 团队账号中心：成员额度汇总、PRD 资产统计、子账号邀请、权限角色与实时聊天室
 - BYOK、自带 API 地址与模型；SSE 流式响应；语音输入和 TTS
-- 手机号登录与安全体验模式；体验身份由服务端签名并与其他用户数据隔离
+- SMTP 邮箱验证码登录与安全体验模式；体验身份由服务端签名并与其他用户数据隔离
 
 审计通话是语音交互界面，不是 WebRTC 视频会议；产品也不宣称端到端加密。
 
@@ -36,8 +36,7 @@ pinned: false
 
 1. 复制 `backend/.env.example` 为 `backend/.env`。
 2. 配置 `LLM_API_KEY`、`LLM_BASE_URL` 和 `LLM_MODEL`，或在网页设置中使用 BYOK。
-   本地没有短信服务时可使用体验模式；若需调试短信流程，可临时设置 `ALLOW_SMS_CODE_ECHO=true`。生产环境必须保持为 `false` 并配置真实短信服务。
-   如需自动发送团队邀请邮件，请配置 `SMTP_HOST`、`SMTP_PORT`、`SMTP_USERNAME`、`SMTP_PASSWORD`、`SMTP_FROM_EMAIL`；587 端口使用 `SMTP_USE_TLS=true`，465 端口使用 `SMTP_USE_SSL=true`。
+   本地没有 SMTP 服务时可使用体验模式。邮箱验证码登录与团队邀请邮件共用 `SMTP_HOST`、`SMTP_PORT`、`SMTP_USERNAME`、`SMTP_PASSWORD`、`SMTP_FROM_EMAIL`；网易邮箱推荐使用 465 端口、`SMTP_USE_SSL=true`，密码填写客户端授权码而非邮箱登录密码。
 3. 安装依赖：根目录执行 `npm ci`，后端执行 `pip install -r backend/requirements.txt`。
 4. 启动后端：`uvicorn main:app --reload --port 8000`（工作目录为 `backend`）。
 5. 启动前端：`npm run dev --workspace frontend`。
