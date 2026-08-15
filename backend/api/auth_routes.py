@@ -1,10 +1,20 @@
-import re
+import asyncio
 from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from core.auth import create_jwt_token, derive_guest_user_id, send_sms_code, verify_sms_code
+from core.auth import (
+    AuthRateLimitError,
+    create_jwt_token,
+    derive_guest_user_id,
+    normalize_email,
+    send_email_code,
+    send_sms_code,
+    verify_email_code,
+    verify_sms_code,
+)
+from core.email_service import EmailDeliveryError
 from db.user_store import user_store
 from core.config import settings
 
@@ -22,6 +32,15 @@ class SmsVerifyRequest(BaseModel):
 
 class GuestLoginRequest(BaseModel):
     installation_id: UUID
+
+
+class EmailSendRequest(BaseModel):
+    email: str
+
+
+class EmailVerifyRequest(BaseModel):
+    email: str
+    code: str = Field(pattern=r"^\d{6}$")
 
 
 @router.post("/guest")
@@ -75,6 +94,42 @@ async def sms_verify(req: SmsVerifyRequest):
     }
 
 
+@router.post("/email/send")
+async def email_send(req: EmailSendRequest):
+    try:
+        email = normalize_email(req.email)
+        retry_after = await asyncio.to_thread(send_email_code, email)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except AuthRateLimitError as error:
+        raise HTTPException(status_code=429, detail=str(error)) from error
+    except EmailDeliveryError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    return {"success": True, "retry_after": retry_after}
+
+
+@router.post("/email/verify")
+async def email_verify(req: EmailVerifyRequest):
+    try:
+        email = normalize_email(req.email)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    if not verify_email_code(email, req.code):
+        raise HTTPException(status_code=400, detail="验证码错误或已过期")
+    user = user_store.get_user_by_email(email)
+    if user is None:
+        user = user_store.create_user_with_email(email, email.split("@", 1)[0])
+    token = create_jwt_token(user["user_token"])
+    return {
+        "token": token,
+        "user": {
+            "user_token": user["user_token"],
+            "nickname": user.get("nickname", ""),
+            "email": user.get("email", ""),
+        },
+    }
+
+
 @router.get("/me")
 async def get_me(authorization: str = Header(default="")):
     if not authorization:
@@ -96,5 +151,6 @@ async def get_me(authorization: str = Header(default="")):
         "user_token": user["user_token"],
         "nickname": user.get("nickname", ""),
         "phone": user.get("phone", ""),
+        "email": user.get("email", ""),
         "avatar": user.get("avatar", ""),
     }

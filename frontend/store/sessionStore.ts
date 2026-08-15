@@ -69,7 +69,7 @@ interface SessionState {
   setRechargeOpen: (open: boolean) => void;
   setOnboardingOpen: (open: boolean) => void;
   completeOnboarding: () => void;
-  login: (phone: string, code: string) => Promise<void>;
+  login: (email: string, code: string) => Promise<void>;
   guestLogin: () => Promise<void>;
   logout: () => void;
 
@@ -681,15 +681,15 @@ export const useSessionStore = create<SessionState>((set, get) => {
       set({ hasCompletedOnboarding: true, isOnboardingOpen: false });
     },
 
-    login: async (phone: string, code: string) => {
-      const result = await api<{ token: string; user: { nickname?: string; phone?: string } }>("/api/auth/sms/verify", {
+    login: async (email: string, code: string) => {
+      const result = await api<{ token: string; user: { nickname?: string; email?: string } }>("/api/auth/email/verify", {
         method: "POST",
-        body: JSON.stringify({ phone, code }),
+        body: JSON.stringify({ email, code }),
       });
       saveJwtToken(result.token);
       set({
         isLoggedIn: true,
-        userNickname: result.user?.nickname || result.user?.phone || null,
+        userNickname: result.user?.nickname || result.user?.email || null,
       });
       await get().fetchQuota();
       toast("success", "登录成功");

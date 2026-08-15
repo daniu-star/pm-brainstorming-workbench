@@ -2,6 +2,9 @@ node_modules/
 .next/
 data/
 __pycache__/
+.pytest_cache/
+.pytest_tmp*/
+.venv/
 *.pyc
 .env
 chroma_db/

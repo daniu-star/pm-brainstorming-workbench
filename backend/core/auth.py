@@ -6,6 +6,7 @@ import logging
 import secrets
 import hashlib
 import hmac
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -21,6 +22,13 @@ _jwt_secret_is_default = False
 
 SMS_CODES_FILE = Path(os.getenv("SMS_CODES_FILE", "/tmp/sms_codes.json"))
 SMS_CODE_EXPIRE_MINUTES = 5
+EMAIL_CODES_FILE = Path(os.getenv("EMAIL_CODES_FILE", "/tmp/email_codes.json"))
+EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+MAX_EMAIL_VERIFY_ATTEMPTS = 5
+
+
+class AuthRateLimitError(RuntimeError):
+    pass
 
 
 def _check_jwt_secret():
@@ -133,3 +141,88 @@ def verify_sms_code(phone: str, code: str) -> bool:
     del codes[phone]
     _save_sms_codes(codes)
     return True
+
+
+def normalize_email(email: str) -> str:
+    normalized = email.strip().lower()
+    if len(normalized) > 254 or not EMAIL_PATTERN.fullmatch(normalized):
+        raise ValueError("请输入有效的邮箱地址")
+    return normalized
+
+
+def _hash_email_code(email: str, code: str) -> str:
+    return hmac.new(
+        JWT_SECRET.encode("utf-8"),
+        f"{email}:{code}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _load_email_codes() -> dict:
+    try:
+        if EMAIL_CODES_FILE.exists():
+            with open(EMAIL_CODES_FILE, "r", encoding="utf-8") as file:
+                return json.load(file)
+    except (OSError, ValueError, json.JSONDecodeError):
+        pass
+    return {}
+
+
+def _save_email_codes(codes: dict) -> None:
+    EMAIL_CODES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(EMAIL_CODES_FILE, "w", encoding="utf-8") as file:
+        json.dump(codes, file, ensure_ascii=False)
+
+
+def send_email_code(email: str) -> int:
+    from core.config import settings
+    from core.email_service import send_login_code
+
+    normalized = normalize_email(email)
+    now = time.time()
+    codes = _load_email_codes()
+    entry = codes.get(normalized)
+    if entry and float(entry.get("next_send_at", 0)) > now:
+        wait_seconds = max(1, int(float(entry["next_send_at"]) - now + 0.999))
+        raise AuthRateLimitError(f"请等待 {wait_seconds} 秒后重新发送")
+
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    send_login_code(normalized, code)
+    codes[normalized] = {
+        "code_hash": _hash_email_code(normalized, code),
+        "expires_at": now + settings.email_code_expire_minutes * 60,
+        "next_send_at": now + settings.email_code_resend_seconds,
+        "attempts": 0,
+    }
+    _save_email_codes(codes)
+    return settings.email_code_resend_seconds
+
+
+def verify_email_code(email: str, code: str) -> bool:
+    normalized = normalize_email(email)
+    normalized_code = code.strip()
+    if not re.fullmatch(r"\d{6}", normalized_code):
+        return False
+
+    codes = _load_email_codes()
+    entry = codes.get(normalized)
+    if not entry or time.time() > float(entry.get("expires_at", 0)):
+        codes.pop(normalized, None)
+        _save_email_codes(codes)
+        return False
+
+    attempts = int(entry.get("attempts", 0)) + 1
+    if attempts > MAX_EMAIL_VERIFY_ATTEMPTS:
+        codes.pop(normalized, None)
+        _save_email_codes(codes)
+        return False
+    entry["attempts"] = attempts
+
+    valid = hmac.compare_digest(
+        str(entry.get("code_hash", "")),
+        _hash_email_code(normalized, normalized_code),
+    )
+    if valid:
+        codes.pop(normalized, None)
+    _save_email_codes(codes)
+    return valid

@@ -2,12 +2,14 @@ import json
 import os
 import threading
 import uuid
+import hashlib
 from datetime import datetime
 from typing import Optional
 
 USER_DATA_DIR = os.getenv("USER_DATA_DIR", "./data/users")
 INITIAL_QUOTA = int(os.getenv("INITIAL_QUOTA", "100000"))
 PHONE_INDEX_FILE = os.path.join(USER_DATA_DIR, "_phone_index.json")
+EMAIL_INDEX_FILE = os.path.join(USER_DATA_DIR, "_email_index.json")
 WECHAT_INDEX_FILE = os.path.join(USER_DATA_DIR, "_wechat_index.json")
 QQ_INDEX_FILE = os.path.join(USER_DATA_DIR, "_qq_index.json")
 
@@ -24,6 +26,7 @@ class UserStore:
         self._lock = threading.RLock()
         os.makedirs(self.data_dir, exist_ok=True)
         self._phone_index = self._load_index(PHONE_INDEX_FILE)
+        self._email_index = self._load_index(EMAIL_INDEX_FILE)
         self._wechat_index = self._load_index(WECHAT_INDEX_FILE)
         self._qq_index = self._load_index(QQ_INDEX_FILE)
 
@@ -42,6 +45,32 @@ class UserStore:
         if user_token is None:
             return None
         return self._load(user_token)
+
+    def get_user_by_email(self, email: str) -> Optional[dict]:
+        user_token = self._email_index.get(email)
+        if user_token is None:
+            return None
+        return self._load(user_token)
+
+    def create_user_with_email(self, email: str, nickname: str) -> dict:
+        user_token = f"email_{hashlib.sha256(email.encode('utf-8')).hexdigest()[:32]}"
+        user = {
+            "user_token": user_token,
+            "email": email,
+            "phone": "",
+            "nickname": nickname,
+            "avatar": "",
+            "api_key": "",
+            "base_url": "",
+            "model": "",
+            "token_quota": INITIAL_QUOTA,
+            "tokens_used": 0,
+            "created_at": datetime.now().isoformat(),
+        }
+        self._save(user)
+        self._email_index[email] = user_token
+        self._save_index(EMAIL_INDEX_FILE, self._email_index)
+        return user
 
     def get_user_by_wechat(self, openid: str) -> Optional[dict]:
         user_token = self._wechat_index.get(openid)

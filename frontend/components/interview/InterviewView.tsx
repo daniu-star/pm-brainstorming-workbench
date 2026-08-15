@@ -5,6 +5,7 @@ import { ChevronDown, Loader2 } from "lucide-react";
 import { useSessionStore } from "@/store/sessionStore";
 import { InterviewHeader } from "./InterviewHeader";
 import { InterviewInput } from "./InterviewInput";
+import { InterviewCamera } from "./InterviewCamera";
 import { PrdViewer } from "@/components/pipeline/PrdViewer";
 import { playInterviewerTTS } from "@/lib/audio";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -121,7 +122,7 @@ export function InterviewView({
   }, [messages, streamingContent, isNearBottom]);
 
   return (
-    <div className="interview-dark-container h-full flex flex-col">
+    <div className="interview-dark-container relative h-full flex flex-col">
       <div className={cn(
         "interview-glow-border",
         lastAnswerQuality === "good" && "quality-good",
@@ -135,6 +136,7 @@ export function InterviewView({
         hasPrd={!!pipelineResult?.prd}
         onViewPrd={() => setShowPrd(true)}
       />
+      <InterviewCamera />
 
       <div ref={scrollHostRef} className={cn("relative min-h-0 flex-1", phoneMode && "hidden")}>
         <ScrollArea className="interview-stage h-full bg-background">
