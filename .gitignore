@@ -1,0 +1,11 @@
+node_modules/
+.venv/
+.next/
+data/
+__pycache__/
+*.pyc
+*.tsbuildinfo
+.env
+chroma_db/
+.superpowers/
+vendor/
