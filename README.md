@@ -184,5 +184,13 @@ cd frontend && npm run test:e2e                                             # �
 - `/api/v2/*` 为 V4 端点；`/api/session`、`/api/brainstorm`、`/api/canvas`、`/api/interview`
   保留一个迁移版本，由 adapter 调用同一套应用服务（不存在第二条不受状态机约束的写路径）。
 - `PUT /api/canvas` 返回 `409 CANVAS_IS_DERIVED`：V4 画布由 `project_canvas(product_state)` 确定性投影，不再手工写入。
-- M2/M3 尚未实现的动作（如 `brainstorm` 的四角色工作流、审计闭环）在 Run 里以
+- 已注册的工作流：`clarify`（教练）、`brainstorm`（四角色 + 确定性归并）、
+  `audit_open` / `audit_answer` / `audit_report`（审计闭环）；未注册的动作在 Run 里以
   `failed(FEATURE_NOT_READY)` 明确失败，不会静默降级到旧代码。
+- 画布只从 `product_state` 投影生成；Redis 不参与（验证码/限流/幂等全部走共享 DB）。
+
+### 文档
+
+- 验收报告（逐 AC-01…AC-42 + 已知偏差）：`docs/v4-acceptance-report.md`
+- 发布就绪清单（部署顺序、回滚、验收命令）：`docs/v4-release-checklist.md`
+- 模块接口契约（仓储/服务/SSE 语义）：`docs/v4-m1-interfaces.md`

@@ -491,6 +491,8 @@ export interface AuditSnapshot {
   close_requested: boolean;
   closing_control_id: string | null;
   dimension_states: DimensionState[];
+  /** 审计问题列表随快照一并返回，前端无需为「第 N 问/历史问答」再发一次请求（FR-07）。 */
+  questions: AuditQuestion[];
   report: AuditReport | null;
   created_at: string;
   updated_at: string;

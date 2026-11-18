@@ -1078,6 +1078,32 @@ class AuditAnswerTests(AuditWorkflowTestCase):
         self.assertEqual(self.reload_audit(audit_id).status, AuditStatus.closing.value)
         self.assertEqual(len(self.questions(audit_id)), 1)
 
+    async def test_answer_reads_question_id_from_run_row_when_ctx_lacks_it(self) -> None:
+        """Run 恢复路径下 ctx.run 可能是过期快照，需回落到 Run 行里的 question_id。"""
+
+        audit_id = self.create_audit(status=AuditStatus.active)
+        question_id, answer_id = self.add_question(
+            audit_id, ordinal=1, dimension=AUDIT_DIMENSIONS[0], answer="用户是独立设计师"
+        )
+        run_id, lease_epoch = self.create_run(
+            action="answer_audit", audit_id=audit_id, question_id=question_id
+        )
+        llm = FakeLLM({audit_workflow.PURPOSE_ANSWER: [_answer_payload()]})
+        ctx = self.make_ctx(
+            run_id, llm=llm, current_message_id=answer_id, task_kind=C.TaskKind.audit_answer
+        )
+        stale = SimpleNamespace(**{**vars(ctx.run), "question_id": None})
+        ctx.run = stale
+        self.assertIsNone(getattr(ctx.run, "question_id", None))
+
+        outcome = await audit_workflow.run_audit_answer(ctx)
+        self.assertEqual(outcome.status, RunStatus.succeeded)
+        self.commit_outcome(run_id, lease_epoch, outcome)
+
+        answered = self.question(audit_id, question_id)
+        self.assertEqual(answered.assessment, Assessment.gap.value)
+        self.assertEqual(int(self.reload_audit(audit_id).question_count), 2)
+
     async def test_answer_without_question_id_fails(self) -> None:
         audit_id = self.create_audit(status=AuditStatus.active)
         run_id, lease_epoch = self.create_run(action="answer_audit", audit_id=audit_id)
