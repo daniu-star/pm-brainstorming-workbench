@@ -129,3 +129,60 @@ Open http://localhost:3000
 | `AUTH_SECRET_KEY` | HMAC secret for signed login sessions, at least 32 chars | (required) |
 | `AUTH_COOKIE_SECURE` | Send auth cookie only over HTTPS | `false` |
 | `AUTH_SESSION_DAYS` | Login session duration | `7` |
+
+## V4 architecture (PRD V4.0, M1 已落地)
+
+V4 把「会话历史 / 产品状态 / 上下文装配」拆成三个独立层（PRD ADR-02），所有写操作走
+「命令先落库 → 独立 Worker 领取执行 → 结果与事件同事务提交」的持久执行模型（ADR-04）。
+
+```
+backend/
+├── domain/          # canonical 契约：contracts.py（实体/枚举/限额）、state_machine.py、errors.py
+├── repositories/    # SQLAlchemy 2.x 仓储：database.py(18 张表) / session_repo / run_repo / audit_repo / auth_repo
+├── services/        # 应用服务：command_service（命令入口+幂等+提交）、context_builder、canvas_projector、reducer
+├── workflows/       # 工作流：runner（Run 生命周期）、coach（澄清）、brainstorm（四角色）、audit（审计）
+├── workers/         # run_worker：常驻 Worker，领取 Run、续租、执行、回收
+├── migrations/      # import_json_sessions.py：旧 JSON 会话迁移（--dry-run / --apply）
+└── api/v2/          # /api/v2/* 新端点；api/* 旧路由保留为 adapter
+```
+
+### 数据库与 Worker
+
+```bash
+cd backend
+# 首次运行自动建表（SQLite，WAL + foreign_keys=ON + busy_timeout=5000）
+# 启动 API 时会自动 initialize_database()；也可手动执行：
+python -c "from repositories.database import initialize_database; initialize_database()"
+
+# 启动常驻 Worker（独立进程；API 只负责接命令与订阅事件）
+python -m workers.run_worker            # 单轮调试：--once
+```
+
+环境变量 `DATABASE_URL` 可覆盖数据库位置（默认 `backend/data/app.db`）。
+
+### 旧数据迁移
+
+```bash
+cd backend
+python -m migrations.import_json_sessions --source <旧 sessions 目录> --dry-run
+python -m migrations.import_json_sessions --source <旧 sessions 目录> --apply
+```
+
+迁移不删除、不移动、不覆盖源文件；空 owner 的旧会话隔离为 `legacy-unknown@local`；
+旧画布存为 legacy artifact；重复执行按源文件 hash 幂等跳过。
+
+### 测试
+
+```bash
+cd backend && ../.venv/Scripts/python.exe -m unittest discover -s tests -v   # 后端全量
+cd frontend && npm test                                                     # 类型检查 + node --test
+cd frontend && npm run test:e2e                                             # 真起后端进程的 API 冒烟
+```
+
+### 兼容性
+
+- `/api/v2/*` 为 V4 端点；`/api/session`、`/api/brainstorm`、`/api/canvas`、`/api/interview`
+  保留一个迁移版本，由 adapter 调用同一套应用服务（不存在第二条不受状态机约束的写路径）。
+- `PUT /api/canvas` 返回 `409 CANVAS_IS_DERIVED`：V4 画布由 `project_canvas(product_state)` 确定性投影，不再手工写入。
+- M2/M3 尚未实现的动作（如 `brainstorm` 的四角色工作流、审计闭环）在 Run 里以
+  `failed(FEATURE_NOT_READY)` 明确失败，不会静默降级到旧代码。

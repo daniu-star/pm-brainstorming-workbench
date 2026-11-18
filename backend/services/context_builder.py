@@ -343,8 +343,10 @@ def _product_state_section(state: ProductState) -> _Section | None:
     )
 
 
-def _evidence_section(rows: list[Any], notes: list[str]) -> _Section | None:
-    if not rows:
+def _evidence_section(
+    rows: list[Any], notes: list[str], knowledge: list["_Unit"] | None = None
+) -> _Section | None:
+    if not rows and not knowledge:
         return None
 
     def _weight(row: Any) -> int:
@@ -365,13 +367,77 @@ def _evidence_section(rows: list[Any], notes: list[str]) -> _Section | None:
         if getattr(row, "limitations", None):
             block.append("局限：" + _clip(row.limitations, MAX_ITEM_CHARS))
         units.append(_Unit(text="\n".join(block), ref_id=row.id))
-    notes.append(f"证据 {len(units)} 条按核验等级排序（user_confirmed > source_checked > unverified）")
+    if rows:
+        notes.append(
+            f"证据 {len(units)} 条按核验等级排序（user_confirmed > source_checked > unverified）"
+        )
+    # 检索命中的背景知识排在最后：预算不足时先被丢弃，且 ref_id=None 表示不可引用。
+    if knowledge:
+        units.extend(knowledge)
+        notes.append(
+            f"另有 {len(knowledge)} 条检索背景知识（仅供参照，不可作为 evidence_id 引用）"
+        )
     return _Section(
         section=ContextSection.evidence,
         units=units,
         droppable=True,
         fill_order="score_desc",
     )
+
+
+def _knowledge_units(
+    *,
+    session: Any,
+    state: Any,
+    current_row: Any,
+    role_code: RoleCode,
+    notes: list[str],
+) -> list[_Unit]:
+    """FR-04A：用问题陈述 + 当前输入去本地索引检索，作为**不可引用**的背景知识。"""
+
+    from rag import retriever as _retriever  # 延迟导入：保持 build_context 纯读、便于测试替换
+
+    query_parts: list[str] = []
+    statement = getattr(session, "problem_statement", None)
+    if statement:
+        query_parts.append(str(statement))
+    if current_row is not None and _enum_value(getattr(current_row, "sender_kind", "")) == "human":
+        content = getattr(current_row, "content", None)
+        if content:
+            query_parts.append(str(content))
+    query = _clip(" ".join(query_parts).strip(), 400)
+    if not query:
+        return []
+
+    brief = getattr(state, "brief", None)
+    context_parts: list[str] = []
+    for field_name in ("target_users", "core_problem", "success_criteria"):
+        value = getattr(brief, field_name, None) if brief is not None else None
+        if value:
+            context_parts.append(str(value))
+    product_context = _clip("；".join(context_parts), 300) if context_parts else None
+
+    try:
+        hits = _retriever.search(
+            query,
+            role_code=_enum_value(role_code),
+            product_context=product_context,
+            limit=4,
+        )
+    except Exception:  # noqa: BLE001 - 检索失败不得阻塞主流程
+        logger.warning("检索背景知识失败，按无命中处理", exc_info=True)
+        return []
+
+    units: list[_Unit] = []
+    for hit in hits or []:
+        date = getattr(hit, "source_date", None) or "未标注日期"
+        block = [
+            f"[背景知识·不可引用] {hit.title} / {hit.heading}",
+            "摘要：" + _clip(hit.excerpt, MAX_EXCERPT_CHARS),
+            f"来源：{hit.source_uri}（相关度 {hit.score:.2f}，{date}，未验证）",
+        ]
+        units.append(_Unit(text="\n".join(block), ref_id=None))
+    return units
 
 
 def _audit_section(db, audit_id: str | None) -> _Section | None:
@@ -590,7 +656,14 @@ def build_context(
     state_section = _product_state_section(state)
     if state_section is not None:
         sections.append(state_section)
-    evidence_section = _evidence_section(_list_evidence(db, session_id), notes)
+    knowledge = _knowledge_units(
+        session=session,
+        state=state,
+        current_row=current_row,
+        role_code=role_code,
+        notes=notes,
+    )
+    evidence_section = _evidence_section(_list_evidence(db, session_id), notes, knowledge)
     if evidence_section is not None:
         sections.append(evidence_section)
     audit_section = _audit_section(db, audit_id)

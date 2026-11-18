@@ -131,6 +131,8 @@ class BudgetTracker:
     input_tokens: int = 0
     output_tokens: int = 0
     upstream_calls: int = 0
+    provider_calls: int = 0
+    estimated_calls: int = 0
     reserved_input_tokens: int = 0
     reserved_output_tokens: int = 0
     exceeded: bool = False
@@ -284,10 +286,16 @@ class BudgetTracker:
         if usage is not None:
             prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
             completion = int(getattr(usage, "completion_tokens", 0) or 0)
+            source = str(getattr(usage, "usage_source", "provider") or "provider")
+            if source == "estimated":
+                self.estimated_calls += 1
+            else:
+                self.provider_calls += 1
         else:
             # 失败/流式无 usage：按预留上限记账，避免崩溃后无限重试。
             prompt = reservation.input_tokens
             completion = max(reservation.output_tokens, estimated_completion_tokens)
+            self.estimated_calls += 1
 
         self.input_tokens += prompt
         self.output_tokens += completion
@@ -314,11 +322,23 @@ class BudgetTracker:
     # -- 序列化 ------------------------------------------------------------ #
 
     def as_dict(self) -> dict[str, Any]:
+        if self.estimated_calls == 0 and self.provider_calls > 0:
+            usage_source = "provider"
+        elif self.provider_calls == 0 and self.estimated_calls > 0:
+            usage_source = "estimated"
+        elif self.provider_calls and self.estimated_calls:
+            usage_source = "mixed"
+        else:
+            usage_source = "provider"
         return {
             "prompt_tokens": self.input_tokens,
             "completion_tokens": self.output_tokens,
             "total_tokens": self.input_tokens + self.output_tokens,
+            "calls": self.upstream_calls,
             "upstream_calls": self.upstream_calls,
+            "provider_calls": self.provider_calls,
+            "estimated_calls": self.estimated_calls,
+            "usage_source": usage_source,
             "limits": {
                 "max_run_input_tokens": self.max_run_input_tokens,
                 "max_run_output_tokens": self.max_run_output_tokens,
@@ -769,6 +789,7 @@ def _submit_outcome(
                     error_code=ErrorCode.RUN_DEADLINE_EXCEEDED,
                     error_message="Run 已超过截止时间，迟到的结果被丢弃",
                     warnings=warnings,
+                    usage=getattr(outcome, "usage", None),
                 )
 
             apply_outcome(
@@ -800,6 +821,7 @@ def _force_terminal(
     error_code: str | None,
     error_message: str | None,
     bump_session_version: bool,
+    usage: dict[str, Any] | None = None,
 ) -> bool:
     """兜底终结：绕过正常提交路径直接写 Run 终态（仅在 apply_outcome 不可用时）。
 
@@ -844,6 +866,7 @@ def _force_terminal(
                     error_message=error_message,
                     lease_owner=None,
                     lease_expires_at=None,
+                    **({"usage_json": canonical_json(usage)} if usage is not None else {}),
                 )
             )
             if not _has_terminal_event(db, run_repo, run_id):
@@ -905,14 +928,20 @@ def _finalize_failure(
     code: str,
     message: str,
     warnings: list[str] | None = None,
+    usage: dict[str, Any] | None = None,
     now: Callable[[], float],
 ) -> None:
-    """把 Run 终结为 failed；apply_outcome 不可用时走兜底。"""
+    """把 Run 终结为 failed；apply_outcome 不可用时走兜底。
+
+    ``usage`` 为截至当前的累计账本（:meth:`BudgetTracker.as_dict`），随终结
+    事务写入 ``runs.usage_json``；预算超限路径同样携带，便于审计已花费的调用。
+    """
     outcome = _make_outcome(
         status=RunStatus.failed,
         error_code=code,
         error_message=_truncate(message),
         warnings=list(warnings or []),
+        usage=usage,
     )
     result = _submit_outcome(
         run_id=run_id,
@@ -935,6 +964,7 @@ def _finalize_failure(
         error_code=ErrorCode.INTERNAL,
         error_message="结果提交失败，任务已终止",
         bump_session_version=True,
+        usage=usage,
     )
 
 
@@ -1095,6 +1125,7 @@ def execute_run(
             code=ErrorCode.INTERNAL,
             message=f"{type(exc).__name__}: {exc}",
             warnings=list(budget.warnings),
+            usage=budget.as_dict(),
             now=now,
         )
     finally:
@@ -1187,6 +1218,7 @@ def _drive_run(
                         error_code=None,
                         error_message="收到取消请求，任务已终止",
                         warnings=list(budget.warnings),
+                        usage=budget.as_dict(),
                     )
                     lease_epoch = int(run.lease_epoch or 0)
                     break_commit = True
@@ -1224,6 +1256,7 @@ def _drive_run(
                 code=ErrorCode.RUN_DEADLINE_EXCEEDED,
                 message=f"Run 已超过截止时间（deadline_at={run_deadline}）",
                 warnings=list(budget.warnings),
+                usage=budget.as_dict(),
                 now=now,
             )
             return
@@ -1238,6 +1271,7 @@ def _drive_run(
                 code=ErrorCode.FEATURE_NOT_READY,
                 message=f"暂不支持的 action: {action}",
                 warnings=list(budget.warnings),
+                usage=budget.as_dict(),
                 now=now,
             )
             return
@@ -1253,6 +1287,7 @@ def _drive_run(
                 code=exc.code,
                 message=exc.message,
                 warnings=list(budget.warnings),
+                usage=budget.as_dict(),
                 now=now,
             )
             return
@@ -1314,6 +1349,7 @@ def _drive_run(
             outcome = _make_outcome(
                 status=RunStatus.succeeded,
                 warnings=list(budget.warnings) + ["RECOVERED_FROM_DURABLE_STEP"],
+                usage=budget.as_dict(),
             )
             result = _submit_outcome(
                 run_id=run_id,
@@ -1348,6 +1384,7 @@ def _drive_run(
                 code=str(step_error_code or ErrorCode.INTERNAL),
                 message=f"步骤 {logical_key} 已用尽 {MAX_STEP_ATTEMPTS} 次尝试",
                 warnings=list(budget.warnings),
+                usage=budget.as_dict(),
                 now=now,
             )
             return
@@ -1376,6 +1413,7 @@ def _drive_run(
                 code=ErrorCode.FEATURE_NOT_READY,
                 message=f"任务类型 {task_kind.value} 尚未实现（M1 仅支持 clarify）",
                 warnings=list(budget.warnings),
+                usage=budget.as_dict(),
                 now=now,
             )
             return
@@ -1431,6 +1469,7 @@ def _drive_run(
                 code=exc.code,
                 message=exc.message,
                 warnings=list(budget.warnings),
+                usage=budget.as_dict(),
                 now=now,
             )
             return
@@ -1462,6 +1501,7 @@ def _drive_run(
                 code=exc.code,
                 message=str(exc),
                 warnings=list(budget.warnings),
+                usage=budget.as_dict(),
                 now=now,
             )
             return
@@ -1485,6 +1525,7 @@ def _drive_run(
                 code=code,
                 message=f"步骤 {logical_key} 超时",
                 warnings=list(budget.warnings),
+                usage=budget.as_dict(),
                 now=now,
             )
             return
@@ -1537,6 +1578,7 @@ def _drive_run(
                 code=budget.exceeded_code or ErrorCode.BUDGET_EXCEEDED,
                 message=budget.exceeded_reason or "预算超限",
                 warnings=list(budget.warnings),
+                usage=budget.as_dict(),
                 now=now,
             )
             return
