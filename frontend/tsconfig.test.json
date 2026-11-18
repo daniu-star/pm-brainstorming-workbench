@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "outDir": "node_modules/.cache/test-build",
+    "rootDir": ".",
+    "declaration": false,
+    "sourceMap": false,
+    "incremental": false,
+    "isolatedModules": false,
+    "allowJs": false
+  },
+  "include": [],
+  "files": [
+    "lib/contracts.generated.ts",
+    "lib/stateGuards.ts",
+    "lib/api.ts",
+    "lib/sse.ts"
+  ]
+}

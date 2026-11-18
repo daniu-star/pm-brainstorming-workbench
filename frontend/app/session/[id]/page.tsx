@@ -6,6 +6,7 @@ import { useSessionStore } from "@/store/sessionStore";
 import { Header } from "@/components/Header";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { CanvasPanel } from "@/components/canvas/CanvasPanel";
+import { BriefCard } from "@/components/brief/BriefCard";
 import { HistoryDrawer } from "@/components/HistoryDrawer";
 import { ROLES } from "@/lib/types";
 import { BrainIcon } from "@/components/icons";
@@ -19,6 +20,7 @@ function WorkbenchContent() {
     sessionId,
     loadSession,
     abortStream,
+    unsubscribe,
     isHistoryOpen,
     toggleHistory,
   } = useSessionStore();
@@ -56,12 +58,14 @@ function WorkbenchContent() {
     };
   }, [params?.id, loadSession, searchParams]);
 
-  // Cleanup SSE on unmount
+  // Cleanup SSE / run subscription on unmount. Switching sessions only
+  // cancels the local subscription — it never cancels the server-side run.
   useEffect(() => {
     return () => {
       abortStream();
+      unsubscribe();
     };
-  }, [abortStream]);
+  }, [abortStream, unsubscribe]);
 
   if (loading) {
     return (
@@ -160,6 +164,7 @@ function WorkbenchContent() {
             mobileTab === "chat" ? "flex" : "hidden"
           } md:flex`}
         >
+          <BriefCard />
           <ChatPanel />
         </div>
       </div>

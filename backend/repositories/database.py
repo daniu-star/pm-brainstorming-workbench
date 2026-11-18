@@ -1,0 +1,638 @@
+"""数据库与 ORM schema（PRD ADR-03 / WP-02）。
+
+约定：
+- 默认 SQLite（WAL、foreign_keys=ON、busy_timeout=5000ms），可被 DATABASE_URL 覆盖；
+- 每线程/任务独立 Session，事务中禁止等待模型或网络；
+- 时间戳统一存 UTC ISO-8601 文本；租约/截止时间另存 epoch 秒整数；
+- 消息、任务、事件、审计问题、幂等键与权限字段均可独立查询，并带约束。
+"""
+from __future__ import annotations
+
+import os
+import threading
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Iterator
+
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    create_engine,
+    event,
+    text,
+)
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
+# --------------------------------------------------------------------------- #
+# 路径与 URL
+# --------------------------------------------------------------------------- #
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_DATA_DIR = BACKEND_DIR / "data"
+DEFAULT_DB_FILE = DEFAULT_DATA_DIR / "app.db"
+
+
+def default_database_url() -> str:
+    """默认使用 backend/data/app.db；测试可用 DATABASE_URL 或 configure() 覆盖。"""
+    configured = os.environ.get("DATABASE_URL")
+    if configured:
+        return configured
+    DEFAULT_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    return f"sqlite+pysqlite:///{DEFAULT_DB_FILE.as_posix()}"
+
+
+def _apply_sqlite_pragmas(dbapi_connection, _connection_record) -> None:  # noqa: ANN001
+    """每个新连接都设置 WAL / 外键 / 忙等，保证多进程下行为一致。"""
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+    finally:
+        cursor.close()
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+# --------------------------------------------------------------------------- #
+# 枚举取值（与 domain.contracts 保持一致；这里用字符串常量避免循环导入）
+# --------------------------------------------------------------------------- #
+
+SESSION_PHASES = "'clarifying','brainstorming','auditing','audit_completed'"
+RUN_STATUSES = "'queued','running','interrupted','cancel_requested','succeeded','partial_succeeded','failed','cancelled'"
+STEP_STATUSES = "'pending','running','interrupted','succeeded','failed','cancelled','skipped'"
+MESSAGE_STATUSES = "'draft','completed','interrupted','cancelled'"
+SENDER_KINDS = "'human','agent','system'"
+MESSAGE_STAGES = "'clarify','brainstorm','audit','system'"
+AUDIT_STATUSES = "'created','opening','active','closing','completed','failed','cancelled'"
+CONTROL_STATUSES = "'accepted','scheduled','applied','failed'"
+CONTROL_ACTIONS = "'end_audit','cancel_audit'"
+
+
+def _in(column: str, values: str) -> str:
+    return f"{column} IN ({values})"
+
+
+# --------------------------------------------------------------------------- #
+# ORM 行定义
+# --------------------------------------------------------------------------- #
+
+
+class SessionRow(Base):
+    __tablename__ = "sessions"
+
+    id = Column(String(64), primary_key=True)
+    owner_email = Column(String(320), nullable=False)
+    phase = Column(String(32), nullable=False, default="clarifying")
+    session_version = Column(Integer, nullable=False, default=1, server_default="1")
+    current_product_version = Column(Integer, nullable=False, default=1, server_default="1")
+    current_audit_id = Column(String(64), nullable=True)
+    active_run_id = Column(String(64), nullable=True)
+    current_control_id = Column(String(64), nullable=True)
+    problem_statement = Column(Text, nullable=False, default="")
+    brief_status = Column(String(32), nullable=False, default="draft", server_default="draft")
+    next_message_seq = Column(Integer, nullable=False, default=1, server_default="1")
+    created_at = Column(String(32), nullable=False)
+    updated_at = Column(String(32), nullable=False)
+    deleted_at = Column(String(32), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(_in("phase", SESSION_PHASES), name="ck_sessions_phase"),
+        Index("ix_sessions_owner_updated", "owner_email", "updated_at"),
+        Index("ix_sessions_owner_deleted", "owner_email", "deleted_at"),
+        Index("ix_sessions_active_run", "active_run_id"),
+    )
+
+
+class MessageRow(Base):
+    __tablename__ = "messages"
+
+    id = Column(String(64), primary_key=True)
+    session_id = Column(String(64), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
+    seq = Column(Integer, nullable=False)
+    sender_kind = Column(String(16), nullable=False)
+    role_code = Column(String(32), nullable=True)
+    stage = Column(String(16), nullable=False)
+    content = Column(Text, nullable=False, default="")
+    status = Column(String(16), nullable=False, default="completed")
+    run_id = Column(String(64), nullable=True)
+    audit_id = Column(String(64), nullable=True)
+    created_at = Column(String(32), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("session_id", "seq", name="uq_messages_session_seq"),
+        CheckConstraint(_in("sender_kind", SENDER_KINDS), name="ck_messages_sender_kind"),
+        CheckConstraint(_in("status", MESSAGE_STATUSES), name="ck_messages_status"),
+        CheckConstraint(_in("stage", MESSAGE_STAGES), name="ck_messages_stage"),
+        Index("ix_messages_session_seq", "session_id", "seq"),
+        Index("ix_messages_run", "run_id"),
+        Index("ix_messages_audit", "audit_id"),
+    )
+
+
+class ProductStateRow(Base):
+    """版本快照不可原地改写：只插入新 version 行。"""
+
+    __tablename__ = "product_states"
+
+    session_id = Column(String(64), ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True)
+    version = Column(Integer, primary_key=True)
+    schema_version = Column(Integer, nullable=False, default=1, server_default="1")
+    payload_json = Column(Text, nullable=False)
+    source_run_id = Column(String(64), nullable=True)
+    created_at = Column(String(32), nullable=False)
+
+
+class EvidenceRow(Base):
+    __tablename__ = "evidence"
+
+    id = Column(String(64), primary_key=True)
+    session_id = Column(String(64), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=True)
+    kind = Column(String(32), nullable=False)
+    source_uri = Column(Text, nullable=True)
+    title = Column(Text, nullable=False, default="")
+    excerpt = Column(Text, nullable=False, default="")
+    content_hash = Column(String(64), nullable=False, default="")
+    source_date = Column(String(64), nullable=True)
+    retrieved_at = Column(String(32), nullable=False)
+    verification_status = Column(String(32), nullable=False, default="unverified")
+    limitations = Column(Text, nullable=True)
+    created_by = Column(String(320), nullable=True)
+    created_at = Column(String(32), nullable=False)
+
+    __table_args__ = (
+        Index("ix_evidence_session", "session_id"),
+        Index("ix_evidence_hash", "content_hash"),
+    )
+
+
+class RunRow(Base):
+    __tablename__ = "runs"
+
+    id = Column(String(64), primary_key=True)
+    session_id = Column(String(64), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
+    owner_email = Column(String(320), nullable=False)
+    request_id = Column(String(64), nullable=False)
+    action = Column(String(32), nullable=False)
+    input_hash = Column(String(64), nullable=False, default="")
+    base_session_version = Column(Integer, nullable=False, default=0)
+    base_product_version = Column(Integer, nullable=False, default=1)
+    result_product_version = Column(Integer, nullable=True)
+    status = Column(String(32), nullable=False, default="queued")
+    budget_json = Column(Text, nullable=False, default="{}")
+    usage_json = Column(Text, nullable=False, default="{}")
+    lease_owner = Column(String(128), nullable=True)
+    lease_epoch = Column(Integer, nullable=False, default=0, server_default="0")
+    lease_expires_at = Column(Integer, nullable=True)
+    heartbeat_at = Column(Integer, nullable=True)
+    deadline_at = Column(Integer, nullable=True)
+    queue_deadline_at = Column(Integer, nullable=True)
+    parent_run_id = Column(String(64), nullable=True)
+    audit_id = Column(String(64), nullable=True)
+    base_audit_version = Column(Integer, nullable=True)
+    retry_audit_version = Column(Integer, nullable=True)
+    question_id = Column(String(64), nullable=True)
+    continuation_token = Column(String(64), nullable=True)
+    error_code = Column(String(64), nullable=True)
+    error_message = Column(Text, nullable=True)
+    warnings_json = Column(Text, nullable=False, default="[]")
+    created_at = Column(String(32), nullable=False)
+    started_at = Column(String(32), nullable=True)
+    finished_at = Column(String(32), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(_in("status", RUN_STATUSES), name="ck_runs_status"),
+        Index("ix_runs_session", "session_id"),
+        Index("ix_runs_claim", "status", "lease_expires_at"),
+        Index("ix_runs_owner_status", "owner_email", "status"),
+        Index("ix_runs_parent", "parent_run_id"),
+        Index("ix_runs_audit", "audit_id"),
+    )
+
+
+class StepRow(Base):
+    __tablename__ = "steps"
+
+    id = Column(String(64), primary_key=True)
+    run_id = Column(String(64), ForeignKey("runs.id", ondelete="CASCADE"), nullable=False)
+    logical_key = Column(String(128), nullable=False)
+    kind = Column(String(32), nullable=False)
+    role_code = Column(String(32), nullable=True)
+    status = Column(String(32), nullable=False, default="pending")
+    attempt_count = Column(Integer, nullable=False, default=0, server_default="0")
+    input_hash = Column(String(64), nullable=False, default="")
+    input_snapshot_json = Column(Text, nullable=False, default="{}")
+    output_json = Column(Text, nullable=True)
+    error_code = Column(String(64), nullable=True)
+    error_message = Column(Text, nullable=True)
+    previous_step_id = Column(String(64), nullable=True)
+    created_at = Column(String(32), nullable=False)
+    started_at = Column(String(32), nullable=True)
+    finished_at = Column(String(32), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("run_id", "logical_key", name="uq_steps_run_logical"),
+        CheckConstraint(_in("status", STEP_STATUSES), name="ck_steps_status"),
+        Index("ix_steps_run", "run_id"),
+    )
+
+
+class StepCandidateRow(Base):
+    """候选登记器分配服务器 ID；staging 阶段尚不属于权威 ProductState。"""
+
+    __tablename__ = "step_candidates"
+
+    id = Column(String(64), primary_key=True)
+    run_id = Column(String(64), ForeignKey("runs.id", ondelete="CASCADE"), nullable=False)
+    step_id = Column(String(64), ForeignKey("steps.id", ondelete="CASCADE"), nullable=False)
+    local_id = Column(String(64), nullable=False)
+    kind = Column(String(32), nullable=False)
+    payload_json = Column(Text, nullable=False, default="{}")
+    created_at = Column(String(32), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("run_id", "step_id", "local_id", name="uq_step_candidates_scope"),
+        Index("ix_step_candidates_step", "step_id"),
+    )
+
+
+class EventRow(Base):
+    __tablename__ = "events"
+
+    run_id = Column(String(64), ForeignKey("runs.id", ondelete="CASCADE"), primary_key=True)
+    seq = Column(Integer, primary_key=True)
+    session_id = Column(String(64), nullable=False)
+    schema_version = Column(Integer, nullable=False, default=1, server_default="1")
+    type = Column(String(48), nullable=False)
+    payload_json = Column(Text, nullable=False, default="{}")
+    created_at = Column(String(32), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("run_id", "seq", name="uq_events_run_seq"),
+        Index("ix_events_session", "session_id", "created_at"),
+        Index("ix_events_type", "type"),
+    )
+
+
+class AuditRow(Base):
+    __tablename__ = "audits"
+
+    id = Column(String(64), primary_key=True)
+    session_id = Column(String(64), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
+    product_version = Column(Integer, nullable=False)
+    audit_version = Column(Integer, nullable=False, default=1, server_default="1")
+    status = Column(String(32), nullable=False, default="created")
+    question_count = Column(Integer, nullable=False, default=0, server_default="0")
+    end_reason = Column(String(32), nullable=True)
+    dimension_states_json = Column(Text, nullable=False, default="[]")
+    report_json = Column(Text, nullable=True)
+    active_question_id = Column(String(64), nullable=True)
+    pending_continuation = Column(Integer, nullable=False, default=0, server_default="0")
+    close_requested = Column(Integer, nullable=False, default=0, server_default="0")
+    closing_control_id = Column(String(64), nullable=True)
+    created_at = Column(String(32), nullable=False)
+    updated_at = Column(String(32), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(_in("status", AUDIT_STATUSES), name="ck_audits_status"),
+        CheckConstraint("question_count >= 0 AND question_count <= 18", name="ck_audits_question_count"),
+        Index("ix_audits_session", "session_id"),
+        Index("ix_audits_session_version", "session_id", "product_version"),
+    )
+
+
+class AuditQuestionRow(Base):
+    __tablename__ = "audit_questions"
+
+    id = Column(String(64), primary_key=True)
+    audit_id = Column(String(64), ForeignKey("audits.id", ondelete="CASCADE"), nullable=False)
+    ordinal = Column(Integer, nullable=False)
+    dimension = Column(String(48), nullable=False)
+    issue_refs_json = Column(Text, nullable=False, default="[]")
+    question_text = Column(Text, nullable=False, default="")
+    question_message_id = Column(String(64), nullable=True)
+    answer_message_id = Column(String(64), nullable=True)
+    assessment = Column(String(32), nullable=False, default="awaiting_answer")
+    rationale = Column(Text, nullable=False, default="")
+    evidence_refs_json = Column(Text, nullable=False, default="[]")
+    created_at = Column(String(32), nullable=False)
+    updated_at = Column(String(32), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("audit_id", "ordinal", name="uq_audit_questions_ordinal"),
+        CheckConstraint("ordinal >= 1 AND ordinal <= 18", name="ck_audit_questions_ordinal"),
+        Index("ix_audit_questions_audit", "audit_id"),
+    )
+
+
+class AuditAssessmentRevisionRow(Base):
+    """旧修订不可覆盖（PRD §5.2）。"""
+
+    __tablename__ = "audit_assessment_revisions"
+
+    id = Column(String(64), primary_key=True)
+    audit_id = Column(String(64), ForeignKey("audits.id", ondelete="CASCADE"), nullable=False)
+    audit_version = Column(Integer, nullable=False)
+    dimension = Column(String(48), nullable=True)
+    question_id = Column(String(64), nullable=True)
+    before_json = Column(Text, nullable=False, default="{}")
+    after_json = Column(Text, nullable=False, default="{}")
+    origin = Column(String(16), nullable=False, default="human")
+    source_message_ids_json = Column(Text, nullable=False, default="[]")
+    evidence_refs_json = Column(Text, nullable=False, default="[]")
+    rationale = Column(Text, nullable=False, default="")
+    created_at = Column(String(32), nullable=False)
+
+    __table_args__ = (Index("ix_audit_revisions_audit", "audit_id"),)
+
+
+class AuditReportRevisionRow(Base):
+    __tablename__ = "audit_report_revisions"
+
+    id = Column(String(64), primary_key=True)
+    audit_id = Column(String(64), ForeignKey("audits.id", ondelete="CASCADE"), nullable=False)
+    audit_version = Column(Integer, nullable=False)
+    report_json = Column(Text, nullable=False)
+    generated_by = Column(String(16), nullable=False, default="model")
+    created_at = Column(String(32), nullable=False)
+
+    __table_args__ = (Index("ix_audit_report_revisions_audit", "audit_id"),)
+
+
+class IdempotencyRow(Base):
+    __tablename__ = "idempotency_records"
+
+    owner_email = Column(String(320), primary_key=True)
+    request_id = Column(String(64), primary_key=True)
+    action = Column(String(32), nullable=False)
+    resource_scope = Column(String(128), nullable=False, default="")
+    input_hash = Column(String(64), nullable=False, default="")
+    response_status = Column(Integer, nullable=False, default=202)
+    response_json = Column(Text, nullable=False, default="{}")
+    related_run_id = Column(String(64), nullable=True)
+    related_control_id = Column(String(64), nullable=True)
+    created_at = Column(String(32), nullable=False)
+    #: 幂等记录保留 30 天（PRD §5.3）；epoch 秒整数，便于 SQL 比较与索引。
+    expires_at = Column(Integer, nullable=False)
+
+    __table_args__ = (Index("ix_idempotency_expires", "expires_at"),)
+
+
+class ControlIntentRow(Base):
+    __tablename__ = "control_intents"
+
+    id = Column(String(64), primary_key=True)
+    session_id = Column(String(64), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
+    audit_id = Column(String(64), nullable=False)
+    owner_email = Column(String(320), nullable=False)
+    request_id = Column(String(64), nullable=False)
+    action = Column(String(32), nullable=False)
+    target_run_id = Column(String(64), nullable=True)
+    status = Column(String(32), nullable=False, default="accepted")
+    related_run_id = Column(String(64), nullable=True)
+    error_code = Column(String(64), nullable=True)
+    created_at = Column(String(32), nullable=False)
+    updated_at = Column(String(32), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("owner_email", "request_id", name="uq_control_intents_request"),
+        CheckConstraint(_in("action", CONTROL_ACTIONS), name="ck_control_intents_action"),
+        CheckConstraint(_in("status", CONTROL_STATUSES), name="ck_control_intents_status"),
+        Index("ix_control_intents_audit", "audit_id", "status"),
+        Index("ix_control_intents_session", "session_id"),
+    )
+
+
+class AuthCodeRow(Base):
+    __tablename__ = "auth_codes"
+
+    id = Column(String(64), primary_key=True)
+    email = Column(String(320), nullable=False)
+    code_hash = Column(String(128), nullable=False)
+    expires_at = Column(Integer, nullable=False)
+    attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    consumed_at = Column(Integer, nullable=True)
+    created_at = Column(Integer, nullable=False)
+    last_sent_at = Column(Integer, nullable=False)
+
+    __table_args__ = (Index("ix_auth_codes_email", "email", "created_at"),)
+
+
+class RateLimitRow(Base):
+    """滑动窗口计数：scope+key+window_start 唯一。"""
+
+    __tablename__ = "rate_limits"
+
+    id = Column(String(64), primary_key=True)
+    scope = Column(String(48), nullable=False)
+    key = Column(String(320), nullable=False)
+    window_start = Column(Integer, nullable=False)
+    count = Column(Integer, nullable=False, default=1, server_default="1")
+    updated_at = Column(Integer, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("scope", "key", "window_start", name="uq_rate_limits_window"),
+        Index("ix_rate_limits_lookup", "scope", "key", "window_start"),
+    )
+
+
+class MigrationRecordRow(Base):
+    __tablename__ = "migration_records"
+
+    source_path = Column(String(1024), primary_key=True)
+    source_hash = Column(String(64), nullable=False)
+    session_id = Column(String(64), nullable=True)
+    import_status = Column(String(32), nullable=False, default="imported")
+    warnings_json = Column(Text, nullable=False, default="[]")
+    imported_at = Column(String(32), nullable=False)
+
+
+class LegacyArtifactRow(Base):
+    """旧 canvas / 旧面试等不可直接结构化内容的归档（PRD §8）。"""
+
+    __tablename__ = "legacy_artifacts"
+
+    id = Column(String(64), primary_key=True)
+    session_id = Column(String(64), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
+    kind = Column(String(32), nullable=False)
+    payload_json = Column(Text, nullable=False, default="{}")
+    source_path = Column(String(1024), nullable=True)
+    created_at = Column(String(32), nullable=False)
+
+    __table_args__ = (Index("ix_legacy_artifacts_session", "session_id"),)
+
+
+ALL_TABLES = (
+    SessionRow,
+    MessageRow,
+    ProductStateRow,
+    EvidenceRow,
+    RunRow,
+    StepRow,
+    StepCandidateRow,
+    EventRow,
+    AuditRow,
+    AuditQuestionRow,
+    AuditAssessmentRevisionRow,
+    AuditReportRevisionRow,
+    IdempotencyRow,
+    ControlIntentRow,
+    AuthCodeRow,
+    RateLimitRow,
+    MigrationRecordRow,
+    LegacyArtifactRow,
+)
+
+
+# --------------------------------------------------------------------------- #
+# Engine / Session 管理
+# --------------------------------------------------------------------------- #
+
+_lock = threading.Lock()
+_engine: Engine | None = None
+_session_factory: sessionmaker[Session] | None = None
+_engine_url: str | None = None
+
+
+def _build_engine(url: str) -> Engine:
+    kwargs: dict = {"future": True, "pool_pre_ping": True}
+    if url.startswith("sqlite"):
+        kwargs["connect_args"] = {"check_same_thread": False, "timeout": 30}
+    engine = create_engine(url, **kwargs)
+    if url.startswith("sqlite"):
+        event.listen(engine, "connect", _apply_sqlite_pragmas)
+    return engine
+
+
+def configure(database_url: str | None = None, *, force: bool = False) -> Engine:
+    """配置全局 engine。测试可用 ``configure("sqlite+pysqlite:///:memory:", force=True)``。"""
+    global _engine, _session_factory, _engine_url
+
+    url = database_url or default_database_url()
+    with _lock:
+        if _engine is not None and not force:
+            if _engine_url == url:
+                return _engine
+            raise RuntimeError(
+                f"database already configured as {_engine_url}; call configure(force=True) to switch"
+            )
+        if _engine is not None and force:
+            _engine.dispose()
+        _engine = _build_engine(url)
+        _session_factory = sessionmaker(bind=_engine, autoflush=False, expire_on_commit=False, future=True)
+        _engine_url = url
+        return _engine
+
+
+def get_engine() -> Engine:
+    if _engine is None:
+        return configure()
+    return _engine
+
+
+def get_session_factory() -> sessionmaker[Session]:
+    if _session_factory is None:
+        configure()
+    assert _session_factory is not None
+    return _session_factory
+
+
+@contextmanager
+def session_scope() -> Iterator[Session]:
+    """一个短事务：正常退出提交，异常回滚。禁止在此块内等待模型/网络。"""
+    factory = get_session_factory()
+    db = factory()
+    try:
+        yield db
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def new_session() -> Session:
+    """给调用方自行管理生命周期的 Session（Worker 每个任务一个）。"""
+    return get_session_factory()()
+
+
+def initialize_database(engine: Engine | None = None, *, drop_first: bool = False) -> Engine:
+    """建表 + 基础索引。生产迁移由 Alembic 负责，这里是本地/测试的快速路径。"""
+    target = engine or get_engine()
+    if drop_first:
+        Base.metadata.drop_all(target)
+    Base.metadata.create_all(target)
+    return target
+
+
+def dispose_engine() -> None:
+    """释放当前引擎的所有连接（Windows 上不释放会锁住 sqlite 文件，导致临时目录删不掉）。"""
+    global _engine, _session_factory, _engine_url
+    with _lock:
+        if _engine is not None:
+            _engine.dispose()
+        _engine = None
+        _session_factory = None
+        _engine_url = None
+
+
+def reset_for_tests(database_url: str) -> Engine:
+    """测试专用：切换到一个全新数据库并建表。"""
+    dispose_engine()
+    engine = configure(database_url, force=True)
+    initialize_database(engine, drop_first=True)
+    return engine
+
+
+def healthcheck() -> bool:
+    try:
+        with session_scope() as db:
+            db.execute(text("SELECT 1"))
+        return True
+    except Exception:  # pragma: no cover - 健康检查只返回布尔
+        return False
+
+
+__all__ = [
+    "ALL_TABLES",
+    "AuditAssessmentRevisionRow",
+    "AuditQuestionRow",
+    "AuditReportRevisionRow",
+    "AuditRow",
+    "AuthCodeRow",
+    "Base",
+    "ControlIntentRow",
+    "EventRow",
+    "EvidenceRow",
+    "IdempotencyRow",
+    "LegacyArtifactRow",
+    "MessageRow",
+    "MigrationRecordRow",
+    "ProductStateRow",
+    "RateLimitRow",
+    "RunRow",
+    "SessionRow",
+    "StepCandidateRow",
+    "StepRow",
+    "configure",
+    "default_database_url",
+    "get_engine",
+    "get_session_factory",
+    "dispose_engine",
+    "healthcheck",
+    "initialize_database",
+    "new_session",
+    "reset_for_tests",
+    "session_scope",
+]

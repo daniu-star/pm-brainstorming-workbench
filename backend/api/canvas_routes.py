@@ -1,21 +1,27 @@
-import logging
-from asyncio import to_thread
+"""旧画布路由（/api/canvas）→ v2 确定性投影（FR-05、PRD §7.3）。
 
-from fastapi import APIRouter, HTTPException, Request
+* ``POST /generate``、``POST /incremental``：不再调用模型，直接返回
+  ``services.canvas_projector.project_canvas(product_state)`` 的确定性结果；
+* ``PUT /{session_id}`` 与 ``PUT /tree``：画布已改为派生视图 → 409 ``CANVAS_IS_DERIVED``；
+* ``canvas_last_msg_index`` 游标退役，响应里恒为 0。
+"""
+from __future__ import annotations
+
+import logging
+
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
-from api.deps import require_session_owner
-from core.canvas_parser import parse_conversation_to_tree, parse_incremental
-from db.session_store import session_store
+from api.v2 import common
+from domain.errors import AppError, ErrorCode
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/canvas", tags=["canvas"])
 
 
+# 旧请求体模型：保留以便前端旧版本仍能通过校验（内容已不再使用）。
 class CanvasLeaf(BaseModel):
-    """功能树叶子节点（B072：Pydantic 校验）。"""
-
     name: str
     source_role: str
     type: str
@@ -37,56 +43,58 @@ class GenerateCanvasRequest(BaseModel):
 
 
 class UpdateCanvasRequest(BaseModel):
-    session_id: str
-    tree: CanvasTree
+    session_id: str | None = None
+    tree: CanvasTree | None = None
+
+
+def _canvas_tree(db, session_id: str) -> dict:
+    state = common.get_product_state(db, session_id)
+    projection = common.project_canvas(state)
+    return common.legacy_canvas_tree(projection)
+
+
+def _derived_error() -> AppError:
+    return AppError(
+        ErrorCode.CANVAS_IS_DERIVED,
+        "画布由产品状态自动推导，不再支持直接写入",
+        details={"hint": "请通过命令更新产品状态，画布会随之派生"},
+    )
 
 
 @router.post("/generate")
-async def generate_canvas(req: GenerateCanvasRequest, request: Request):
-    session = await require_session_owner(req.session_id, request)
-
-    messages = session.get("messages", [])
-    if not messages:
-        raise HTTPException(status_code=400, detail="没有消息可供解析")
-
-    tree = await parse_conversation_to_tree(messages)
-    if tree is None:
-        # 解析失败不覆盖已有 canvas_tree（B036）。
-        raise HTTPException(status_code=502, detail="Canvas 解析失败，请稍后重试")
-    await to_thread(session_store.update, req.session_id, {
-        "canvas_tree": tree,
-        "canvas_last_msg_index": len(messages),
-    })
-    return tree
+def generate_canvas(req: GenerateCanvasRequest, request: Request):
+    owner_email = common.require_user(request)
+    with common.open_db() as db:
+        session = common.require_owned_session(db, req.session_id, owner_email)
+        return _canvas_tree(db, session.id)
 
 
 @router.post("/incremental")
-async def incremental_canvas(req: GenerateCanvasRequest, request: Request):
-    session = await require_session_owner(req.session_id, request)
-
-    messages = session.get("messages", [])
-    existing = session.get("canvas_tree")
-    # 增量游标：只把上次解析之后的新消息传给 LLM（B040）。
-    last_idx = int(session.get("canvas_last_msg_index", 0))
-
-    tree = await parse_incremental(messages, existing, last_idx)
-    if tree is None:
-        raise HTTPException(status_code=502, detail="Canvas 解析失败，请稍后重试")
-    await to_thread(session_store.update, req.session_id, {
-        "canvas_tree": tree,
-        "canvas_last_msg_index": len(messages),
-    })
-    return tree
+def incremental_canvas(req: GenerateCanvasRequest, request: Request):
+    owner_email = common.require_user(request)
+    with common.open_db() as db:
+        session = common.require_owned_session(db, req.session_id, owner_email)
+        return _canvas_tree(db, session.id)
 
 
 @router.get("/{session_id}")
-async def get_canvas(session_id: str, request: Request):
-    session = await require_session_owner(session_id, request)
-    return session.get("canvas_tree") or {"root": "", "branches": []}
+def get_canvas(session_id: str, request: Request):
+    owner_email = common.require_user(request)
+    with common.open_db() as db:
+        session = common.require_owned_session(db, session_id, owner_email)
+        return _canvas_tree(db, session.id)
+
+
+@router.put("/tree")
+def update_canvas_tree(request: Request):
+    common.require_user(request)
+    raise _derived_error()
 
 
 @router.put("/{session_id}")
-async def update_canvas(session_id: str, req: UpdateCanvasRequest, request: Request):
-    await require_session_owner(session_id, request)
-    await to_thread(session_store.update, session_id, {"canvas_tree": req.tree.model_dump()})
-    return {"status": "updated"}
+def update_canvas(session_id: str, request: Request, req: UpdateCanvasRequest | None = None):
+    owner_email = common.require_user(request)
+    with common.open_db() as db:
+        # 仍先做归属/存在性校验：已删除会话 → 404（AC-27）。
+        common.require_owned_session(db, session_id, owner_email)
+    raise _derived_error()

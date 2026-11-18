@@ -1,3 +1,16 @@
+"""邮箱验证码登录：验证码与限流状态存放在数据库（``repositories.auth_repo``）。
+
+M1 改造要点（B033/B034/B035、PRD §7.1）：
+
+* 一次性验证码与限流计数不再放在**进程内存**，而是经 ``auth_repo`` 写入 SQLite，
+  多 Worker / 重启后仍然有效（旧 ``_verification_codes`` 等内存结构仅作为兼容垫片保留，
+  不再是权威存储）；
+* 签名 Cookie（HMAC-SHA256，``AUTH_SECRET_KEY``）的逻辑**完全不变**，避免登录态失效；
+* 对外函数名与签名保持不变：``issue_verification_code`` / ``verify_email_code`` /
+  ``check_send_rate_limit`` / ``create_session_token`` / ``verify_session_token``。
+
+数据库访问一律走 ``repositories.database.session_scope()``（短事务），块内不做 SMTP 调用。
+"""
 import base64
 import hashlib
 import hmac
@@ -21,9 +34,11 @@ logger = logging.getLogger(__name__)
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 MAX_VERIFY_ATTEMPTS = 5
 
-# 纯内存 IP 限流：每 IP 每小时最多发送 10 次，全局每分钟最多 30 次（B035）。
+# 限流阈值（B035）：每 IP 每小时最多发送 10 次，全局每分钟最多 30 次。
 IP_SEND_LIMIT_PER_HOUR = 10
 GLOBAL_SEND_LIMIT_PER_MINUTE = 30
+IP_SEND_WINDOW_SECONDS = 3600
+GLOBAL_SEND_WINDOW_SECONDS = 60
 # 验证码记录在过期后再保留 30 分钟，供 GC 清理（B033）。
 CODE_GC_GRACE_SECONDS = 30 * 60
 
@@ -38,21 +53,53 @@ class AuthRateLimitError(RuntimeError):
 
 @dataclass
 class VerificationCode:
+    """兼容旧测试/旧调用方的内存结构；权威存储已迁移到 ``auth_codes`` 表。"""
+
     code_hash: str
     expires_at: float
     next_send_at: float
     attempts: int = 0
 
 
+#: 兼容垫片：旧代码（含 ``tests/test_auth.py`` 的 setUp/tearDown）会 ``clear()`` 它。
 _verification_codes: dict[str, VerificationCode] = {}
 _code_lock = RLock()
 
 _ip_send_times: dict[str, deque[float]] = {}
 _ip_send_lock = RLock()
 
+_schema_ready = False
+_schema_lock = RLock()
+
+
+# --------------------------------------------------------------------------- #
+# 数据库准备与兼容 GC
+# --------------------------------------------------------------------------- #
+
+
+def _ensure_schema() -> None:
+    """确保表已建立（本地/测试快速路径；生产由迁移负责）。"""
+
+    global _schema_ready
+    if _schema_ready:
+        return
+    with _schema_lock:
+        if _schema_ready:
+            return
+        from repositories import database as database_module
+
+        database_module.initialize_database()
+        _schema_ready = True
+
+
+def _now_epoch() -> int:
+    # 保持 ``core.auth.time.time`` 可被测试 patch（现有 test_auth 依赖这一点）。
+    return int(time.time())
+
 
 def _gc_verification_codes(now: float | None = None) -> int:
-    """清理已过期且超过保留期的验证码记录，防止内存泄漏（B033）。"""
+    """兼容旧接口：清理内存垫片中过期太久的记录（DB 行由活动码失效机制处理）。"""
+
     now = time.time() if now is None else now
     with _code_lock:
         expired = [
@@ -66,36 +113,65 @@ def _gc_verification_codes(now: float | None = None) -> int:
 
 
 def _gc_send_times(now: float) -> None:
-    """清理 IP 限流窗口之外的旧记录。"""
+    """兼容旧接口：内存限流窗口已退役，这里只清理垫片。"""
+
     with _ip_send_lock:
         for ip in list(_ip_send_times.keys()):
             times = _ip_send_times[ip]
-            while times and now - times[0] >= 3600:
+            while times and now - times[0] >= IP_SEND_WINDOW_SECONDS:
                 times.popleft()
             if not times:
                 _ip_send_times.pop(ip, None)
 
 
-def check_send_rate_limit(ip: str) -> None:
-    """发送验证码前的 IP 维度限流（每 IP 10 次/小时 + 全局 30 次/分钟）。
+# --------------------------------------------------------------------------- #
+# 限流
+# --------------------------------------------------------------------------- #
 
-    通过后记录本次时间戳；超限抛出 AuthRateLimitError（B035）。
+
+def check_send_rate_limit(ip: str) -> None:
+    """发送验证码前的限流：每 IP 10 次/小时 + 全局 30 次/分钟（B035）。
+
+    计数落在 ``rate_limits`` 表（整窗口对齐、原子自增），跨进程共享。
+    数据库不可用时降级放行并记录告警——登录可用性优先于严格限流。
     """
-    now = time.time()
-    with _ip_send_lock:
-        _gc_send_times(now)
-        times = _ip_send_times.setdefault(ip, deque())
-        if len([t for t in times if now - t < 3600]) >= IP_SEND_LIMIT_PER_HOUR:
-            raise AuthRateLimitError("发送过于频繁，请一小时后再试")
-        global_count = sum(
-            1
-            for ts in _ip_send_times.values()
-            for t in ts
-            if now - t < 60
-        )
-        if global_count >= GLOBAL_SEND_LIMIT_PER_MINUTE:
-            raise AuthRateLimitError("当前发送请求过多，请稍后再试")
-        times.append(now)
+
+    from repositories import auth_repo, database as database_module
+
+    _ensure_schema()
+    now = _now_epoch()
+    key = (ip or "unknown").strip() or "unknown"
+    try:
+        with database_module.session_scope() as db:
+            allowed_ip = auth_repo.hit_rate_limit(
+                db,
+                scope="auth_send_ip",
+                key=key,
+                limit=IP_SEND_LIMIT_PER_HOUR,
+                window_seconds=IP_SEND_WINDOW_SECONDS,
+                now_epoch=now,
+            )
+            if not allowed_ip:
+                raise AuthRateLimitError("发送过于频繁，请一小时后再试")
+            allowed_global = auth_repo.hit_rate_limit(
+                db,
+                scope="auth_send_global",
+                key="global",
+                limit=GLOBAL_SEND_LIMIT_PER_MINUTE,
+                window_seconds=GLOBAL_SEND_WINDOW_SECONDS,
+                now_epoch=now,
+            )
+            if not allowed_global:
+                raise AuthRateLimitError("当前发送请求过多，请稍后再试")
+    except AuthRateLimitError:
+        raise
+    except Exception:  # noqa: BLE001 - 数据库故障时降级放行，但必须留痕
+        logger.warning("验证码发送限流降级（数据库不可用）", exc_info=True)
+
+
+# --------------------------------------------------------------------------- #
+# 邮箱与配置
+# --------------------------------------------------------------------------- #
 
 
 def normalize_email(email: str) -> str:
@@ -137,7 +213,7 @@ def _hash_code(email: str, code: str) -> str:
     ).hexdigest()
 
 
-def _send_verification_email(email: str, code: str) -> None:
+def _send_verification_email(email: str, code: str) -> None:  # pragma: no cover - 网络
     sender = settings.smtp_from or settings.smtp_username
     message = EmailMessage()
     message["Subject"] = "PM Brainstorm 登录验证码"
@@ -184,34 +260,44 @@ def _send_verification_email(email: str, code: str) -> None:
         client.send_message(message)
 
 
+# --------------------------------------------------------------------------- #
+# 验证码签发 / 校验（DB 为权威存储）
+# --------------------------------------------------------------------------- #
+
+
 def issue_verification_code(email: str) -> int:
     _require_auth_configuration()
     normalized = normalize_email(email)
-    now = time.time()
-    _gc_verification_codes(now)
+    now = _now_epoch()
 
+    from repositories import auth_repo, database as database_module
+
+    _ensure_schema()
     code = f"{secrets.randbelow(1_000_000):06d}"
+    code_hash = _hash_code(normalized, code)
 
-    with _code_lock:
-        existing = _verification_codes.get(normalized)
-        if existing and existing.next_send_at > now:
-            wait_seconds = max(1, int(existing.next_send_at - now + 0.999))
-            raise AuthRateLimitError(f"请等待 {wait_seconds} 秒后重新发送")
-        # 锁内预占 next_send_at（发送前置标记），阻断发送期间的并发重复请求（B034）。
-        _verification_codes[normalized] = VerificationCode(
-            code_hash=_hash_code(normalized, code),
-            expires_at=now + settings.auth_code_expire_minutes * 60,
-            next_send_at=now + settings.auth_code_resend_seconds,
+    with database_module.session_scope() as db:
+        existing = auth_repo.get_active_code(db, normalized, now)
+        if existing is not None:
+            last_sent = int(existing.last_sent_at or existing.created_at or now)
+            next_send_at = last_sent + int(settings.auth_code_resend_seconds)
+            if next_send_at > now:
+                wait_seconds = max(1, next_send_at - now)
+                raise AuthRateLimitError(f"请等待 {wait_seconds} 秒后重新发送")
+        auth_repo.issue_code(
+            db,
+            email=normalized,
+            code_hash=code_hash,
+            ttl_seconds=int(settings.auth_code_expire_minutes * 60),
+            now_epoch=now,
         )
 
     try:
         _send_verification_email(normalized, code)
-    except Exception:
-        # SMTP 发送失败：锁内回滚删除预占记录，让用户可以立即重试（B034）。
-        with _code_lock:
-            _verification_codes.pop(normalized, None)
+    except Exception:  # noqa: BLE001 - 发送失败必须让用户能立即重试
+        with database_module.session_scope() as db:
+            auth_repo.invalidate_codes(db, email=normalized, now_epoch=now)
         raise
-
     return settings.auth_code_resend_seconds
 
 
@@ -221,21 +307,26 @@ def verify_email_code(email: str, code: str) -> bool:
     if not re.fullmatch(r"\d{6}", normalized_code):
         return False
 
-    now = time.time()
-    with _code_lock:
-        record = _verification_codes.get(normalized)
-        if not record or record.expires_at < now:
-            _verification_codes.pop(normalized, None)
-            return False
-        if record.attempts >= MAX_VERIFY_ATTEMPTS:
-            _verification_codes.pop(normalized, None)
-            return False
+    from repositories import auth_repo, database as database_module
 
-        record.attempts += 1
-        valid = hmac.compare_digest(record.code_hash, _hash_code(normalized, normalized_code))
-        if valid:
-            _verification_codes.pop(normalized, None)
-        return valid
+    _ensure_schema()
+    now = _now_epoch()
+    code_hash = _hash_code(normalized, normalized_code)
+    with database_module.session_scope() as db:
+        return bool(
+            auth_repo.verify_code(
+                db,
+                email=normalized,
+                code_hash=code_hash,
+                now_epoch=now,
+                max_attempts=MAX_VERIFY_ATTEMPTS,
+            )
+        )
+
+
+# --------------------------------------------------------------------------- #
+# 签名 Cookie（逻辑不变，避免登录态失效）
+# --------------------------------------------------------------------------- #
 
 
 def create_session_token(email: str) -> str:
