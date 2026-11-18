@@ -1,7 +1,7 @@
 # PM Brainstorm V4.0 验收报告（M1–M3 交付）
 
 - 分支：`feat/prd-v4-m1`（基于 `ad77bd2`）
-- 提交：`5915020`（基础设施与领域契约）、`f7b4d59`（原子幂等/原子领取/跨进程验收）、`e252410`（检索接入/前端 e2e/README）、`feat/prd-v4-m2` 后续提交（M2 专家收敛、M3 审计闭环）
+- 提交：`5915020`（基础设施与领域契约）、`f7b4d59`（原子幂等/原子领取/跨进程验收）、`e252410`（检索接入/前端 e2e/README）、`34254fc`（M2 专家收敛 + M3 审计闭环 + 发布件 + 验收报告）、`c0ac89a`（契约同步）
 - 报告日期：2026-11-19
 - PRD：`docs/superpowers/specs/2026-11-18-pm-brainstorm-agent-architecture-prd-v4.md`（V4.0，807 行）
 - 本报告**只记录真实执行过的命令与结果**；未实现项标「未实现」，不预填通过、不改期望值迁就现状。
@@ -25,9 +25,9 @@
 ## 2. 实际执行的验证命令与结果
 
 ```bash
-# 后端全量（492 用例，含 M2/M3）
+# 后端全量（496 用例，含 M2/M3）
 cd backend && ../.venv/Scripts/python.exe -m unittest discover -s tests
-# → Ran 492 tests in 181.965s / OK / exit 0
+# → Ran 496 tests / OK / exit 0（含 tests/test_audit_runner.py 的 3 个真 runner 审计用例）
 
 # 跨进程（真 subprocess + 共享 SQLite）
 cd backend && ../.venv/Scripts/python.exe -m unittest tests.test_run_repo tests.test_cross_process
@@ -76,12 +76,12 @@ cd frontend && npm run test:e2e      # 1 pass（真起 uvicorn，401/404 语义�
 | AC-18 | 通过 | `test_canvas_projector.py::test_two_calls_are_byte_identical`、`test_projection_does_not_mutate_state`；`test_reducer.py::test_merge_is_independent_of_arrival_order`；`frontend/tests/store.test.cjs`（acceptProductVersion 单调） | 投影纯函数、零模型调用、旧版本不覆盖；「待合并建议」UI 未单独做（角色结果仅在合并后进画布） |
 | AC-19 | 部分通过 | `test_canvas_projector.py::test_branch_order_follows_declared_order`、`test_every_node_carries_refs_and_status`；`components/canvas/CanvasPanel.tsx` | 节点带 claim/option/decision/experiment 引用与状态；**8 分支展开未做浏览器 e2e** |
 | AC-20 | 部分通过 | `test_retriever.py`（零相关→[]、同源去重、加权）；`test_context_builder_rag.py`（命中注入标「不可引用/未验证」、无命中不注入） | 检索已接入且不编造引用；**「模型是否编造数字」属模型行为，未做端到端人工标注** |
-| AC-21 | 通过 | `test_audit_workflow.py::test_open_writes_first_question_and_activates_audit`、`test_open_uses_planned_dimension_when_model_disagrees`；`.tmp/e2e_audit.py`（audit 锚定 product_version） | 开场输入锚定 ProductState，问题含维度与依据 |
-| AC-22 | 通过 | `test_audit_workflow.py::test_open_is_idempotent_when_question_already_exists`；`test_api_v2.py`（GET /audits 带 questions/active_question_id）；前端 `hydrateAuditById` | 同一 audit_id/问题可恢复，不重建、不二次开场 |
+| AC-21 | 通过 | `test_audit_workflow.py::test_open_writes_first_question_and_activates_audit`、`test_open_uses_planned_dimension_when_model_disagrees`；`test_audit_runner.py::test_audit_open_via_runner_commits_question_and_activates_audit`；`.tmp/e2e_audit.py` | 开场输入锚定 ProductState，问题含维度与依据 |
+| AC-22 | 通过 | `test_audit_workflow.py::test_open_is_idempotent_when_question_already_exists`；`test_api_v2.py`（GET /audits 带 questions/active_question_id）；`test_audit_runner.py`（answer 后 active_question_id 指向第 2 问）；前端 `hydrateAuditById` | 同一 audit_id/问题可恢复，不重建、不二次开场 |
 | AC-23 | 部分通过 | `test_audit_workflow.py::test_answer_ignored_when_audit_not_active`、`test_answer_rejects_unknown_question`；`test_command_service.py::test_answer_audit_requires_open_question` | 单进程语义已覆盖；**两进程同时回答同一问题未做真并发用例**（幂等框架层面由 AC-06 覆盖） |
 | AC-24 | 通过 | `test_audit_workflow.py::test_open_uses_planned_dimension_when_model_disagrees`、`test_plan_next_dimension_prefers_uncovered_then_gaps`、`test_normalize_assessment_downgrades_supported_without_evidence` | 维度由问题指定与规划器决定，不按回答关键词归类；supported 必须有证据否则降级 |
-| AC-25 | 通过 | `test_audit_workflow.py::test_answer_at_hard_limit_closes_and_never_asks_nineteenth`、`test_answer_at_question_target_closes_audit`；`.tmp/e2e_audit.py`（完成后 409 AUDIT_CLOSED） | 第 18 问后直接 closing、无第 19 问、完成后拒绝继续回答 |
-| AC-26 | 通过 | `test_audit_workflow.py::test_report_falls_back_when_model_unavailable`、`test_report_recovers_from_failed_audit`、`test_build_fallback_report_marks_limitations` | 模型不可用时确定性有限总结（`generated_by="fallback"` + limitations），阶段一致 |
+| AC-25 | 通过 | `test_audit_workflow.py::test_answer_at_hard_limit_closes_and_never_asks_nineteenth`、`test_answer_at_question_target_closes_audit`；`test_audit_runner.py::test_closing_run_generates_model_report_and_completes_audit`；`.tmp/e2e_audit.py`（完成后 409 AUDIT_CLOSED） | 第 18 问后直接 closing、无第 19 问、完成后拒绝继续回答 |
+| AC-26 | 通过 | `test_audit_workflow.py::test_report_falls_back_when_model_unavailable`、`test_report_recovers_from_failed_audit`、`test_build_fallback_report_marks_limitations`；`test_audit_runner.py::test_closing_run_generates_model_report_and_completes_audit` | 模型可用走 `generated_by="model"`，不可用确定性有限总结（`generated_by="fallback"` + limitations）；`_apply_report_draft` 在无 supported 维度时清空 supported_points 并记 warning（FR 不凭空补齐） |
 | AC-27 | 通过 | `test_api_v2.py::test_session_ownership_and_missing`；`test_audit_repo.py::test_require_audit_enforces_ownership_and_existence`；`test_legacy_compat.py::test_legacy_delete_then_all_legacy_routes_404` | v2 与 v1 兼容路径都按 owner 拒绝 |
 | AC-28 | 通过（跨进程） | `test_cross_process.py::test_auth_code_and_rate_limit_are_shared_across_processes`；`test_auth_repo.py`(14) | 共享 DB、一次使用、5 次错码、窗口原子 |
 | AC-29 | 通过 | `test_command_service.py::test_clarify_rejects_too_long_input`；`test_runner_budget.py`(5)、`test_llm_client.py::test_missing_usage_falls_back_to_estimated`/`test_sdk_retries_disabled` | 8001 字拒绝、第 11 次上游调用拒绝、usage 缺失标 estimated、SDK 重试 0 |
@@ -111,7 +111,9 @@ cd frontend && npm run test:e2e      # 1 pass（真起 uvicorn，401/404 语义�
 8. **brainstorm 的 step 事件粒度**：role 步骤不写 `step.started`（只有顶层 `brainstorm.generate` 有，角色完成以 `role.completed` 表达）；预算中止时个别 role step 可能停留 running（run 仍 failed 且恰好一个终结事件）。最小调整：role step 也发 `step.started`，并在 `_force_terminal` 中把残留 running step 标 interrupted。
 9. **事件压缩作业未实现**：`api/sse.py` 已有保留水位（低于水位 410），但没有后台压缩任务；活动 Run 不压缩的规则尚未有实现主体。
 10. **未登录访问未知 `/api/v2/*` 返回 401 而非 404**：鉴权是中间件，在路由匹配前短路；PRD 未要求，前端已按 401/404 双兼容处理。
-11. **本机 8000 端口运行旧进程**：手工验证 `/api/v2` 前需重启后端；前端已做 404→legacy 回落。
+11. **审计回答消息由命令层写入**：`command_service._submit_async` 在建 Run 前写 human 消息（stage=audit）并回填 `audit_questions.answer_message_id`，`workflows/audit.py` 只做评估与下一问。这是「用户消息+序号+Run+占位同事务」的必然结果，workflow 再写会双写，属设计说明而非偏差。
+12. **`audit_repo` 缺评估修订读取 API**：只有 `add_assessment_revision`，前端暂不需要评估修订历史；将来要展示时由 storage 补 `list_assessment_revisions`（只读）。
+13. **本机 8000 端口运行旧进程**：手工验证 `/api/v2` 前需重启后端；前端已做 404→legacy 回落。
 
 ## 5. NFR（§9）抽查
 
@@ -125,6 +127,6 @@ cd frontend && npm run test:e2e      # 1 pass（真起 uvicorn，401/404 语义�
 ## 6. 结论
 
 - M1（WP-00～05）、M2（WP-06～08）、M3（WP-09）与 WP-10 的发布件（CI、迁移演练、健康诊断、前端 e2e 冒烟）均已交付。
-- 真实执行结果：后端 **492 用例 OK**、前端 **87 用例 pass** + `tsc` 0 错 + `build` 成功、`test:e2e` 1 pass、跨进程 4 用例 OK、真 Worker 审计端到端 **30 项 ALL PASS**、迁移演练 **DRILL_OK**。
+- 真实执行结果：后端 **496 用例 OK**、前端 **87 用例 pass** + `tsc` 0 错 + `build` 成功、`test:e2e` 1 pass、跨进程 4 用例 OK、真 Worker 审计端到端 **30 项 ALL PASS**、迁移演练 **DRILL_OK**。
 - AC 统计（按 §3 表）：**通过 25 条**（AC-02/03/04/06/07/08/11/12/13/15/17/18/21/22/24/25/26/27/28/29/30/32/35/37/38）、**部分通过 16 条**（AC-01/05/09/10/14/19/20/23/31/33/34/36/39/40/41/42）、**未实现 1 条**（AC-16）。
 - 剩余差距集中在：主持人 synthesis/复核（AC-16）、重试粒度（AC-14）、真实浏览器与崩溃注入类验证（AC-01/09/10/19/31/33/34）、软删正文清理与事件压缩作业（AC-39）、人工更正后重生成报告（AC-40）。每条均给出最小调整方案，未通过修改期望值或预填结果取得任何「通过」。
