@@ -333,7 +333,7 @@ def _apply_brief_updates(
     """把模型的候选值写进 Brief，**只允许 unknown→proposed / proposed 值更新**。
 
     * 已 ``confirmed`` 的字段一律拒绝模型改写（confirmed 只能由用户命令产生）；
-    * ``status`` 最多推进到 ``ready``，绝不写 ``confirmed``；
+    * ``status`` 的 draft→ready 推进由 :func:`run_clarify` 统一负责，本函数不改 status；
     * 值相同则不产生新状态（避免版本噪声）。
     """
     if updates is None:
@@ -367,10 +367,7 @@ def _apply_brief_updates(
         }
         changed.append(field)
 
-    new_brief = ProductBrief.model_validate(payload)
-    if new_brief.status == BriefStatus.draft and new_brief.ready():
-        new_brief = new_brief.model_copy(update={"status": BriefStatus.ready})
-    return new_brief, changed
+    return ProductBrief.model_validate(payload), changed
 
 
 # --------------------------------------------------------------------------- #
@@ -508,6 +505,9 @@ async def run_clarify(ctx: Any) -> Any:
     new_brief, changed_fields = _apply_brief_updates(
         state.brief, brief_updates, current_message=current_message, warnings=warnings
     )
+    # 状态推进统一放在公共段：提问路径与收敛路径（不调模型）都会执行。
+    if new_brief.status == BriefStatus.draft and new_brief.ready():
+        new_brief = new_brief.model_copy(update={"status": BriefStatus.ready})
     if new_brief.ready() and not state.brief.ready():
         warnings.append("产品定义已具备确认条件，等待用户确认（confirmed 只由用户命令产生）")
 
@@ -552,7 +552,9 @@ async def run_clarify(ctx: Any) -> Any:
         warnings=warnings,
         usage=_usage_dict(llm_result),
         session_phase=None,
-        brief_status=new_brief.status,
+        # phase / brief_status 由状态机与 command_service 决定，coach 不做推断：
+        # session 侧会从已提交的 ProductState 推导 brief_status。
+        brief_status=None,
     )
 
 

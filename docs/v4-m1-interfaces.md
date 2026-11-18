@@ -101,8 +101,10 @@ create_run(db, *, session_id, owner_email, request_id, action, input_hash,
 get_run(db, run_id) -> RunRow | None
 require_run(db, run_id, *, owner_email=None) -> RunRow
 active_run_for_session(db, session_id) -> RunRow | None
-claim_next_run(db, *, worker_id, now_epoch, lease_seconds=30) -> RunRow | None
-    # 原子领取：queued 优先，其次租约过期的 running/interrupted/cancel_requested
+claim_next_run(db, *, worker_id, now_epoch, lease_seconds=30, attempts=3) -> RunRow | None
+    # 原子领取（AC-08）：取候选 run_id → 带 status/lease 条件的 UPDATE → rowcount==1 才算成功；
+    # 领取失败（别人先抢到）继续试下一个候选。遇到 SQLite locked/busy 先 rollback 再重试。
+    # 禁止改成「SELECT 一条 → 改 ORM 对象」，那样两个 Worker 会同时领取同一条 Run。
     # 成功：status=running, lease_owner=worker_id, lease_epoch+=1,
     #       lease_expires_at=now+lease, started_at 首次填写, deadline_at 首次填写,
     #       并 append run.started 事件（runner 不要再写一次）
@@ -137,6 +139,13 @@ message_snapshot_for_run(db, run_id, *, limit=100) -> list[MessageRow]
 
 # 幂等（expires_at 为 epoch 秒整数，不是 ISO 字符串）
 get_idempotency(db, owner_email, request_id) -> IdempotencyRow | None
+claim_idempotency(db, *, owner_email, request_id, action, resource_scope, input_hash,
+                  ttl_days=30, now_iso=None) -> bool
+    # 原子占位（AC-06）：插入 response_status=0/response_json=None 的占位行；
+    # 唯一键冲突返回 False（表示同键已被别人占位），不抛错。
+complete_idempotency(db, *, owner_email, request_id, response_status, response,
+                     related_run_id=None, related_control_id=None) -> IdempotencyRow
+    # 把占位行补成完整回执；未占位直接补写会抛 RuntimeError。
 save_idempotency(db, *, owner_email, request_id, action, resource_scope, input_hash,
                  response_status, response, related_run_id=None, related_control_id=None,
                  ttl_days=30, now_iso=None) -> IdempotencyRow

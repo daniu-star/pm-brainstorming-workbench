@@ -9,7 +9,12 @@
 """
 from __future__ import annotations
 
+import atexit
+import gc
+import os
+import shutil
 import tempfile
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -26,13 +31,52 @@ from repositories import database, run_repo, session_repo
 
 TEST_SECRET = "test-secret-key-that-is-longer-than-32-characters"
 
+_TEMP_DIRS: list[str] = []
+
+
+def _make_db_dir(prefix: str) -> str:
+    """创建临时库目录；进程退出时统一清理（本机 TEMP 不可用时 mkdtemp 会落在 cwd）。"""
+
+    path = tempfile.mkdtemp(prefix=prefix)
+    _TEMP_DIRS.append(path)
+    return path
+
+
+def _cleanup_temp_dirs() -> None:
+    """先释放 SQLite 引擎（Windows 上不释放会锁住文件），再删除临时目录。
+
+    Windows 上 sqlite 文件句柄可能延迟释放，因此带重试；清理是测试卫生的一部分，
+    必须保证跑完后工作树里不残留 ``pm_legacy_*`` 目录。
+    """
+
+    try:
+        gc.collect()
+        database.dispose_engine()
+    except Exception:  # pragma: no cover - 清理路径容错
+        pass
+    for path in list(_TEMP_DIRS):
+        for attempt in range(4):
+            shutil.rmtree(path, ignore_errors=True)
+            if not os.path.exists(path):
+                break
+            try:
+                gc.collect()
+                database.dispose_engine()
+            except Exception:  # pragma: no cover - 清理路径容错
+                pass
+            time.sleep(0.1 * (attempt + 1))
+    _TEMP_DIRS.clear()
+
+
+atexit.register(_cleanup_temp_dirs)
+
 
 class LegacyCompatTestBase(unittest.TestCase):
     _tmpdir: str = ""
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls._tmpdir = tempfile.mkdtemp(prefix="pm_legacy_")
+        cls._tmpdir = _make_db_dir("pm_legacy_")
         db_path = (Path(cls._tmpdir) / "test.db").as_posix()
         database.reset_for_tests(f"sqlite+pysqlite:///{db_path}")
         cls._originals = {

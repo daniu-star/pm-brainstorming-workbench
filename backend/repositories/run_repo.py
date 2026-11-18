@@ -9,11 +9,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from typing import Any, Sequence
 
 from sqlalchemy import and_, func, or_, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from domain import state_machine as SM
 from domain.contracts import (
@@ -32,6 +33,8 @@ from repositories.database import (
     StepCandidateRow,
     StepRow,
 )
+
+logger = logging.getLogger(__name__)
 
 #: queued/running/interrupted 都算「占位中」，cancel_requested 也算活动。
 ACTIVE_RUN_STATUSES = (
@@ -132,15 +135,45 @@ def active_run_for_session(db, session_id: str) -> RunRow | None:
     ).scalar_one_or_none()
 
 
-def claim_next_run(db, *, worker_id: str, now_epoch: int, lease_seconds: int = 30) -> RunRow | None:
+def claim_next_run(
+    db, *, worker_id: str, now_epoch: int, lease_seconds: int = 30, attempts: int = 3
+) -> RunRow | None:
     """原子领取一个可执行 Run：queued 优先，其次租约过期的 running/interrupted。
 
     领取成功即 ``lease_epoch += 1``（PRD FR-03：接管必须递增 epoch，旧 Worker 提交被拒）。
+
+    实现要点（AC-08）：**不能用「SELECT 一条 → 改 ORM 对象」**，因为两个 Worker 进程
+    会各自 SELECT 到同一条 queued Run 然后都认为领取成功。这里改为「取候选 id →
+    带条件的 UPDATE → 用 rowcount 判定」，只有把 status 从 queued 改成 running 的那一次
+    才算领取成功，竞争失败的连接会继续尝试下一个候选。
     """
 
+    last_exc: Exception | None = None
+    for attempt in range(max(1, attempts)):
+        try:
+            return _claim_once(
+                db, worker_id=worker_id, now_epoch=int(now_epoch), lease_seconds=int(lease_seconds)
+            )
+        except OperationalError as exc:  # pragma: no cover - 依赖真实并发时序
+            text = str(exc).lower()
+            if "locked" not in text and "busy" not in text:
+                raise
+            last_exc = exc
+            logger.warning(
+                "event=claim.retry worker=%s attempt=%s reason=%s", worker_id, attempt + 1, exc
+            )
+            db.rollback()
+            time.sleep(0.02 * (attempt + 1))
+    logger.error("event=claim.failed worker=%s error=%s", worker_id, last_exc)
+    return None
+
+
+def _claim_once(db, *, worker_id: str, now_epoch: int, lease_seconds: int) -> RunRow | None:
+    from domain.contracts import RUN_TIMEOUT_SECONDS
+
     now_iso = utc_now_iso()
-    stmt = (
-        select(RunRow)
+    candidates = db.execute(
+        select(RunRow.id, RunRow.status)
         .where(
             or_(
                 RunRow.status == RunStatus.queued.value,
@@ -157,44 +190,57 @@ def claim_next_run(db, *, worker_id: str, now_epoch: int, lease_seconds: int = 3
             )
         )
         .order_by(RunRow.created_at.asc())
-        .limit(1)
-    )
-    run = db.execute(stmt).scalar_one_or_none()
-    if run is None:
+        .limit(8)
+    ).all()
+    if not candidates:
         return None
 
-    previous_status = RunStatus(run.status)
-    target = RunStatus.running
-    if previous_status is not target:
-        SM.validate_run_transition(
-            previous_status if previous_status is RunStatus.interrupted else previous_status, target
+    for run_id, status in candidates:
+        conditions = [RunRow.id == run_id, RunRow.status == status]
+        if status == RunStatus.queued.value:
+            # queued 只要求未被别人抢先领取。
+            conditions.append(RunRow.lease_owner.is_(None))
+        else:
+            # 接管过期 Run：必须仍然过期（原子条件），否则两个 Worker 会同时接管。
+            conditions.append(
+                or_(RunRow.lease_expires_at.is_(None), RunRow.lease_expires_at < int(now_epoch))
+            )
+        result = db.execute(
+            update(RunRow)
+            .where(*conditions)
+            .values(
+                status=RunStatus.running.value,
+                lease_owner=worker_id,
+                lease_epoch=func.coalesce(RunRow.lease_epoch, 0) + 1,
+                lease_expires_at=int(now_epoch) + int(lease_seconds),
+                heartbeat_at=now_iso,
+                started_at=func.coalesce(RunRow.started_at, now_iso),
+                deadline_at=func.coalesce(RunRow.deadline_at, int(now_epoch) + RUN_TIMEOUT_SECONDS),
+            )
         )
+        if result.rowcount != 1:
+            continue  # 别人先领取了这条，试下一个候选
 
-    run.status = target.value
-    run.lease_owner = worker_id
-    run.lease_epoch = int(run.lease_epoch or 0) + 1
-    run.lease_expires_at = int(now_epoch) + int(lease_seconds)
-    run.heartbeat_at = now_iso
-    run.started_at = run.started_at or now_iso
-    if run.deadline_at is None:
-        from domain.contracts import RUN_TIMEOUT_SECONDS
-
-        run.deadline_at = int(now_epoch) + RUN_TIMEOUT_SECONDS
-    db.flush()
-    append_event(
-        db,
-        session_id=run.session_id,
-        run_id=run.id,
-        type=EventType.run_started,
-        payload={
-            "run_id": run.id,
-            "worker_id": worker_id,
-            "lease_epoch": run.lease_epoch,
-            "status": run.status,
-        },
-        now_iso=now_iso,
-    )
-    return run
+        db.flush()
+        run = db.get(RunRow, run_id)
+        if run is None:  # pragma: no cover - 刚更新过的行不会消失
+            continue
+        db.refresh(run)
+        append_event(
+            db,
+            session_id=run.session_id,
+            run_id=run.id,
+            type=EventType.run_started,
+            payload={
+                "run_id": run.id,
+                "worker_id": worker_id,
+                "lease_epoch": run.lease_epoch,
+                "status": run.status,
+            },
+            now_iso=now_iso,
+        )
+        return run
+    return None
 
 
 def renew_lease(db, run: RunRow, *, worker_id: str, lease_epoch: int, now_epoch: int, lease_seconds: int = 30) -> bool:
@@ -647,5 +693,74 @@ def save_idempotency(
     if existing is not None:
         return existing
     db.add(row)
+    db.flush()
+    return row
+
+
+def claim_idempotency(
+    db,
+    *,
+    owner_email: str,
+    request_id: str,
+    action: str,
+    resource_scope: str,
+    input_hash: str,
+    ttl_days: int = 30,
+    now_iso: str | None = None,
+) -> bool:
+    """原子占位幂等键（AC-06）。
+
+    必须在命令处理的**第一步**调用：以主键 ``(owner_email, request_id)`` 抢占一行。
+    返回 ``True`` 表示本次请求拿到该键，后续必须在同一事务内调用
+    :func:`complete_idempotency` 写入回执；返回 ``False`` 表示键已被别的进程占用
+    （处理中或已完成），调用方应回滚后回放已有回执。
+
+    为什么必须"先占位再干活"：若先建 Run 再写幂等记录，两个进程用同一个
+    ``request_id`` 并发提交时会各自建 Run（或第二个返回 SESSION_BUSY），
+    违反 PRD §5.3 / AC-06 的"一个 Run、一条用户消息、同一回执"。
+    """
+
+    now_iso = now_iso or utc_now_iso()
+    row = IdempotencyRow(
+        owner_email=owner_email,
+        request_id=request_id,
+        action=_value(action),
+        resource_scope=resource_scope,
+        input_hash=input_hash,
+        response_status=0,
+        response_json=None,
+        related_run_id=None,
+        related_control_id=None,
+        created_at=now_iso,
+        expires_at=int(time.time() + ttl_days * 86400),
+    )
+    try:
+        with db.begin_nested():
+            db.add(row)
+            db.flush()
+    except IntegrityError:
+        return False
+    return True
+
+
+def complete_idempotency(
+    db,
+    *,
+    owner_email: str,
+    request_id: str,
+    response_status: int,
+    response: dict[str, Any],
+    related_run_id: str | None = None,
+    related_control_id: str | None = None,
+) -> IdempotencyRow:
+    """给已占位的幂等键补上回执（与结果同事务提交，满足 PRD §5.3）。"""
+
+    row = db.get(IdempotencyRow, {"owner_email": owner_email, "request_id": request_id})
+    if row is None:  # pragma: no cover - 占位与完成必须在同一事务内
+        raise RuntimeError("幂等键未占位，无法完成")
+    row.response_status = int(response_status)
+    row.response_json = canonical_json(response)
+    row.related_run_id = related_run_id
+    row.related_control_id = related_control_id
     db.flush()
     return row

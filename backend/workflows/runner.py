@@ -90,13 +90,15 @@ WORKFLOW_DISPATCH: dict[TaskKind, Callable[[Any], Any]] = {}
 # --------------------------------------------------------------------------- #
 
 
-class BudgetExceededError(RuntimeError):
-    """预算/上下文超限；``code`` 直接作为 Run 的 ``error_code``。"""
+class BudgetExceededError(AppError):
+    """预算/上下文超限；``code`` 直接作为 Run 的 ``error_code``。
+
+    继承 :class:`domain.errors.AppError`，使工作流内部按 ``AppError`` 捕获时
+    也能正确识别预算错误（AC-29：超限时拒绝发请求，而不是继续调用）。
+    """
 
     def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
+        super().__init__(code, message)
 
 
 @dataclass(slots=True)

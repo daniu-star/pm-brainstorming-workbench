@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import OperationalError
 
 from domain import contracts as C
 from domain import state_machine as SM
@@ -60,6 +61,7 @@ from repositories import audit_repo, run_repo, session_repo
 from repositories.database import (
     AuditRow,
     ControlIntentRow,
+    IdempotencyRow,
     RunRow,
     SessionRow,
 )
@@ -310,10 +312,25 @@ def _ensure_queue_budget(db, owner_email: str) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _lookup_idempotent(db, owner_email: str, parsed: C.ParsedCommand) -> RunReceipt | ControlReceipt | StartAuditRecovery | None:
-    record = run_repo.get_idempotency(db, owner_email, parsed.request_id)
-    if record is None:
+def _receipt_from_run(db, record: IdempotencyRow, parsed: C.ParsedCommand) -> RunReceipt | None:
+    """兜底：幂等体解析失败时，直接从 Run 行重建回执（AC-06 只要求同一 Run）。"""
+
+    if not record.related_run_id:
         return None
+    run = run_repo.get_run(db, record.related_run_id)
+    if run is None:
+        return None
+    session = session_repo.get_session(db, run.session_id, include_deleted=True)
+    if session is None:  # pragma: no cover - 会话被硬删
+        return None
+    return _receipt(run, session, reused=True)
+
+
+def _replay_record(
+    db, record: IdempotencyRow, parsed: C.ParsedCommand
+) -> RunReceipt | ControlReceipt | StartAuditRecovery | None:
+    """把已提交的幂等记录还原成回执（``reused=True``）。"""
+
     if record.action != parsed.action.value or record.input_hash != parsed.input_hash:
         raise AppError(
             ErrorCode.IDEMPOTENCY_KEY_REUSED,
@@ -324,8 +341,6 @@ def _lookup_idempotent(db, owner_email: str, parsed: C.ParsedCommand) -> RunRece
                 "requested_action": parsed.action.value,
             },
         )
-    import json
-
     try:
         stored = json.loads(record.response_json or "{}")
     except ValueError:  # pragma: no cover - 数据损坏
@@ -342,8 +357,67 @@ def _lookup_idempotent(db, owner_email: str, parsed: C.ParsedCommand) -> RunRece
         receipt = RunReceipt.model_validate(body)
         return receipt.model_copy(update={"reused": True})
     except Exception:  # pragma: no cover - 历史版本兼容
-        logger.warning("幂等记录无法还原（request_id=%s），按未命中处理", parsed.request_id)
+        logger.warning(
+            "幂等记录无法还原（request_id=%s），尝试用 Run 行重建", parsed.request_id, exc_info=True
+        )
+        return _receipt_from_run(db, record, parsed)
+
+
+def _lookup_idempotent(db, owner_email: str, parsed: C.ParsedCommand) -> RunReceipt | ControlReceipt | StartAuditRecovery | None:
+    record = run_repo.get_idempotency(db, owner_email, parsed.request_id)
+    if record is None:
         return None
+    return _replay_record(db, record, parsed)
+
+
+def _claim_idempotency_with_retry(
+    db, owner_email: str, parsed: C.ParsedCommand, now_iso: str, *, attempts: int = 3
+) -> bool:
+    """占位幂等键；遇到 SQLite 写锁竞争时短暂重试（不吞其它错误）。"""
+
+    last_exc: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            return run_repo.claim_idempotency(
+                db,
+                owner_email=owner_email,
+                request_id=parsed.request_id,
+                action=parsed.action.value,
+                resource_scope=parsed.resource_scope,
+                input_hash=parsed.input_hash,
+                now_iso=now_iso,
+            )
+        except OperationalError as exc:  # pragma: no cover - 依赖真实并发时序
+            last_exc = exc
+            text = str(exc).lower()
+            if "locked" not in text and "busy" not in text:
+                raise
+            db.rollback()
+            time.sleep(0.03 * (attempt + 1))
+    raise AppError(
+        ErrorCode.INTERNAL,
+        "数据库繁忙，请稍后重试",
+        http_status=503,
+        retryable=True,
+    ) from last_exc
+
+
+def _await_idempotent(
+    db, owner_email: str, parsed: C.ParsedCommand, *, timeout_seconds: float = 5.0
+) -> RunReceipt | ControlReceipt | StartAuditRecovery | None:
+    """等待另一进程把同一 request_id 的回执提交出来（AC-06 并发同键）。"""
+
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        db.rollback()  # 每轮都换新快照，才能看到对手新提交的行
+        record = run_repo.get_idempotency(db, owner_email, parsed.request_id)
+        if record is not None and record.response_json:
+            replayed = _replay_record(db, record, parsed)
+            if replayed is not None:
+                return replayed
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(0.02)
 
 
 def _store_idempotent(
@@ -358,18 +432,14 @@ def _store_idempotent(
     related_control_id: str | None,
     now_iso: str,
 ) -> None:
-    run_repo.save_idempotency(
+    run_repo.complete_idempotency(
         db,
         owner_email=owner_email,
         request_id=parsed.request_id,
-        action=parsed.action.value,
-        resource_scope=parsed.resource_scope,
-        input_hash=parsed.input_hash,
         response_status=http_status,
         response={"kind": kind, "body": body},
         related_run_id=related_run_id,
         related_control_id=related_control_id,
-        now_iso=now_iso,
     )
 
 
@@ -386,6 +456,7 @@ def submit_command(
     command: CommandRequest,
     now_iso: str | None = None,
     now_epoch: int | None = None,
+    _attempt: int = 0,
 ) -> RunReceipt | ControlReceipt | StartAuditRecovery:
     """接收一条命令（PRD §7.2 POST /commands）。
 
@@ -395,13 +466,7 @@ def submit_command(
     now_iso = now_iso or utc_now_iso()
     now_epoch = int(now_epoch if now_epoch is not None else time.time())
 
-    session = _require_session(db, session_id, owner_email)
-    if session.deleted_at:
-        raise AppError(ErrorCode.NOT_FOUND, "会话不存在")
-    if session.owner_email != owner_email:
-        raise AppError(ErrorCode.FORBIDDEN, "无权访问该会话")
-
-    resource_scope = f"session:{session.id}"
+    resource_scope = f"session:{session_id}"
     try:
         parsed = parse_command(
             command.action,
@@ -419,9 +484,34 @@ def submit_command(
             details={"action": command.action.value},
         ) from exc
 
-    replayed = _lookup_idempotent(db, owner_email, parsed)
-    if replayed is not None:
-        return replayed
+    # ① 原子占位幂等键：必须先于任何 Run 建行，否则同键并发会各建一个 Run（AC-06）。
+    if not _claim_idempotency_with_retry(db, owner_email, parsed, now_iso):
+        db.rollback()  # 丢弃本连接快照，才能读到对手已提交的回执
+        replayed = _await_idempotent(db, owner_email, parsed)
+        if replayed is not None:
+            return replayed
+        if _attempt < 2:  # 对手回滚/崩溃 → 键已释放，重新竞争一次
+            return submit_command(
+                db,
+                owner_email=owner_email,
+                session_id=session_id,
+                command=command,
+                now_iso=now_iso,
+                now_epoch=now_epoch,
+                _attempt=_attempt + 1,
+            )
+        raise AppError(
+            ErrorCode.IDEMPOTENCY_KEY_REUSED,
+            "同一 request_id 正在处理中，请稍后重试",
+            http_status=409,
+            retryable=True,
+        )
+
+    session = _require_session(db, session_id, owner_email)
+    if session.deleted_at:
+        raise AppError(ErrorCode.NOT_FOUND, "会话不存在")
+    if session.owner_email != owner_email:
+        raise AppError(ErrorCode.FORBIDDEN, "无权访问该会话")
 
     if str(command.action) not in {a.value for a in Action}:
         raise AppError(ErrorCode.UNKNOWN_ACTION, f"未知命令：{command.action}")
@@ -1392,6 +1482,7 @@ def _commit_outcome(
         outcome = RunOutcome(status=target, error_code=outcome.error_code, warnings=outcome.warnings)
 
     result_product_version = run.base_product_version or 1
+    state_applied = False
 
     # 1) 产品状态（只增不改）
     if outcome.product_state is not None:
@@ -1407,6 +1498,7 @@ def _commit_outcome(
             )
         session_repo.save_product_state(db, session, state, now_iso=now_iso)
         result_product_version = state.version
+        state_applied = True
         if not any(str(e.get("type")) == EventType.product_state_updated.value for e in outcome.events):
             outcome.events.append(
                 {
@@ -1476,17 +1568,32 @@ def _commit_outcome(
     )
 
     # 5) 会话：释放占位 + 版本推进 + 阶段/简报状态
+    #
+    # ``session.brief_status`` 只是 ProductState 简报状态的镜像：workflow 不必
+    # 关心它（传 None），这里一律从已提交的 product_state 推导，保证两者永不
+    # 漂移；只有同步命令（revise/skip/confirm）才显式给出 brief_status。
+    effective_brief_status = outcome.brief_status
+    if effective_brief_status is None and outcome.product_state is not None:
+        effective_brief_status = outcome.product_state.brief.status
+
     updates: dict[str, Any] = {}
-    if not outcome.session_version_bump and outcome.session_phase is None and outcome.brief_status is None:
-        updates = {}
-    if session.active_run_id == run.id:
+    released_active = session.active_run_id == run.id
+    if released_active:
         updates["active_run_id"] = None
     if outcome.session_phase is not None:
         updates["phase"] = outcome.session_phase.value
-    if outcome.brief_status is not None:
-        updates["brief_status"] = outcome.brief_status.value
+    if effective_brief_status is not None:
+        updates["brief_status"] = effective_brief_status.value
     session_repo.touch_session(db, session, now_iso=now_iso, **updates)
-    if outcome.session_version_bump:
+    # 会话版本是并发写校验的锚点：任何可见变更（状态/消息/阶段/占位释放）都要推进。
+    if (
+        outcome.session_version_bump
+        or state_applied
+        or bool(outcome.messages)
+        or outcome.session_phase is not None
+        or effective_brief_status is not None
+        or released_active
+    ):
         session_repo.bump_session_version(db, session)
 
     # 6) 额外写入钩子（审计问题/评估等，同事务）

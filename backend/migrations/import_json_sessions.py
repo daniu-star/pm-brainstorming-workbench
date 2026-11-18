@@ -33,7 +33,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 from sqlalchemy.orm import Session
 
@@ -751,6 +751,22 @@ def default_manifest_dir() -> Path:
     return Path(__file__).resolve().parents[1] / "data" / "migration_backups"
 
 
+def _emit_json(payload: Mapping[str, Any]) -> None:
+    """把结果以 UTF-8 JSON 打到标准输出。
+
+    Windows 下 Python 默认按 locale（多为 cp936）编码管道输出，Git Bash 等 UTF-8
+    终端会把中文原因/路径显示成乱码。这里显式切到 UTF-8；测试用 ``StringIO``
+    重定向时没有 ``reconfigure``，忽略即可（字符串本身与编码无关）。
+    """
+
+    text = json.dumps(payload, ensure_ascii=False, indent=2)
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
+    except (AttributeError, ValueError):
+        pass
+    print(text)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI 入口；返回进程退出码。"""
 
@@ -759,13 +775,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not source_dir.is_absolute():
         source_dir = (Path.cwd() / source_dir).resolve()
     if not source_dir.exists() or not source_dir.is_dir():
-        print(
-            json.dumps(
-                {"mode": "error", "error": f"源目录不存在或不是目录：{source_dir}"},
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
+        _emit_json({"mode": "error", "error": f"源目录不存在或不是目录：{source_dir}"})
         return 2
 
     if args.dry_run:
@@ -779,12 +789,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 plans.append(build_plan(source, now_iso=now_iso))
             except ValueError:
                 continue
-        print(json.dumps(dry_run_report(source_dir, plans, sources), ensure_ascii=False, indent=2))
+        _emit_json(dry_run_report(source_dir, plans, sources))
         return 0
 
     manifest_dir = Path(args.manifest_dir) if args.manifest_dir else default_manifest_dir()
     summary = apply_import(source_dir, manifest_dir.resolve())
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    _emit_json(summary)
     return 0
 
 

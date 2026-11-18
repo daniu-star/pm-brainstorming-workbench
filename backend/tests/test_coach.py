@@ -334,7 +334,8 @@ class RunClarifyTestCase(unittest.IsolatedAsyncioTestCase):
 
         brief = outcome.product_state.brief
         self.assertEqual(brief.status, BriefStatus.ready)
-        self.assertEqual(outcome.brief_status, BriefStatus.ready)
+        # session 侧 brief_status 由 state 推导（command_service 负责），coach 不传
+        self.assertIsNone(outcome.brief_status)
         for field in ALL_UPDATES:
             item = getattr(brief, field)
             self.assertEqual(item.status, BriefFieldStatus.proposed, field)
@@ -453,6 +454,38 @@ class RunClarifyTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(llm.calls, [])
         self.assertIn("先停在这里", outcome.messages[0].content)
         self.assertEqual(outcome.product_state.version, self.state.version + 1)
+        # 收敛路径同样不猜 phase/brief_status；必填不齐时 brief 仍是 draft
+        self.assertIsNone(outcome.brief_status)
+        self.assertIsNone(outcome.session_phase)
+        self.assertEqual(outcome.product_state.brief.status, BriefStatus.draft)
+
+    async def test_ready_brief_closes_without_calling_llm_and_marks_ready(self):
+        self.save_brief(
+            {
+                field: {
+                    "value": value,
+                    "status": BriefFieldStatus.proposed.value,
+                    "source_message_ids": ["m1"],
+                }
+                for field, value in REQUIRED_UPDATES.items()
+                if value is not None
+            }
+        )
+        self.assertTrue(self.state.brief.ready())
+
+        llm = FakeLLM(coach_json())
+        outcome = await run_clarify(self.make_ctx(llm, clarify_round=CLARIFY_ROUND_LIMIT))
+
+        self.assertEqual(llm.calls, [])
+        self.assertEqual(outcome.status, RunStatus.succeeded)
+        self.assertEqual(
+            outcome.product_state.brief.status, BriefStatus.ready
+        )
+        self.assertNotEqual(outcome.product_state.brief.status, BriefStatus.confirmed)
+        self.assertIsNone(outcome.brief_status)
+        self.assertIsNone(outcome.session_phase)
+        self.assertEqual(outcome.product_state.version, self.state.version + 1)
+        self.assertIn("如还有可补充的约束", outcome.messages[0].content)
 
     # -- 失败路径 -------------------------------------------------------- #
 

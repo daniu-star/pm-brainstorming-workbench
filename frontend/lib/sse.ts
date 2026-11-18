@@ -62,6 +62,9 @@ export function parseSSEChunk(
   const events: ParsedSSEEvent[] = [];
   let frame = emptyFrame();
   let cursor = 0;
+  // 当前「未终结帧」的起始偏移：帧未遇到空行就结束（TCP 分片）时，
+  // 整个帧必须原样留在 rest 里，否则 id/event/data 跨块丢失。
+  let frameStart = 0;
 
   while (true) {
     const newline = input.indexOf("\n", cursor);
@@ -80,6 +83,7 @@ export function parseSSEChunk(
         events.push(parsed);
       }
       frame = emptyFrame();
+      frameStart = cursor;
       continue;
     }
 
@@ -115,7 +119,8 @@ export function parseSSEChunk(
     }
   }
 
-  return { events, rest: input.slice(cursor) };
+  // 未终结帧必须整帧留在 rest 里（跨块 TCP 分片时 id/event/data 行不能丢）
+  return { events, rest: input.slice(frameStart) };
 }
 
 // --------------------------------------------------------------------------- //

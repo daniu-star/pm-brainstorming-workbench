@@ -5,7 +5,8 @@
 2. 会话创建 → 详情 / 消息分页 / 产品状态结构（limit 截断）；
 3. 同步命令幂等重放（同一 request_id 返回同一 receipt、reused=true）、版本冲突 409；
 4. SESSION_BUSY 409 + active_run_id；
-5. SSE 游标语义（after_seq / Last-Event-ID 取较大值、非法游标 422/410、终结后关闭）；
+5. SSE 游标语义（after_seq / Last-Event-ID 取较大值、after_seq=0 从头回放、
+   非法游标 422、模拟保留水位后 410、终结后关闭）；
 6. 任务快照单事务结构；
 7. 验证码跨进程有效（DB 权威，清空进程内缓存后仍可校验）。
 
@@ -14,8 +15,13 @@ lifespan 里的 RAG 构建。
 """
 from __future__ import annotations
 
+import atexit
+import gc
 import json
+import os
+import shutil
 import tempfile
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -31,6 +37,45 @@ from domain.errors import ErrorCode
 from repositories import audit_repo, database, run_repo, session_repo
 
 TEST_SECRET = "test-secret-key-that-is-longer-than-32-characters"
+
+_TEMP_DIRS: list[str] = []
+
+
+def _make_db_dir(prefix: str) -> str:
+    """创建临时库目录；进程退出时统一清理（本机 TEMP 不可用时 mkdtemp 会落在 cwd）。"""
+
+    path = tempfile.mkdtemp(prefix=prefix)
+    _TEMP_DIRS.append(path)
+    return path
+
+
+def _cleanup_temp_dirs() -> None:
+    """先释放 SQLite 引擎（Windows 上不释放会锁住文件），再删除临时目录。
+
+    Windows 上 sqlite 文件句柄可能延迟释放，因此带重试；清理是测试卫生的一部分，
+    必须保证跑完后工作树里不残留 ``pm_api_v2_*`` 目录。
+    """
+
+    try:
+        gc.collect()
+        database.dispose_engine()
+    except Exception:  # pragma: no cover - 清理路径容错
+        pass
+    for path in list(_TEMP_DIRS):
+        for attempt in range(4):
+            shutil.rmtree(path, ignore_errors=True)
+            if not os.path.exists(path):
+                break
+            try:
+                gc.collect()
+                database.dispose_engine()
+            except Exception:  # pragma: no cover - 清理路径容错
+                pass
+            time.sleep(0.1 * (attempt + 1))
+    _TEMP_DIRS.clear()
+
+
+atexit.register(_cleanup_temp_dirs)
 
 
 def _auth_config() -> dict:
@@ -51,7 +96,7 @@ class V2ApiTestBase(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls._tmpdir = tempfile.mkdtemp(prefix="pm_api_v2_")
+        cls._tmpdir = _make_db_dir("pm_api_v2_")
         db_path = (Path(cls._tmpdir) / "test.db").as_posix()
         database.reset_for_tests(f"sqlite+pysqlite:///{db_path}")
 
@@ -404,6 +449,104 @@ class CommandTests(V2ApiTestBase):
         self.assertEqual(status.json()["status"], C.RunStatus.queued.value)
 
 
+class ResourceDetailTests(V2ApiTestBase):
+    def test_message_evidence_and_canvas_endpoints(self) -> None:
+        session = self.create_session()
+        session_id = session["id"]
+
+        page = self.get(f"/api/v2/sessions/{session_id}/messages").json()
+        message_id = page["items"][0]["id"]
+
+        detail = self.get(f"/api/v2/messages/{message_id}")
+        self.assertEqual(detail.status_code, 200, detail.text)
+        self.assertEqual(detail.json()["id"], message_id)
+        self.assertEqual(detail.json()["content"], session["problem_statement"])
+
+        nested = self.get(f"/api/v2/sessions/{session_id}/messages/{message_id}")
+        self.assertEqual(nested.status_code, 200, nested.text)
+
+        with database.session_scope() as db:
+            row = session_repo.require_session(db, session_id, owner_email=self.email)
+            evidence = session_repo.add_evidence(
+                db,
+                row,
+                kind=C.EvidenceKind.user_statement,
+                title="用户访谈",
+                excerpt="用户说周报最耗时的是整理群聊记录",
+                created_by=self.email,
+            )
+            evidence_id = evidence.id
+
+        fetched = self.get(f"/api/v2/evidence/{evidence_id}")
+        self.assertEqual(fetched.status_code, 200, fetched.text)
+        self.assertEqual(fetched.json()["id"], evidence_id)
+        self.assertEqual(fetched.json()["title"], "用户访谈")
+
+        canvas = self.get(f"/api/v2/sessions/{session_id}/canvas")
+        self.assertEqual(canvas.status_code, 200, canvas.text)
+        projection = canvas.json()
+        self.assertEqual(projection["session_id"], session_id)
+        self.assertEqual(projection["product_version"], 1)
+
+        missing_version = self.get(
+            f"/api/v2/sessions/{session_id}/canvas", params={"product_version": 9}
+        )
+        self.assertEqual(missing_version.status_code, 404, missing_version.text)
+
+    def test_sse_disconnect_does_not_cancel_run(self) -> None:
+        """客户端断开（CancelledError）只停止订阅，服务器 Run 状态不变。"""
+
+        import asyncio
+        import contextlib
+
+        from api import sse
+
+        session = self.create_session()
+        with database.session_scope() as db:
+            run = run_repo.create_run(
+                db,
+                session_id=session["id"],
+                owner_email=self.email,
+                request_id=C.new_request_id(),
+                action=C.Action.clarify.value,
+                input_hash="2" * 64,
+                base_session_version=1,
+                base_product_version=1,
+                now_iso=C.utc_now_iso(),
+            )
+            run_id = run.id
+
+        async def _scenario() -> None:
+            async def _consume() -> None:
+                async for _event in sse.iter_run_events(
+                    run_id=run_id,
+                    after_seq=0,
+                    keepalive_seconds=0.01,
+                    poll_interval=0.005,
+                ):
+                    pass
+
+            task = asyncio.create_task(_consume())
+            await asyncio.sleep(0.05)
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        asyncio.run(_scenario())
+
+        with database.session_scope() as db:
+            run = run_repo.get_run(db, run_id)
+            self.assertIsNotNone(run)
+            self.assertEqual(run.status, C.RunStatus.queued.value)
+
+    def test_keepalive_frame_is_comment_without_seq(self) -> None:
+        from api import sse
+
+        frame = sse.format_keepalive()
+        self.assertEqual(frame, ": keepalive\n\n")
+        self.assertNotIn("id:", frame)
+
+
 class RunAndSseTests(V2ApiTestBase):
     def test_run_detail_and_snapshot_single_transaction(self) -> None:
         session = self.create_session()
@@ -474,6 +617,52 @@ class RunAndSseTests(V2ApiTestBase):
         self.assertNotIn("id: 2\n", resp2.text)
         self.assertIn("id: 3", resp2.text)
 
+    def test_sse_after_seq_zero_replays_from_start(self) -> None:
+        """after_seq=0（或省略游标）合法：从头回放，包含 seq=1。"""
+
+        session = self.create_session()
+        run_id = self.create_run_with_events(session["id"])
+
+        explicit = self.get(f"/api/v2/runs/{run_id}/events", params={"after_seq": 0})
+        self.assertEqual(explicit.status_code, 200, explicit.text)
+        body = explicit.text
+        for seq in (1, 2, 3, 4):
+            self.assertIn(f"id: {seq}\n", body)
+        self.assertIn("event: run.queued", body)
+        self.assertEqual(body.count("event: run.completed"), 1)
+
+        omitted = self.get(f"/api/v2/runs/{run_id}/events")
+        self.assertEqual(omitted.status_code, 200, omitted.text)
+        self.assertIn("id: 1\n", omitted.text)
+
+    def test_sse_cursor_expired_only_below_retention_watermark(self) -> None:
+        """M1 水位=0 不过期；模拟水位>0 时 after_seq=0 → 410（AC-35 走快照恢复）。"""
+
+        from api import sse
+
+        session = self.create_session()
+        run_id = self.create_run_with_events(session["id"])
+
+        # M1：水位为 0，任何合法游标都可回放。
+        ok = self.get(f"/api/v2/runs/{run_id}/events", params={"after_seq": 0})
+        self.assertEqual(ok.status_code, 200, ok.text)
+
+        # 模拟事件已被压缩：水位 3 表示 seq<=3 不可回放，after_seq 至少为 2。
+        with mock.patch.object(sse, "RETENTION_WATERMARK", 3):
+            expired = self.get(
+                f"/api/v2/runs/{run_id}/events", params={"after_seq": 0}
+            )
+            self.assertEqual(expired.status_code, 410, expired.text)
+            self.assertEqual(
+                expired.json()["error"]["code"], ErrorCode.EVENT_CURSOR_EXPIRED
+            )
+
+            boundary = self.get(
+                f"/api/v2/runs/{run_id}/events", params={"after_seq": 2}
+            )
+            self.assertEqual(boundary.status_code, 200, boundary.text)
+            self.assertNotIn("id: 2\n", boundary.text)
+
     def test_sse_invalid_cursor_errors(self) -> None:
         session = self.create_session()
         run_id = self.create_run_with_events(session["id"])
@@ -501,10 +690,6 @@ class RunAndSseTests(V2ApiTestBase):
         self.assertEqual(
             too_large.json()["error"]["code"], ErrorCode.INVALID_EVENT_CURSOR
         )
-
-        expired = self.get(f"/api/v2/runs/{run_id}/events", params={"after_seq": 0})
-        self.assertEqual(expired.status_code, 410, expired.text)
-        self.assertEqual(expired.json()["error"]["code"], ErrorCode.EVENT_CURSOR_EXPIRED)
 
     def test_cancel_terminal_run_is_idempotent_200(self) -> None:
         session = self.create_session()

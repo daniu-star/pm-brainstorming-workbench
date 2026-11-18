@@ -279,3 +279,69 @@ test("openRunEvents 传递 Last-Event-ID 与 after_seq", async () => {
   assert.equal(capturedInit.headers["Last-Event-ID"], "12");
   assert.equal(capturedInit.method, "GET");
 });
+
+// --------------------------------------------------------------------------- //
+// 与后端真实帧格式对齐（backend/api/sse.py 的 format_event/format_keepalive 输出）
+// --------------------------------------------------------------------------- //
+
+// 该字符串由 python 直接调用 backend/api/sse.py:format_event() +
+// format_keepalive() 生成，确保前端解析器与后端序列化格式严格兼容。
+const BACKEND_FRAMES =
+  ": keepalive\n\n" +
+  'id: 1\nevent: run.started\ndata: {"event_seq":1,"occurred_at":"2026-01-01T00:00:00Z","payload":{},"run_id":"r1","schema_version":1,"session_id":"s1","type":"run.started"}\n\n' +
+  'id: 2\nevent: product_state.updated\ndata: {"event_seq":2,"occurred_at":"2026-01-01T00:00:00Z","payload":{"product_version":2,"session_version":3},"run_id":"r1","schema_version":1,"session_id":"s1","type":"product_state.updated"}\n\n' +
+  'id: 3\nevent: run.completed\ndata: {"event_seq":3,"occurred_at":"2026-01-01T00:00:00Z","payload":{"product_version":2,"session_version":3,"status":"succeeded"},"run_id":"r1","schema_version":1,"session_id":"s1","type":"run.completed"}\n\n';
+
+test("能解析后端真实 SSE 帧（含心跳注释与 product_state.updated）", () => {
+  const result = parseSSEChunk("", BACKEND_FRAMES);
+  assert.equal(result.rest, "");
+  assert.equal(result.events.length, 3);
+  assert.deepEqual(
+    result.events.map((e) => e.id),
+    ["1", "2", "3"],
+  );
+  assert.deepEqual(
+    result.events.map((e) => e.event),
+    ["run.started", "product_state.updated", "run.completed"],
+  );
+  const last = JSON.parse(result.events[2].data);
+  assert.equal(last.type, "run.completed");
+  assert.equal(last.payload.product_version, 2);
+});
+
+test("后端真实帧逐字节分块喂入也能完整重组（模拟 TCP 分片）", async () => {
+  // 按 1 字符切片，最严苛的分片情形
+  const chunks = [];
+  for (let i = 0; i < BACKEND_FRAMES.length; i += 1) chunks.push(BACKEND_FRAMES[i]);
+
+  let buffer = "";
+  const events = [];
+  for (const chunk of chunks) {
+    const parsed = parseSSEChunk(buffer, chunk);
+    buffer = parsed.rest;
+    events.push(...parsed.events);
+  }
+  assert.equal(events.length, 3);
+  assert.deepEqual(
+    events.map((e) => e.event),
+    ["run.started", "product_state.updated", "run.completed"],
+  );
+  assert.equal(buffer, "");
+});
+
+test("openRunEvents 端到端消费后端真实帧并在 run.completed 关闭 terminal", async () => {
+  const result = await collect("/api/v2/runs/r1/events", {
+    fetchImpl: async () =>
+      streamResponse([
+        BACKEND_FRAMES.slice(0, 60),
+        BACKEND_FRAMES.slice(60, 200),
+        BACKEND_FRAMES.slice(200),
+      ]),
+  });
+  assert.deepEqual(result.closes, ["terminal"]);
+  assert.equal(result.errors.length, 0);
+  assert.deepEqual(
+    result.events.map((e) => e.type),
+    ["run.started", "product_state.updated", "run.completed"],
+  );
+});

@@ -11,9 +11,10 @@
 
     : keepalive          <!-- 每 15s，一条注释，不占 event_seq -->
 
-游标规则：``Last-Event-ID`` 与 ``?after_seq=`` 同时存在取较大值；非整数 / 负数
-→ 422 ``INVALID_EVENT_CURSOR``；早于保留边界 → 410 ``EVENT_CURSOR_EXPIRED``；
-大于当前最新 seq → 422 ``INVALID_EVENT_CURSOR``。
+游标规则：``Last-Event-ID`` 与 ``?after_seq=`` 同时存在取较大值；省略游标等价于
+``after_seq=0``（从头回放，含 seq=1）；非整数 / 负数 → 422 ``INVALID_EVENT_CURSOR``；
+早于保留水位（``after_seq < RETENTION_WATERMARK - 1``）→ 410 ``EVENT_CURSOR_EXPIRED``
+（M1 不压缩事件、水位为 0，因此正常不会触发）；大于当前最新 seq → 422。
 """
 from __future__ import annotations
 
@@ -36,8 +37,9 @@ KEEPALIVE_SECONDS = 15.0
 POLL_INTERVAL_SECONDS = 0.25
 #: 单次从库里取的事件条数上限。
 EVENT_BATCH_LIMIT = 200
-#: 本实现不压缩历史事件：最小可回放 seq。
-RETENTION_MIN_SEQ = 1
+#: 已压缩（不可回放）的事件水位：``event_seq <= RETENTION_WATERMARK`` 视为已过期。
+#: M1 不压缩历史事件，恒为 0 —— 从 seq=1 起都能回放，``after_seq=0`` 合法。
+RETENTION_WATERMARK = 0
 
 SSE_HEADERS = {
     "Cache-Control": "no-cache, no-transform",
@@ -111,15 +113,15 @@ def resolve_start_cursor(
     if after_seq is not None and str(after_seq).strip() != "":
         candidates.append(_parse_cursor(after_seq, source="after_seq"))
 
-    if not candidates:
-        return 0
-
-    cursor = max(candidates)
-    if cursor < RETENTION_MIN_SEQ:
+    cursor = max(candidates) if candidates else 0
+    # 游标过期：水位之上的第一个可回放 seq 是 watermark+1，因此只允许
+    # after_seq >= watermark（即 after_seq < watermark - 1 才过期）。
+    # M1 水位为 0，任何合法游标都不会过期（显式 after_seq=0 = 从头回放）。
+    if cursor < RETENTION_WATERMARK - 1:
         raise AppError(
             ErrorCode.EVENT_CURSOR_EXPIRED,
             "事件游标已过期，请重新获取任务快照",
-            details={"after_seq": cursor, "retention_min_seq": RETENTION_MIN_SEQ},
+            details={"after_seq": cursor, "retention_watermark": RETENTION_WATERMARK},
         )
     if cursor > latest_event_seq:
         raise AppError(
@@ -218,7 +220,7 @@ __all__ = [
     "EVENT_BATCH_LIMIT",
     "KEEPALIVE_SECONDS",
     "POLL_INTERVAL_SECONDS",
-    "RETENTION_MIN_SEQ",
+    "RETENTION_WATERMARK",
     "SSE_HEADERS",
     "format_event",
     "format_keepalive",
