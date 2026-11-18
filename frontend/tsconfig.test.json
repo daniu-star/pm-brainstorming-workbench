@@ -17,6 +17,7 @@
     "lib/contracts.generated.ts",
     "lib/stateGuards.ts",
     "lib/api.ts",
+    "lib/auditView.ts",
     "lib/sse.ts"
   ]
 }

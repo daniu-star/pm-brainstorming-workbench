@@ -1,0 +1,70 @@
+name: ci
+
+on:
+  push:
+    branches: ["master", "feat/**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend (python 3.12)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      PYTHONPATH: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: install
+        run: pip install -r requirements.txt
+      - name: unit + integration tests
+        # 覆盖：领域契约/状态机、仓储（含跨进程 AC-06/07/08/28）、命令服务、
+        # runner/worker、教练与四角色脑暴、审计闭环、v1 兼容适配、SSE。
+        run: python -m unittest discover -s tests -v
+      - name: import smoke
+        run: python -c "import main; print('routes ok')"
+
+  frontend:
+    name: frontend (node 20)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+      - name: install
+        run: npm ci
+      - name: typecheck
+        run: npx tsc --noEmit
+      - name: unit tests (node --test + tsc -p tsconfig.test.json)
+        run: npm test
+      - name: build
+        run: npm run build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install backend deps for e2e
+        run: pip install -r ../backend/requirements.txt
+      - name: api smoke e2e (spawns uvicorn on a random port)
+        run: npm run test:e2e
+        env:
+          PYTHON_BIN: python
+          # 未配置真实 LLM 时，API smoke 只验证读写路径与错误体，不触发模型调用。
+          LLM_API_KEY: ""

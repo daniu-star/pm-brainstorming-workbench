@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import inspect
 import json
 import logging
@@ -80,8 +81,21 @@ STEP_ROLE: dict[TaskKind, RoleCode] = {
     TaskKind.rebuild_legacy: RoleCode.coach,
 }
 
-#: 可注入的工作流分发表。M1 只实现 ``TaskKind.clarify``；测试可整体替换。
-#: 未注册的类型会尝试从 ``workflows.coach`` 延迟导入，仍不存在则 FEATURE_NOT_READY。
+#: 工作流的惰性描述：``(模块名, 函数名)``。调用时才 import，
+#: 因此模块文件尚未落地（团队并行开发期）也不会拖垮 ``import workflows.runner``。
+WorkflowRef = tuple[str, str]
+
+#: 任务类型 → 工作流入口（M2 起注册 brainstorm 与审计三项）。
+WORKFLOWS: dict[TaskKind, WorkflowRef] = {
+    TaskKind.clarify: ("workflows.coach", "run_clarify"),
+    TaskKind.brainstorm: ("workflows.brainstorm", "run_brainstorm"),
+    TaskKind.audit_open: ("workflows.audit", "run_audit_open"),
+    TaskKind.audit_answer: ("workflows.audit", "run_audit_answer"),
+    TaskKind.audit_report: ("workflows.audit", "run_audit_report"),
+}
+
+#: 可注入的工作流分发表（优先级高于 :data:`WORKFLOWS`）；测试可整体替换。
+#: 未注册的类型返回 ``None``，由执行器落 ``FEATURE_NOT_READY``。
 WORKFLOW_DISPATCH: dict[TaskKind, Callable[[Any], Any]] = {}
 
 
@@ -614,19 +628,31 @@ def _has_terminal_event(db, run_repo, run_id: str) -> bool:
 
 
 def _resolve_dispatch(task_kind: TaskKind) -> Callable[[StepContext], Any] | None:
-    """解析工作流函数：显式注册优先，其次延迟导入 coach。"""
+    """解析工作流函数：显式注册优先，其次按惰性描述导入，最后返回 ``None``。"""
     registered = WORKFLOW_DISPATCH.get(task_kind)
     if registered is not None:
         return registered
-    if task_kind is TaskKind.clarify:
-        try:
-            from workflows.coach import run_clarify  # type: ignore[import-not-found]
-
-            return run_clarify
-        except (ImportError, AttributeError) as exc:
-            logger.error("workflows.coach 尚不可用：%s", exc)
-            return None
-    return None
+    ref = WORKFLOWS.get(task_kind)
+    if ref is None:
+        return None
+    module_name, attr_name = ref
+    try:
+        module = importlib.import_module(module_name)
+        dispatch = getattr(module, attr_name)
+    except (ImportError, AttributeError) as exc:
+        logger.error(
+            "工作流尚不可用 task_kind=%s target=%s.%s：%s",
+            task_kind.value,
+            module_name,
+            attr_name,
+            exc,
+        )
+        return None
+    if not callable(dispatch):
+        logger.error("工作流入口不可调用 target=%s.%s", module_name, attr_name)
+        return None
+    WORKFLOW_DISPATCH[task_kind] = dispatch
+    return dispatch
 
 
 # --------------------------------------------------------------------------- #
@@ -1672,6 +1698,7 @@ __all__ = [
     "STEP_ROLE",
     "StepContext",
     "WORKFLOW_DISPATCH",
+    "WORKFLOWS",
     "execute_run",
     "handle_run_exception",
 ]

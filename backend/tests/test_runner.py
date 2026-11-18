@@ -527,7 +527,9 @@ class CommitTests(RunnerTestCase):
 
 class FeatureGateTests(RunnerTestCase):
     def test_unimplemented_task_kind_fails_but_records_step(self) -> None:
-        _, run_id = self.create_run(action="brainstorm")
+        # M1/M2 已注册 clarify / brainstorm / audit_*；rebuild_legacy 仍未实现，
+        # 用它验证“未注册任务类型”的 FEATURE_NOT_READY 兜底与可审计步骤。
+        _, run_id = self.create_run(action="rebuild_legacy")
         self.claim(run_id)
 
         self.run_once(run_id)
@@ -535,7 +537,7 @@ class FeatureGateTests(RunnerTestCase):
         run = self.get_run(run_id)
         self.assertEqual(run.status, RunStatus.failed.value)
         self.assertEqual(run.error_code, ErrorCode.FEATURE_NOT_READY)
-        step = self.get_step(run_id, "brainstorm.generate")
+        step = self.get_step(run_id, "legacy.rebuild")
         self.assertIsNotNone(step, "未实现的任务也必须留下可审计步骤")
         self.assertEqual(step.status, StepStatus.failed.value)
         self.assertEqual(step.error_code, ErrorCode.FEATURE_NOT_READY)

@@ -132,6 +132,39 @@ def _service_status() -> dict:
     }
 
 
+def _worker_status() -> dict:
+    """Worker 实时状态（WP-10 可观测性）。
+
+    只做只读聚合：未领取的排队数、正在执行的 run 数、最近一次心跳时间。
+    心跳由 ``run_repo.claim_next_run``/``renew_lease`` 写入 ``runs.heartbeat_at``，
+    因此它反映的是「真实有 Worker 在跑」而不只是进程存在。
+    """
+
+    from sqlalchemy import func, select
+
+    from repositories.database import new_session
+    from repositories.database import RunRow
+
+    db = new_session()
+    try:
+        running = db.execute(
+            select(func.count()).select_from(RunRow).where(RunRow.status == "running")
+        ).scalar_one()
+        queued = db.execute(
+            select(func.count()).select_from(RunRow).where(RunRow.status == "queued")
+        ).scalar_one()
+        heartbeat = db.execute(
+            select(func.max(RunRow.heartbeat_at)).where(RunRow.status == "running")
+        ).scalar_one()
+        return {"db": True, "running_runs": int(running), "queued_runs": int(queued),
+                "last_heartbeat_at": heartbeat}
+    except Exception:  # pragma: no cover - 诊断接口不应让健康检查崩溃
+        logger.exception("worker status unavailable")
+        return {"db": False, "running_runs": 0, "queued_runs": 0, "last_heartbeat_at": None}
+    finally:
+        db.close()
+
+
 @app.get("/health")
 async def health():
     """公开健康检查：仅返回总体状态，不暴露配置细节（B070）。"""
@@ -146,4 +179,9 @@ async def health_detail(request: Request):
     if not email:
         raise HTTPException(status_code=401, detail="请先使用邮箱登录")
     services = _service_status()
-    return {"status": "ok" if all(services.values()) else "degraded", "services": services}
+    worker = _worker_status()
+    return {
+        "status": "ok" if all(services.values()) and worker.get("db") else "degraded",
+        "services": {**services, "worker": bool(worker.get("db"))},
+        "worker": worker,
+    }

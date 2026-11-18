@@ -237,7 +237,8 @@ class CrossProcessCase(unittest.TestCase):
             )
 
     def test_two_worker_processes_claim_the_same_run_once(self) -> None:
-        # brainstorm 在 M1 未实现工作流 → 不调用模型即可走完 claim/step/终结链路。
+        # 选一个「未注册工作流」的 action（rebuild_legacy），这样子进程 worker 不调模型、
+        # 只建 1 个顶层 step 就能走完 claim/step/终结链路（AC-08 只关心领取与提交的原子性）。
         self._advance_to_brainstorming()
         command_service = __import__("services.command_service", fromlist=["submit_command"])
         with database.session_scope() as db:
@@ -249,8 +250,8 @@ class CrossProcessCase(unittest.TestCase):
                 session_id=self.session_id,
                 command=C.CommandRequest(
                     request_id=C.new_request_id(),
-                    action=C.Action.brainstorm,
-                    payload={"content": "请四个角色给方案"},
+                    action=C.Action.rebuild_legacy,
+                    payload={},
                 ),
             )
         run_id = receipt.run_id
@@ -271,7 +272,7 @@ class CrossProcessCase(unittest.TestCase):
             self.assertIsNone(
                 run_repo.active_run_for_session(db, self.session_id), "Run 已被唯一 Worker 执行并释放占位"
             )
-            # 同步命令也会各建一条已终结 Run；这里只校验 brainstorm 的那一条。
+            # 同步命令也会各建一条已终结 Run；这里只校验 rebuild_legacy 的那一条。
             events = run_repo.events_after(db, run_id)
             started = [e for e in events if e.type == "run.started"]
             self.assertEqual(len(started), 1, "run.started 必须恰好一条")
@@ -284,7 +285,7 @@ class CrossProcessCase(unittest.TestCase):
             self.assertIsNone(row.lease_owner)
             self.assertEqual(row.lease_epoch, 1, "只被领取一次 → epoch=1")
             self.assertEqual(
-                row.status, C.RunStatus.failed.value, "M1 未实现 brainstorm workflow → 明确失败而非假成功"
+                row.status, C.RunStatus.failed.value, "未注册的 workflow → 明确失败而非假成功"
             )
             self.assertEqual(row.error_code, "FEATURE_NOT_READY")
 

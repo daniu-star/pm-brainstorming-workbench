@@ -9,10 +9,10 @@ from domain.contracts import AuditQuestion
 router = APIRouter(tags=["v2-audits"])
 
 
-def _question_payload(row) -> dict:
+def _question_model(row) -> AuditQuestion:
     fields = set(AuditQuestion.model_fields)
     data = {name: getattr(row, name) for name in fields if hasattr(row, name)}
-    return AuditQuestion.model_validate(data).model_dump(mode="json")
+    return AuditQuestion.model_validate(data)
 
 
 @router.get("/audits/{audit_id}")
@@ -21,10 +21,11 @@ def get_audit(audit_id: str, request: Request):
     audit_repo = common.repo("audit_repo")
     with common.open_db() as db:
         audit = audit_repo.require_audit(db, audit_id, owner_email=owner_email)
-        snapshot = audit_repo.audit_to_snapshot(db, audit)
         questions = audit_repo.questions_for_audit(db, audit.id)
+        snapshot = audit_repo.audit_to_snapshot(db, audit).model_copy(
+            update={"questions": [_question_model(row) for row in questions]}
+        )
         payload = snapshot.model_dump(mode="json")
-        payload["questions"] = [_question_payload(row) for row in questions]
     return payload
 
 

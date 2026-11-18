@@ -890,6 +890,8 @@ class AuditSnapshot(StrictModel):
     close_requested: bool = False
     closing_control_id: str | None = None
     dimension_states: list[DimensionState] = Field(default_factory=list)
+    # 审计问题列表随快照一并返回，前端无需为「第 N 问/历史问答」再发一次请求（FR-07）。
+    questions: list[AuditQuestion] = Field(default_factory=list)
     report: AuditReport | None = None
     created_at: str = Field(default_factory=utc_now_iso)
     updated_at: str = Field(default_factory=utc_now_iso)

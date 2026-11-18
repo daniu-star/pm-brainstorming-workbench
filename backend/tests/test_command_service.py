@@ -9,6 +9,7 @@
 - AC-40 人工更正审计评估写入 Revision 且不调模型
 - AC-42 cancel_audit 优先于未完成的 end_audit
 """
+import json
 import time
 import unittest
 
@@ -144,6 +145,43 @@ class AsyncCommandTests(CommandTestCase):
             run = run_repo.get_run(db, receipt.run_id)
             events = run_repo.events_after(db, receipt.run_id)
             self.assertEqual(events[0].type, EventType.run_queued.value)
+
+    def test_brainstorm_persists_target_for_worker_replay(self):
+        """FR-04B：target 必须随 Run 落库，Worker 才能跨进程重放「指定角色」。"""
+
+        session_id, _ = self.confirmed_session()
+        for target in ("auto", "all", "cto", "target_user"):
+            with self.subTest(target=target):
+                expected_version = self.read_session(session_id).session_version
+                receipt = self.submit(
+                    session_id,
+                    Action.brainstorm,
+                    {"content": "请从各自视角评审方案", "target": target},
+                    expected_version=expected_version,
+                )
+                self.assertEqual(receipt.status, RunStatus.queued.value)
+                with session_scope() as db:
+                    run = run_repo.get_run(db, receipt.run_id)
+                    budget = json.loads(run.budget_json or "{}")
+                    self.assertEqual(budget.get("target"), target)
+                # 释放占位，让下一个 target 还能再提交（这里只验证命令层落库，不跑 worker）。
+                with session_scope() as db:
+                    command_service.cancel_run(
+                        db, owner_email=OWNER, run_id=receipt.run_id, now_iso=NOW_ISO
+                    )
+
+    def test_brainstorm_defaults_target_to_auto(self):
+        session_id, _ = self.confirmed_session()
+        expected_version = self.read_session(session_id).session_version
+        receipt = self.submit(
+            session_id,
+            Action.brainstorm,
+            {"content": "请各自评审"},
+            expected_version=expected_version,
+        )
+        with session_scope() as db:
+            run = run_repo.get_run(db, receipt.run_id)
+            self.assertEqual(json.loads(run.budget_json or "{}").get("target"), "auto")
 
     def test_clarify_rejects_too_long_input(self):
         session_id = self.make_session()

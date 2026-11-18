@@ -323,7 +323,7 @@ class RoleSelectionTests(BrainstormTestBase):
         self.assertEqual(len(self.calls()), 1)
 
     async def test_auto_target_uses_content_keywords(self) -> None:
-        self.current.content = "我们想先讨论定价和收入模型，怎么设计商业模式？"
+        self.current.content = "我们想先讨论定价、收入模型和变现路径，商业上怎么走？"
         llm = self.make_llm({"ops": [role_payload(RoleCode.ops)]})
         outcome = await run_brainstorm(self.make_ctx(llm))
 
@@ -439,7 +439,7 @@ class StagingTests(BrainstormTestBase):
             {step.logical_key for step in role_steps},
             {f"brainstorm.role.{role.value}" for role in _FOUR_ROLES},
         )
-        self.assertTrue(all(step.status.value == "succeeded" for step in role_steps))
+        self.assertTrue(all(step.status == "succeeded" for step in role_steps))
 
         candidates = self.probe_candidates()
         self.assertEqual(len(candidates), 4)
@@ -558,7 +558,7 @@ class ValidationAndRepairTests(BrainstormTestBase):
         self.assertEqual(outcome.status, RunStatus.partial_succeeded)
         cto_steps = [s for s in self.probe_steps() if s.logical_key == "brainstorm.role.cto"]
         self.assertEqual(len(cto_steps), 1)
-        self.assertEqual(cto_steps[0].status.value, "failed")
+        self.assertEqual(cto_steps[0].status, "failed")
         self.assertEqual(cto_steps[0].error_code, "MODEL_OUTPUT_INVALID")
         self.assertEqual(
             [m.role_code for m in outcome.messages],

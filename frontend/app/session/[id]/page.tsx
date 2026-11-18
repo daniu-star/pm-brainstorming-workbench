@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, Suspense } from "react";
+import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useSessionStore } from "@/store/sessionStore";
 import { Header } from "@/components/Header";
@@ -23,6 +24,8 @@ function WorkbenchContent() {
     unsubscribe,
     isHistoryOpen,
     toggleHistory,
+    sessionView,
+    legacyMode,
   } = useSessionStore();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -116,6 +119,39 @@ function WorkbenchContent() {
     <div className="h-screen flex flex-col bg-dark-900 bg-mesh">
       <Header />
       <HistoryDrawer isOpen={isHistoryOpen} onClose={toggleHistory} />
+
+      {/* M3 审计入口：v2 会话进入 brainstorming 之后才出现（legacy 流程没有审计） */}
+      {(() => {
+        if (legacyMode || !sessionView) return null;
+        const v2Phase = sessionView.phase;
+        if (
+          v2Phase !== "brainstorming" &&
+          v2Phase !== "auditing" &&
+          v2Phase !== "audit_completed"
+        ) {
+          return null;
+        }
+        const targetId = (params?.id as string) ?? sessionId;
+        if (!targetId) return null;
+        const auditing = v2Phase === "auditing";
+        return (
+          <div className="flex shrink-0 items-center gap-3 border-b border-zinc-800/50 bg-dark-800/40 px-4 py-1.5">
+            <span className="text-[11px] text-zinc-500">
+              {v2Phase === "audit_completed"
+                ? "审计已完成，可回看报告"
+                : auditing
+                  ? "审计进行中"
+                  : "方案已收敛，可进入六维审计"}
+            </span>
+            <Link
+              href={`/session/${targetId}/audit`}
+              className="ml-auto inline-flex min-h-[32px] items-center rounded-lg border border-brand-500/40 bg-brand-600/15 px-3 text-[11px] font-medium text-brand-300 transition-colors hover:bg-brand-600/25"
+            >
+              {auditing ? "继续审计" : v2Phase === "audit_completed" ? "查看审计报告" : "进入审计"}
+            </Link>
+          </div>
+        );
+      })()}
 
       {/* Mobile view switcher (< md) */}
       <div

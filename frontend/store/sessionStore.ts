@@ -259,6 +259,8 @@ interface SessionState {
   cancelRun: (runId?: string) => Promise<void>;
   retryFailedRun: (runId?: string) => Promise<void>;
   refreshCanvas: (productVersion?: number) => Promise<void>;
+  /** 拉取审计快照并写入 `audits`（审计页用；失败静默，不打断页面） */
+  hydrateAuditById: (auditId: string) => Promise<void>;
   clearStateWarnings: () => void;
   reset: () => void;
 }
@@ -523,6 +525,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
   }
 
   async function hydrateAudit(auditId: string, captured: SessionGuard): Promise<void> {
+    if (!auditId) return;
     try {
       const audit = await getAudit(auditId);
       if (!assertCurrent(captured)) return;
@@ -820,6 +823,11 @@ export const useSessionStore = create<SessionState>((set, get) => {
       await Promise.all([
         hydrateMessages(sessionId, captured),
         hydrateProductAndCanvas(sessionId, captured, { productVersion }),
+        // 审计运行结束后 refresh active_question_id 等状态，否则审计页停在旧问题
+        hydrateAudit(
+          session?.current_audit_id ?? get().sessionView?.current_audit_id ?? "",
+          captured
+        ),
       ]);
       if (!assertCurrent(captured)) return;
 
@@ -1384,9 +1392,11 @@ export const useSessionStore = create<SessionState>((set, get) => {
       const productVersion =
         state.productVersion || state.sessionView?.current_product_version || 1;
       set({ isStreaming: true, error: null });
+      // 后端 StartAuditPayload 是 StrictModel(extra=forbid)：字段名必须是
+      // expected_product_version（早期写 product_version 会被 422 拒绝）
       void dispatchCommand(
         "start_audit",
-        { product_version: productVersion },
+        { expected_product_version: productVersion },
         capture()
       ).catch(() => undefined);
     },
@@ -1564,6 +1574,10 @@ export const useSessionStore = create<SessionState>((set, get) => {
 
     refreshCanvas: async (productVersion?: number) => {
       await refreshCanvas(productVersion);
+    },
+
+    hydrateAuditById: async (auditId: string) => {
+      await hydrateAudit(auditId, capture());
     },
 
     clearStateWarnings: () => set({ stateWarnings: [] }),

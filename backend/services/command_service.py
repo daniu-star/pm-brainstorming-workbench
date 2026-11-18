@@ -694,6 +694,12 @@ def _submit_async(
                 )
 
     # 2) Run 占位 + 会话占位（同一事务）
+    run_budget = default_budget()
+    if action is Action.brainstorm:
+        # FR-04B：用户选择的「全员 / 指定角色 / 智能分配」随 Run 落库，
+        # workflow 从 run.budget_json["target"] 读取（不依赖进程内状态，重放安全）。
+        target = parsed.payload.get("target") or C.TargetRole.auto.value
+        run_budget["target"] = getattr(target, "value", target)
     run = run_repo.create_run(
         db,
         session_id=session.id,
@@ -703,7 +709,7 @@ def _submit_async(
         input_hash=parsed.input_hash,
         base_session_version=session.session_version,
         base_product_version=base_product_version,
-        budget=default_budget(),
+        budget=run_budget,
         now_iso=now_iso,
         deadline_at=now_epoch + C.RUN_TIMEOUT_SECONDS,
         queue_deadline_at=now_epoch + C.QUEUE_WAIT_LIMIT_SECONDS,
