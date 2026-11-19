@@ -16,3 +16,4 @@ backend/probe-*/
 backend/tmp[0-9a-z_]*/
 tmp[0-9a-z]*
 backend/.tmp_tests/
+.run/

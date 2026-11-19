@@ -22,6 +22,23 @@ AI-powered product brainstorming workbench with multi-role agents and visual can
 
 ## Quick Start
 
+### 0. 一键启动（Windows，推荐）
+
+配好 `.venv` 与 `frontend/node_modules` 之后，双击仓库根目录的 `start.bat` 即可：
+
+- 自动初始化 SQLite 数据库，然后拉起三个服务，各自一个控制台窗口：
+  - `PM-API    :8001` — `uvicorn main:app`（`/api/v2`、`/docs`）
+  - `PM-Worker` — `python -m workers.run_worker`（按租约领取并执行 Run）
+  - `PM-Web    :3001` — `next dev`（`NEXT_PUBLIC_API_URL` 指向本次 API 端口）
+- 端口被其他程序占用时自动顺延（8001→8002…，3001→3002…），并同步 `CORS_ORIGINS`
+- 等 `/health` 与首页都返回后才算启动完成，然后自动打开浏览器
+- 重复双击不会起第二套：检测到已运行就只打开浏览器
+- `stop.bat` 按 PID 结束三个窗口及其子进程；`.run/` 存放 PID 与端口（已 gitignore）
+
+命令行参数（可选）：`start.bat -NoBrowser`、`-ApiPort 8002`、`-WebPort 3002`、`-SkipWorker`、`-Force`（强制重启）。
+
+> 注意：前端与后端必须使用同一主机名（脚本统一用 `127.0.0.1`），否则 `SameSite=lax` 的登录 Cookie 不会随跨站请求发送。
+
 ### 1. Install Dependencies
 
 **Backend:**
