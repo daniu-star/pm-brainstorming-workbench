@@ -16,7 +16,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { LayersIcon } from "@/components/icons";
 import { toast } from "@/components/Toast";
-import { isApiError } from "@/lib/api";
+import { isApiError, getLoopArtifact, getLoopRound, listLoops } from "@/lib/api";
 import { useSessionStore } from "@/store/sessionStore";
 import type {
   LoopArtifactKind,
@@ -42,28 +42,39 @@ import {
   blockerList,
   checkResultLabel,
   checkResultTone,
+  compareRounds,
+  comparisonTone,
   currentStageKey,
   decisionAvailability,
   defaultArtifactTab,
   effortLabel,
+  formatBytes,
   formatRound,
   formatScore,
   formatTimestamp,
-  hasArtifact,
   loopErrorText,
   loopStatusText,
   loopStatusTone,
+  normalizeMvpSpec,
+  normalizePrototype,
+  normalizeScoreCard,
+  normalizeTestReport,
+  normalizeValidation,
   priorityLabel,
   resolveLoopEntryState,
   roundProgress,
   roundScoreText,
+  roundSwitcherOptions,
   scoreDimensionRows,
   scoreVerdictText,
+  selectRound,
   stageProgress,
   testReportStats,
   validateStartForm,
   verdictLabel,
   verdictTone,
+  type RoundComparison,
+  type RoundSwitcherOption,
   type Tone,
 } from "@/lib/loopView";
 
@@ -184,9 +195,17 @@ function ProgressBar({ percent, tone = "brand" }: { percent: number; tone?: Tone
 // 顶部概要
 // --------------------------------------------------------------------------- //
 
-function LoopSummary({ snapshot }: { snapshot: LoopSnapshot }) {
-  const round = snapshot.rounds.find((item) => item.ordinal === snapshot.current_round) ?? null;
+function LoopSummary({
+  snapshot,
+  round,
+  isCurrent,
+}: {
+  snapshot: LoopSnapshot;
+  round: LoopRoundView | null;
+  isCurrent: boolean;
+}) {
   const stageKey = currentStageKey(round);
+  const skeleton = Boolean(round && round.started_at === "");
   return (
     <Section
       title="闭环概要"
@@ -194,10 +213,11 @@ function LoopSummary({ snapshot }: { snapshot: LoopSnapshot }) {
         <>
           <Badge text={SCOPE_LABELS[snapshot.scope]} />
           <Badge text={loopStatusText(snapshot)} tone={loopStatusTone(snapshot.status)} />
+          {isCurrent ? null : <Badge text="历史闭环 · 只读" tone="amber" />}
         </>
       }
     >
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         <div>
           <p className="text-[10px] text-zinc-500">当前轮 / 总轮</p>
           <p className="mt-0.5 text-sm font-semibold text-zinc-100">
@@ -209,7 +229,13 @@ function LoopSummary({ snapshot }: { snapshot: LoopSnapshot }) {
           <p className="mt-0.5 text-sm font-semibold text-zinc-100">{snapshot.target_score}</p>
         </div>
         <div>
-          <p className="text-[10px] text-zinc-500">本轮评分</p>
+          <p className="text-[10px] text-zinc-500">查看轮次</p>
+          <p className="mt-0.5 text-sm font-semibold text-zinc-100">
+            {round ? `第 ${round.ordinal} 轮` : NOT_GENERATED}
+          </p>
+        </div>
+        <div>
+          <p className="text-[10px] text-zinc-500">该轮评分</p>
           <p className="mt-0.5 text-sm font-semibold text-zinc-100">{roundScoreText(round)}</p>
         </div>
         <div>
@@ -219,6 +245,11 @@ function LoopSummary({ snapshot }: { snapshot: LoopSnapshot }) {
           </p>
         </div>
       </div>
+      {skeleton ? (
+        <p className="mt-3 rounded-lg border border-zinc-700/40 bg-dark-900/40 px-3 py-2 text-[11px] leading-relaxed text-zinc-400">
+          暂无记录：闭环尚未推进到第 {round?.ordinal ?? snapshot.current_round} 轮，该轮还没有阶段与产物数据。
+        </p>
+      ) : null}
       {snapshot.focus ? (
         <p className="mt-3 rounded-lg border border-zinc-700/40 bg-dark-900/40 px-3 py-2 text-[11px] leading-relaxed text-zinc-300">
           <span className="text-zinc-500">聚焦：</span>
@@ -229,6 +260,101 @@ function LoopSummary({ snapshot }: { snapshot: LoopSnapshot }) {
         最近更新 {formatTimestamp(snapshot.updated_at)}
         {snapshot.latest_run_id ? ` · Run ${snapshot.latest_run_id}` : ""}
       </p>
+    </Section>
+  );
+}
+
+// --------------------------------------------------------------------------- //
+// 轮次切换 / 多轮对比（R4 ③）
+// --------------------------------------------------------------------------- //
+
+function RoundSwitcher({
+  options,
+  onSelect,
+}: {
+  options: RoundSwitcherOption[];
+  onSelect: (ordinal: number) => void;
+}) {
+  if (options.length <= 1) return null;
+  return (
+    <Section
+      title="轮次回看"
+      extra={<span className="text-[10px] text-zinc-500">共 {options.length} 轮 · 历史轮只读</span>}
+    >
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((option) => (
+          <button
+            key={option.ordinal}
+            type="button"
+            onClick={() => onSelect(option.ordinal)}
+            aria-pressed={option.active}
+            className={`flex min-h-[40px] flex-col items-start justify-center rounded-xl border px-3 text-left transition-colors ${
+              option.active
+                ? "border-brand-500/50 bg-brand-600/15 text-brand-200"
+                : "border-zinc-700/60 text-zinc-300 hover:border-zinc-600 hover:text-zinc-100"
+            }`}
+          >
+            <span className="text-[11px] font-medium">{option.label}</span>
+            <span className="text-[10px] text-zinc-500">
+              {option.statusLabel} · {option.scoreText}
+            </span>
+          </button>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
+function RoundComparisonBar({ comparison }: { comparison: RoundComparison }) {
+  if (!comparison.hasPrevious) return null;
+  const tone = TONE_TEXT[comparisonTone(comparison.scoreDelta)];
+  return (
+    <Section
+      title="对比上一轮"
+      extra={
+        <Badge
+          text={`第 ${comparison.previousOrdinal} 轮 → 第 ${comparison.currentOrdinal} 轮`}
+          tone={comparisonTone(comparison.scoreDelta)}
+        />
+      }
+    >
+      <p className={`text-[11px] font-medium ${tone}`}>{comparison.summary}</p>
+      <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+        <p className="rounded-lg border border-zinc-700/40 bg-dark-900/40 px-2.5 py-2 text-[11px] text-zinc-300">
+          <span className="text-zinc-500">总分：</span>
+          {comparison.scoreDeltaText}
+        </p>
+        <p className="rounded-lg border border-zinc-700/40 bg-dark-900/40 px-2.5 py-2 text-[11px] text-zinc-300">
+          <span className="text-zinc-500">结论：</span>
+          {comparison.verdictText}
+          {comparison.verdictChanged ? <span className="ml-1 text-amber-300">（已变化）</span> : null}
+        </p>
+        <p className="rounded-lg border border-zinc-700/40 bg-dark-900/40 px-2.5 py-2 text-[11px] text-zinc-300 sm:col-span-2">
+          <span className="text-zinc-500">产物：</span>
+          {comparison.artifactDeltaText}
+        </p>
+      </div>
+      <div className="mt-2 space-y-1">
+        {comparison.dimensionRows.map((row) => (
+          <div key={row.key} className="flex items-center gap-2 text-[10px]">
+            <span className="w-20 shrink-0 text-zinc-400">{row.label}</span>
+            <span className="text-zinc-500">
+              {row.before === null ? "—" : row.before} → {row.after === null ? "—" : row.after}
+            </span>
+            <span
+              className={`ml-auto ${
+                row.delta === null || row.delta === 0
+                  ? "text-zinc-600"
+                  : row.delta > 0
+                    ? "text-emerald-300"
+                    : "text-red-400"
+              }`}
+            >
+              {row.delta === null ? "无对比" : row.delta > 0 ? `+${row.delta}` : `${row.delta}`}
+            </span>
+          </div>
+        ))}
+      </div>
     </Section>
   );
 }
@@ -603,23 +729,114 @@ function ScorecardView({ card }: { card: LoopScoreCard | null }) {
   );
 }
 
-function ArtifactPanel({ snapshot, round }: { snapshot: LoopSnapshot; round: LoopRoundView | null }) {
-  const tabs = artifactTabs(snapshot, round);
-  const [tab, setTab] = useState<LoopArtifactKind>(() => defaultArtifactTab(snapshot, round));
+const ARTIFACT_KIND_ORDER: LoopArtifactKind[] = [
+  "mvp_spec",
+  "validation",
+  "prototype",
+  "test_report",
+  "scorecard",
+];
+
+/** 历史轮产物内容按「该轮 artifact id」读取，绝不用快照里的 latest-of-kind 冒充其它轮。 */
+function HistoricalArtifactView({
+  kind,
+  payload,
+}: {
+  kind: LoopArtifactKind;
+  payload: Record<string, unknown>;
+}) {
+  if (kind === "mvp_spec") return <MvpSpecView spec={normalizeMvpSpec(payload)} />;
+  if (kind === "validation") return <ValidationView validation={normalizeValidation(payload)} />;
+  if (kind === "prototype") return <PrototypeView prototype={normalizePrototype(payload)} />;
+  if (kind === "test_report") return <TestReportView report={normalizeTestReport(payload)} />;
+  return <ScorecardView card={normalizeScoreCard(payload)} />;
+}
+
+function ArtifactPanel({
+  snapshot,
+  round,
+  loopId,
+  isCurrent,
+}: {
+  snapshot: LoopSnapshot;
+  round: LoopRoundView | null;
+  loopId: string;
+  isCurrent: boolean;
+}) {
+  // 只有「当前闭环的当前轮」才能用快照（快照产物是 latest-of-kind）；
+  // 回看同一闭环的旧轮次也必须按 round.artifacts 取，否则会把最新一轮的内容当成历史轮（LOOP-01）。
+  const isLiveRound = isCurrent && round !== null && round.ordinal === snapshot.current_round;
+  const tabs = artifactTabs(isLiveRound ? snapshot : null, round);
+  const [tab, setTab] = useState<LoopArtifactKind>(() =>
+    defaultArtifactTab(isLiveRound ? snapshot : null, round)
+  );
+  const [payload, setPayload] = useState<Record<string, unknown> | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    setTab(defaultArtifactTab(snapshot, round));
-    // 只在闭环切换时重置 Tab；同一闭环内的轮次刷新保留用户选择
+    setTab(defaultArtifactTab(isLiveRound ? snapshot : null, round));
+    // 闭环 / 轮次 / 只读态切换时重置 Tab；同一上下文内的快照刷新保留用户选择
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snapshot.loop_id]);
+  }, [snapshot.loop_id, round?.ordinal, isLiveRound]);
 
   useEffect(() => {
-    if (!hasArtifact(snapshot, tab)) setTab(defaultArtifactTab(snapshot, round));
+    if (!tabs.some((item) => item.kind === tab && item.available)) {
+      setTab(defaultArtifactTab(isLiveRound ? snapshot : null, round));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snapshot.loop_id, snapshot.current_round]);
+  }, [snapshot.loop_id, round?.ordinal, isLiveRound, tab]);
+
+  const selectedArtifacts = round ? round.artifacts : [];
+  const artifact = selectedArtifacts.find((item) => item.kind === tab) ?? null;
+  const skeleton = round?.started_at === "";
+
+  useEffect(() => {
+    setPayload(null);
+    setError(null);
+    if (isLiveRound || !artifact || !loopId) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    void (async () => {
+      try {
+        // 先用该轮最新索引兜底（快照可能早于产物重新生成），再按 artifact id 取内容
+        const freshRound = await getLoopRound(loopId, round?.ordinal ?? snapshot.current_round);
+        const freshArtifact = freshRound.artifacts.find((item) => item.kind === tab) ?? artifact;
+        const response = await getLoopArtifact(loopId, freshArtifact.id);
+        if (!cancelled) setPayload(response.payload ?? null);
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            loopErrorText(
+              isApiError(err) ? err.code : null,
+              isApiError(err) ? err.message : "读取该轮产物失败"
+            )
+          );
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLiveRound, artifact?.id, loopId, tab, reloadKey, round?.ordinal]);
 
   return (
-    <Section title="本轮产物" extra={<span className="text-[10px] text-zinc-500">{artifactTitle(tab)}</span>}>
+    <Section
+      title={`第 ${round?.ordinal ?? snapshot.current_round} 轮产物`}
+      extra={
+        <>
+          {isLiveRound ? null : <Badge text="历史轮次 · 只读" tone="amber" />}
+          <span className="text-[10px] text-zinc-500">{artifactTitle(tab)}</span>
+        </>
+      }
+    >
       <div className="mb-3 flex flex-wrap gap-1.5">
         {tabs.map((item) => {
           const active = item.kind === tab;
@@ -640,11 +857,64 @@ function ArtifactPanel({ snapshot, round }: { snapshot: LoopSnapshot; round: Loo
           );
         })}
       </div>
-      {tab === "mvp_spec" ? <MvpSpecView spec={snapshot.mvp_spec} /> : null}
-      {tab === "validation" ? <ValidationView validation={snapshot.validation} /> : null}
-      {tab === "prototype" ? <PrototypeView prototype={snapshot.prototype} /> : null}
-      {tab === "test_report" ? <TestReportView report={snapshot.test_report} /> : null}
-      {tab === "scorecard" ? <ScorecardView card={snapshot.scorecard} /> : null}
+      {skeleton ? (
+        <EmptyHint text="暂无记录：该轮尚未开始，还没有产物。" />
+      ) : isLiveRound ? (
+        <>
+          {tab === "mvp_spec" ? <MvpSpecView spec={snapshot.mvp_spec} /> : null}
+          {tab === "validation" ? <ValidationView validation={snapshot.validation} /> : null}
+          {tab === "prototype" ? <PrototypeView prototype={snapshot.prototype} /> : null}
+          {tab === "test_report" ? <TestReportView report={snapshot.test_report} /> : null}
+          {tab === "scorecard" ? <ScorecardView card={snapshot.scorecard} /> : null}
+        </>
+      ) : !artifact ? (
+        <EmptyHint text={`第 ${round?.ordinal ?? snapshot.current_round} 轮没有${artifactTitle(tab)}产物。`} />
+      ) : loading ? (
+        <p className="text-[11px] text-zinc-500">正在读取第 {round?.ordinal} 轮产物…</p>
+      ) : error ? (
+        <div className="space-y-2">
+          <p className="break-words rounded-lg border border-red-700/40 bg-red-900/20 px-2.5 py-2 text-[11px] leading-relaxed text-red-300">
+            {error}
+          </p>
+          <button type="button" className={BTN_SECONDARY} onClick={() => setReloadKey((key) => key + 1)}>
+            重试读取
+          </button>
+        </div>
+      ) : payload ? (
+        <div className="space-y-2">
+          <p className="text-[10px] text-zinc-600">
+            {artifactTitle(artifact.kind)} · {formatBytes(artifact.size_bytes)} ·{" "}
+            {formatTimestamp(artifact.created_at)}
+          </p>
+          <HistoricalArtifactView kind={tab} payload={payload} />
+        </div>
+      ) : (
+        <EmptyHint text="该轮产物内容为空。" />
+      )}
+      {!isLiveRound && round ? (
+        <div className="mt-3 border-t border-zinc-800/60 pt-2">
+          <p className="mb-1 text-[10px] text-zinc-500">该轮产物索引</p>
+          <div className="flex flex-wrap gap-1.5">
+            {selectedArtifacts.length === 0 ? (
+              <span className="text-[10px] text-zinc-600">暂无产物记录</span>
+            ) : (
+              selectedArtifacts
+                .slice()
+                .sort(
+                  (a, b) => ARTIFACT_KIND_ORDER.indexOf(a.kind) - ARTIFACT_KIND_ORDER.indexOf(b.kind)
+                )
+                .map((item) => (
+                  <span
+                    key={item.id}
+                    className="rounded border border-zinc-700/50 px-1.5 py-0.5 text-[10px] text-zinc-400"
+                  >
+                    {artifactTitle(item.kind)} · {formatBytes(item.size_bytes)}
+                  </span>
+                ))
+            )}
+          </div>
+        </div>
+      ) : null}
     </Section>
   );
 }
@@ -959,10 +1229,94 @@ function LoopPageContent() {
 
   const currentLoopId = loopId ?? sessionView?.current_loop_id ?? null;
   const currentLoop = currentLoopId ? loops[currentLoopId] ?? null : null;
-  const currentRound = useMemo(
-    () => (currentLoop ? currentLoop.rounds.find((item) => item.ordinal === currentLoop.current_round) ?? currentLoop.rounds[currentLoop.rounds.length - 1] ?? null : null),
-    [currentLoop]
+  // ---- 历史轮次回看 / 多轮对比 / 历史闭环切换（R4 ③） ----
+  const [selectedOrdinal, setSelectedOrdinal] = useState<number | null>(null);
+  const [historyLoops, setHistoryLoops] = useState<LoopSnapshot[] | null>(null);
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const [comparisonCards, setComparisonCards] = useState<{
+    previous: LoopScoreCard | null;
+    current: LoopScoreCard | null;
+  }>({ previous: null, current: null });
+
+  const selectedRound = useMemo(
+    () => (currentLoop ? selectRound(currentLoop.rounds, selectedOrdinal, currentLoop.current_round) : null),
+    [currentLoop, selectedOrdinal]
   );
+  const roundOptions = useMemo(
+    () => roundSwitcherOptions(currentLoop?.rounds ?? [], selectedRound?.ordinal ?? null),
+    [currentLoop, selectedRound?.ordinal]
+  );
+  const previousRound = useMemo(() => {
+    if (!currentLoop || !selectedRound) return null;
+    return (
+      currentLoop.rounds
+        .filter((item) => item.ordinal < selectedRound.ordinal)
+        .sort((a, b) => a.ordinal - b.ordinal)
+        .pop() ?? null
+    );
+  }, [currentLoop, selectedRound]);
+  const isCurrentLoop = currentLoop
+    ? currentLoop.loop_id === (sessionView?.current_loop_id ?? currentLoop.loop_id)
+    : true;
+  const comparison = useMemo(
+    () => compareRounds(previousRound, selectedRound, comparisonCards.previous, comparisonCards.current),
+    [previousRound, selectedRound, comparisonCards]
+  );
+  const loopChoices = useMemo(() => {
+    const map = new Map<string, LoopSnapshot>();
+    for (const item of historyLoops ?? []) map.set(item.loop_id, item);
+    for (const item of Object.values(loops)) map.set(item.loop_id, item);
+    return [...map.values()].sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
+  }, [historyLoops, loops]);
+
+  useEffect(() => {
+    // 切换闭环时回到「当前轮」，避免把上一闭环的 ordinal 带过来
+    setSelectedOrdinal(null);
+  }, [currentLoopId]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    let cancelled = false;
+    void listLoops(sessionId, { limit: 20 })
+      .then((page) => {
+        if (!cancelled) setHistoryLoops(page.items);
+      })
+      .catch(() => {
+        // 历史闭环列表失败不影响主流程：仍可从已缓存的 loops 切换
+        if (!cancelled) setHistoryLoops(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!currentLoop || !selectedRound) {
+      setComparisonCards({ previous: null, current: null });
+      return;
+    }
+    let cancelled = false;
+    const loadCard = async (round: LoopRoundView | null): Promise<LoopScoreCard | null> => {
+      if (!round) return null;
+      if (round.ordinal === currentLoop.current_round && currentLoop.scorecard) {
+        return currentLoop.scorecard;
+      }
+      const artifact = round.artifacts.find((item) => item.kind === "scorecard");
+      if (!artifact) return null;
+      try {
+        const response = await getLoopArtifact(currentLoop.loop_id, artifact.id);
+        return normalizeScoreCard(response.payload);
+      } catch {
+        return null;
+      }
+    };
+    void Promise.all([loadCard(previousRound), loadCard(selectedRound)]).then(([previous, current]) => {
+      if (!cancelled) setComparisonCards({ previous, current });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentLoop, selectedRound, previousRound]);
   const currentLoopError = useMemo(() => {
     if (currentLoopId && loopErrors[currentLoopId]) return loopErrors[currentLoopId];
     const first = Object.keys(loopErrors).find((key) => loopErrors[key]);
@@ -1036,6 +1390,32 @@ function LoopPageContent() {
       }
     },
     [startLoop, sessionView?.current_loop_id, hydrateLoopById, currentLoopId]
+  );
+
+  /** 历史闭环切换：hydrate 后 store.loopId 指向所选闭环，主视图整体切换（只读回看）。 */
+  const handleSelectLoop = useCallback(
+    async (targetLoopId: string) => {
+      if (!targetLoopId || targetLoopId === currentLoopId) return;
+      setHistoryBusy(true);
+      setActionError(null);
+      setNotice(null);
+      try {
+        const ok = await hydrateLoopById(targetLoopId);
+        if (ok) {
+          setSelectedOrdinal(null);
+          setNotice(
+            targetLoopId === sessionView?.current_loop_id
+              ? "已回到当前闭环"
+              : "已切换到历史闭环（只读回看，产物与评分均为该闭环记录）"
+          );
+        } else {
+          setActionError("读取该闭环失败，请重试。");
+        }
+      } finally {
+        setHistoryBusy(false);
+      }
+    },
+    [currentLoopId, hydrateLoopById, sessionView?.current_loop_id]
   );
 
   const handleDecide = useCallback(
@@ -1233,21 +1613,61 @@ function LoopPageContent() {
 
         {entry.showLoop && currentLoop ? (
           <>
-            <LoopSummary snapshot={currentLoop} />
-            <StageTimeline round={currentRound} />
-            <ArtifactPanel snapshot={currentLoop} round={currentRound} />
-            <DecisionBar
+            {loopChoices.length > 1 ? (
+              <Section
+                title="历史闭环"
+                extra={<Badge text={`${loopChoices.length} 个闭环`} />}
+              >
+                <label htmlFor="loop-history" className="mb-2 block text-[11px] leading-relaxed text-zinc-500">
+                  同一会话下的闭环都在这里；切换后概要与产物会整体替换，历史闭环只读回看。
+                </label>
+                <select
+                  id="loop-history"
+                  value={currentLoop.loop_id}
+                  disabled={historyBusy}
+                  onChange={(event) => void handleSelectLoop(event.target.value)}
+                  className="min-h-[40px] w-full max-w-md rounded-lg border border-zinc-700/60 bg-dark-900/60 px-2 text-[11px] text-zinc-200 disabled:opacity-60"
+                >
+                  {loopChoices.map((item) => (
+                    <option key={item.loop_id} value={item.loop_id}>
+                      {`闭环 ${item.loop_id.slice(0, 8)} · 第 ${item.current_round}/${item.max_rounds} 轮 · ${loopStatusText(item)}`}
+                      {item.loop_id === sessionView?.current_loop_id ? "（当前）" : ""}
+                    </option>
+                  ))}
+                </select>
+                {historyBusy ? <p className="mt-1 text-[10px] text-zinc-500">切换中…</p> : null}
+              </Section>
+            ) : null}
+            <LoopSummary snapshot={currentLoop} round={selectedRound} isCurrent={isCurrentLoop} />
+            <RoundSwitcher options={roundOptions} onSelect={setSelectedOrdinal} />
+            <StageTimeline round={selectedRound} />
+            <ArtifactPanel
               snapshot={currentLoop}
-              phase={v2Phase ?? sessionView?.phase ?? null}
-              sessionId={sessionId ?? ""}
-              busy={decideBusy}
-              abortBusy={abortBusy}
-              note={decisionNote}
-              onNoteChange={setDecisionNote}
-              onDecide={(decision) => void handleDecide(decision)}
-              onAbort={() => void handleAbort()}
+              round={selectedRound}
+              loopId={currentLoop.loop_id}
+              isCurrent={isCurrentLoop}
             />
-            {canRetryLoopRound(currentLoop) ? (
+            <RoundComparisonBar comparison={comparison} />
+            {isCurrentLoop ? (
+              <DecisionBar
+                snapshot={currentLoop}
+                phase={v2Phase ?? sessionView?.phase ?? null}
+                sessionId={sessionId ?? ""}
+                busy={decideBusy}
+                abortBusy={abortBusy}
+                note={decisionNote}
+                onNoteChange={setDecisionNote}
+                onDecide={(decision) => void handleDecide(decision)}
+                onAbort={() => void handleAbort()}
+              />
+            ) : (
+              <Section title="本轮决策" extra={<Badge text="历史闭环 · 只读" tone="amber" />}>
+                <p className="text-[11px] leading-relaxed text-zinc-500">
+                  历史闭环只读回看；需要继续迭代 / 交付，请先在「历史闭环」里切回当前闭环。
+                </p>
+              </Section>
+            )}
+            {isCurrentLoop && canRetryLoopRound(currentLoop) ? (
               <Section title="本轮失败" extra={<Badge text="可恢复" />}>
                 <p className="mb-3 text-[11px] leading-relaxed text-red-400">
                   本轮运行失败，已生成的部分产物会保留。可以直接重试本轮（后端 retry_run 支持 loop 子 Run）。
@@ -1267,7 +1687,7 @@ function LoopPageContent() {
                 </button>
               </Section>
             ) : null}
-            {finished ? (
+            {isCurrentLoop && finished ? (
               <Section title="开启新闭环" extra={<Badge text="可选" />}>
                 {newLoopOpen ? (
                   <StartLoopBar

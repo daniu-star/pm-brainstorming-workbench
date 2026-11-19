@@ -20,6 +20,8 @@ export function ChatPanel() {
     messagesBySession,
     lastFailedSend,
     clearLastFailedSend,
+    lastFailedRunId,
+    retryFailedRun,
     sendMessage,
     isStreaming,
   } = useSessionStore();
@@ -50,9 +52,29 @@ export function ChatPanel() {
   const sessionMessages = currentSessionId
     ? messagesBySession[currentSessionId] ?? []
     : [];
+  // 失败 Run 不算「已有脑暴产物」：否则 401/超时后「开始讨论」会被永久隐藏，
+  // 而空态文案仍在提示点这个不存在的按钮（CHAT-01）。
   const hasBrainstormRun = Object.values(runs).some(
-    (run) => run.sessionId === currentSessionId && run.action === "brainstorm"
+    (run) => run.sessionId === currentSessionId && run.action === "brainstorm" && run.status !== "failed"
   );
+  // 脑暴 Run 失败：错误条给「重试上一步」，复用 store.retryFailedRun（backend retry_run 支持）
+  const failedBrainstormRunId = (() => {
+    if (!lastFailedRunId) return null;
+    const run = runs[lastFailedRunId];
+    if (!run || run.status !== "failed") return null;
+    return run.action === "brainstorm" ? lastFailedRunId : null;
+  })();
+  const retryBrainstorm = async () => {
+    if (!failedBrainstormRunId || isStreaming) return;
+    setDiscussionRequested(true);
+    try {
+      await retryFailedRun(failedBrainstormRunId);
+      clearError();
+    } catch {
+      // 失败原因由 store 写回 error / runs，错误条保留可再次重试
+      setDiscussionRequested(false);
+    }
+  };
   const showStartDiscussion = shouldShowStartDiscussion({
     v2Phase,
     phase,
@@ -96,16 +118,27 @@ export function ChatPanel() {
       {error && (
         <div
           role="alert"
-          className="mx-3 mt-2 px-3 py-2 bg-red-900/20 border border-red-800/40 rounded-xl text-red-400 text-sm flex justify-between items-center"
+          className="mx-3 mt-2 px-3 py-2 bg-red-900/20 border border-red-800/40 rounded-xl text-red-400 text-sm flex justify-between items-center gap-2"
         >
-          <span>{error}</span>
-          <button
-            onClick={clearError}
-            aria-label="关闭错误提示"
-            className="text-red-300 hover:text-red-200 ml-2 shrink-0 min-h-[44px] min-w-[44px] flex items-center justify-center"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-          </button>
+          <span className="min-w-0 flex-1 break-words">{error}</span>
+          <span className="flex shrink-0 items-center gap-1">
+            {failedBrainstormRunId ? (
+              <button
+                onClick={() => void retryBrainstorm()}
+                disabled={isStreaming}
+                className="min-h-[40px] px-2 text-xs font-medium text-red-200 underline underline-offset-2 hover:text-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                重试上一步
+              </button>
+            ) : null}
+            <button
+              onClick={clearError}
+              aria-label="关闭错误提示"
+              className="text-red-300 hover:text-red-200 ml-2 shrink-0 min-h-[44px] min-w-[44px] flex items-center justify-center"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </button>
+          </span>
         </div>
       )}
 

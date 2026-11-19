@@ -632,3 +632,64 @@ test("canRetryLoopRound 只在 failed 且有 latest_run_id 时为真", () => {
   assert.equal(view.canRetryLoopRound({ loop_id: "l1", status: "running", latest_run_id: "run_1" }), false);
   assert.equal(view.canRetryLoopRound(null), false);
 });
+
+// --------------------------------------------------------------------------- //
+// 历史轮次回看 / 多轮对比（R4 ③）
+// --------------------------------------------------------------------------- //
+
+test("selectRound 优先选中轮，越界回落到当前轮，再回落到最后一轮", () => {
+  const rounds = [round(1, { status: "done", score: 72 }), round(2, { status: "running", score: 73 })];
+  assert.equal(view.selectRound(rounds, 1, 2)?.ordinal, 1);
+  assert.equal(view.selectRound(rounds, null, 2)?.ordinal, 2);
+  assert.equal(view.selectRound(rounds, null, 9)?.ordinal, 2);
+  assert.equal(view.selectRound(rounds, 9, 9)?.ordinal, 2);
+  assert.equal(view.selectRound([], 1, 1), null);
+  assert.equal(view.selectRound(null, 1, 1), null);
+});
+
+test("roundSwitcherOptions 按轮次升序并标注当前选中轮", () => {
+  const rounds = [
+    round(2, { status: "running", score: 73 }),
+    round(1, { status: "done", score: 72 }),
+  ];
+  const options = view.roundSwitcherOptions(rounds, 1);
+  assert.deepEqual(options.map((item) => item.ordinal), [1, 2]);
+  assert.equal(options[0].label, "第 1 轮");
+  assert.equal(options[0].statusLabel, "已完成");
+  assert.equal(options[0].scoreText, "72/100");
+  assert.equal(options[0].active, true);
+  assert.equal(options[1].active, false);
+});
+
+test("compareRounds 给出分差、结论变化、七维分差与产物索引差异", () => {
+  const previous = round(1, {
+    status: "done",
+    score: 72,
+    verdict: "iterate",
+    artifacts: [{ id: "a1", kind: "validation", title: "假设检验", size_bytes: 12, created_at: "2026-11-19T00:00:00Z" }],
+  });
+  const current = round(2, {
+    status: "done",
+    score: 78,
+    verdict: "pass",
+    artifacts: [
+      { id: "a2", kind: "mvp_spec", title: "MVP 规格", size_bytes: 12, created_at: "2026-11-19T00:00:00Z" },
+      { id: "a3", kind: "validation", title: "假设检验", size_bytes: 12, created_at: "2026-11-19T00:00:00Z" },
+    ],
+  });
+  const comparison = view.compareRounds(previous, current);
+  assert.equal(comparison.hasPrevious, true);
+  assert.equal(comparison.scoreDelta, 6);
+  assert.match(comparison.scoreDeltaText, /72\/100 → 78\/100（\+6）/);
+  assert.match(comparison.verdictText, /需迭代 → 通过/);
+  assert.equal(comparison.verdictChanged, true);
+  assert.equal(comparison.dimensionRows.length, 7);
+  assert.match(comparison.artifactDeltaText, /MVP 规格/);
+  assert.match(comparison.summary, /总分提升 \+6/);
+
+  // 没有上一轮时不能伪造对比数据
+  const empty = view.compareRounds(null, current);
+  assert.equal(empty.hasPrevious, false);
+  assert.equal(empty.scoreDeltaText, "");
+  assert.deepEqual(empty.dimensionRows, []);
+});

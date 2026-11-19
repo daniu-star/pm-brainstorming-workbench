@@ -558,6 +558,107 @@ export function resolveAuditFailureRecoveryState(
   };
 }
 
+// --------------------------------------------------------------------------- //
+// 审计开场/回答阶段的失败（R4 P1-1）
+// --------------------------------------------------------------------------- //
+
+export interface AuditStepFailureInput {
+  status: AuditStatus | null | undefined;
+  /**
+   * `lastFailedRunId` 对应的 Run 是否属于当前审计。
+   * 只有失败 Run 的 audit_id === 当前 audit.id 时才能认领，否则会把上一次
+   * 审计（或其它会话）残留的失败误显示到当前审计上。
+   */
+  failedRunBelongsToAudit: boolean;
+  /** 失败 Run 的 error_message（有则优先展示，比错误码更可读） */
+  runErrorText?: string | null;
+  /** 后端原始 end_reason（可能是错误码） */
+  endReasonRaw?: string | null;
+}
+
+export interface AuditStepFailureState {
+  /** 是否展示「开场/回答失败」卡片 */
+  show: boolean;
+  /** 失败原因文案 */
+  reasonText: string;
+  /** 下一步指引（含「重试该步骤」按钮的语义说明） */
+  hintText: string;
+}
+
+/**
+ * 开场（opening）或回答（active）阶段的模型失败：Run 已 failed，但审计快照仍停在
+ * opening/active（backend/workflows/audit.py:1229-1235、:1350-1356 只捕获 AppError，
+ * LLMError 不被 workflow 捕获；runner 只终结 Run、不落审计状态）。
+ *
+ * 页面不能因此永久停在「审计开场中，暂无待回答的问题」：只要失败 Run 属于当前审计，
+ * 就必须给出原因与恢复入口。status 已是 failed 时交给
+ * resolveAuditFailureRecoveryState，避免两张失败卡叠加。
+ */
+export function resolveAuditStepFailureState(
+  input: AuditStepFailureInput,
+): AuditStepFailureState {
+  const running = input.status === "opening" || input.status === "active";
+  if (!running || !input.failedRunBelongsToAudit) {
+    return { show: false, reasonText: "", hintText: "" };
+  }
+  const runError = (input.runErrorText ?? "").trim();
+  const reasonText = runError
+    ? runError
+    : input.endReasonRaw
+      ? endReasonLabel(input.endReasonRaw)
+      : "审计步骤执行失败";
+  return {
+    show: true,
+    reasonText,
+    hintText:
+      "已提交的回答不会丢失；「重试该步骤」会重新执行失败的审计任务。若反复失败，可返回工作台调整方案后重新开始审计。",
+  };
+}
+
+// --------------------------------------------------------------------------- //
+// 报告过期（旧版本简报生成）(R4 P1-4)
+// --------------------------------------------------------------------------- //
+
+export interface AuditStalenessInput {
+  /** 报告生成时的产品版本（AuditSnapshot.product_version） */
+  auditProductVersion?: number | null;
+  /** 当前会话的产品版本（修订简报后 +1） */
+  currentProductVersion?: number | null;
+}
+
+export interface AuditStalenessState {
+  stale: boolean;
+  /** stale 为 true 时的提示文案，否则为空串 */
+  text: string;
+}
+
+/** 报告过期提示前缀，页面据此外加「重新审计」按钮 */
+export const AUDIT_STALE_PREFIX = "本报告基于";
+
+/**
+ * 旧版本简报生成的审计报告必须显式标注「过期」：
+ * 修订已确认简报会回退到 brainstorming 并提示「审计结果已过期」，
+ * 但审计页若只显示 `vN` 徽标，用户会把过期结论当成当前版本的问题清单。
+ */
+export function resolveAuditStaleness(input: AuditStalenessInput): AuditStalenessState {
+  const auditVersion = input.auditProductVersion ?? 0;
+  const currentVersion = input.currentProductVersion ?? 0;
+  if (auditVersion < 1 || currentVersion < 1) {
+    return { stale: false, text: "" };
+  }
+  if (auditVersion >= currentVersion) {
+    return { stale: false, text: "" };
+  }
+  return {
+    stale: true,
+    text: `${AUDIT_STALE_PREFIX} v${auditVersion} 生成，当前产品已到 v${currentVersion}；如刚修订过简报，建议重新审计。`,
+  };
+}
+
+// --------------------------------------------------------------------------- //
+// 答案校验
+// --------------------------------------------------------------------------- //
+
 export interface AnswerValidation {
   ok: boolean;
   /** 实际要提交的内容（超长时已截断） */

@@ -154,7 +154,7 @@ export function MessageList() {
             </div>
             <h3 className="text-lg font-medium text-zinc-300 mb-1.5">准备开始脑暴</h3>
             <p className="text-sm text-zinc-500 leading-relaxed">
-              点击开始讨论，四位专家将依次发言
+              还没有消息。可以先在下方补充想法；简报就绪后，四位专家会在这里依次发言
             </p>
             <div className="mt-6 flex items-center justify-center gap-3">
               {ROLES.map((r) => (

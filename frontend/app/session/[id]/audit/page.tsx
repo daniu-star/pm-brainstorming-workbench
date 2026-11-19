@@ -34,6 +34,8 @@ import {
   resolveAnswerText,
   resolveAuditEntryState,
   resolveAuditFailureRecoveryState,
+  resolveAuditStaleness,
+  resolveAuditStepFailureState,
   resolveClosingRecoveryState,
   resolveClosingRetryTarget,
   shouldResyncAuditAfterError,
@@ -401,6 +403,9 @@ function AuditPageContent() {
   const lastFailedRunId = useSessionStore((state) => state.lastFailedRunId);
   const retryFailedRun = useSessionStore((state) => state.retryFailedRun);
   const runs = useSessionStore((state) => state.runs);
+  // 失败 Run 的 audit_id 只能从 RunSnapshot 取（store 的 RunState 没有该字段），
+  // 用来判定失败是否属于当前审计，避免把别的审计/会话的失败误显示到这里。
+  const runSnapshots = useSessionStore((state) => state.runSnapshots);
 
   const [starting, setStarting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -732,6 +737,28 @@ function AuditPageContent() {
     };
   }, [auditIdentity, auditStatus, auditFinished, closeRequested, isStreaming, hydrateAuditById]);
 
+  // 开场/回答阶段的失败（审计仍停在 opening/active）：重试失败的 Run。
+  // backend/api/v2/runs.py:188-200 + command_service.retry_run 支持任意 failed Run。
+  const handleRetryStep = useCallback(async () => {
+    setActionError(null);
+    setActionErrorCode(null);
+    if (!lastFailedRunId) {
+      setActionError("没有可重试的失败任务，请重新开始审计。");
+      return;
+    }
+    try {
+      await retryFailedRun(lastFailedRunId);
+      setActionNotice("已重新排队重试该步骤");
+    } catch (error) {
+      setActionErrorCode(isApiError(error) ? error.code : null);
+      setActionError(
+        isApiError(error)
+          ? auditErrorText(error.code, error.message)
+          : auditErrorText(null, "重试失败")
+      );
+    }
+  }, [lastFailedRunId, retryFailedRun]);
+
   const closingRecovery = resolveClosingRecoveryState({
     status: auditStatus,
     pollExhausted: closingPollExhausted,
@@ -744,6 +771,34 @@ function AuditPageContent() {
     endReasonRaw: audit?.endReasonRaw ?? null,
     hasFailedRun: Boolean(lastFailedRunId),
     runErrorText: lastFailedRunId ? runs[lastFailedRunId]?.errorMessage ?? null : null,
+  });
+
+  // 开场/回答阶段失败：Run 已 failed，但审计快照仍停在 opening/active（后端只终结 Run）。
+  // 失败 Run 归属当前审计才认领（RunSnapshot.audit.id 对比；快照缺失时用 action 兜底）。
+  const failedRun = lastFailedRunId ? runs[lastFailedRunId] ?? null : null;
+  const failedRunAuditId = lastFailedRunId
+    ? runSnapshots[lastFailedRunId]?.audit?.id ?? null
+    : null;
+  const failedRunBelongsToAudit = Boolean(
+    lastFailedRunId &&
+      (failedRunAuditId
+        ? failedRunAuditId === auditId
+        : failedRun &&
+          (failedRun.action === "start_audit" || failedRun.action === "answer_audit" || failedRun.action === "end_audit") &&
+          auditId === sessionView?.current_audit_id)
+  );
+  const stepFailure = resolveAuditStepFailureState({
+    status: auditStatus,
+    failedRunBelongsToAudit,
+    endReasonRaw: audit?.endReasonRaw ?? null,
+    runErrorText: failedRun?.errorMessage ?? null,
+  });
+
+  // 报告过期：修订已确认简报会把产品版本 +1，旧审计仍可读但结论已不是当前版本
+  // （docs/superpowers/specs/...-prd-v4.md:464「旧报告显示基于历史版本」）。
+  const staleness = resolveAuditStaleness({
+    auditProductVersion: audit?.productVersion ?? null,
+    currentProductVersion: expectedProductVersion,
   });
 
   // VERSION_CONFLICT 等需要重新同步：提示 + 重载会话与审计快照
@@ -804,6 +859,29 @@ function AuditPageContent() {
         {actionError ? (
           <div className="rounded-xl border border-red-800/40 bg-red-900/20 px-3 py-2 text-xs text-red-400">
             {actionError}
+          </div>
+        ) : null}
+        {audit && staleness.stale ? (
+          <div className="space-y-1.5 rounded-xl border border-amber-700/40 bg-amber-900/20 px-3 py-2 text-xs text-amber-300">
+            <p className="leading-relaxed">{staleness.text}</p>
+            <div className="flex flex-wrap items-center gap-2">
+              {canRestart ? (
+                <button
+                  type="button"
+                  onClick={() => void handleStartAudit()}
+                  disabled={starting || isStreaming}
+                  className="min-h-[36px] rounded-lg border border-amber-600/50 px-3 text-xs font-medium text-amber-200 hover:bg-amber-800/30 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {starting ? "重新审计中…" : "重新审计"}
+                </button>
+              ) : null}
+              <Link
+                href={`/session/${sessionIdParam ?? ""}`}
+                className="inline-flex min-h-[36px] items-center rounded-lg border border-zinc-600/60 px-3 text-xs font-medium text-zinc-200 hover:bg-zinc-700/30"
+              >
+                返回工作台
+              </Link>
+            </div>
           </div>
         ) : null}
 
@@ -944,9 +1022,40 @@ function AuditPageContent() {
 
             {!finished ? (
               <>
+                {stepFailure.show ? (
+                  <div
+                    role="alert"
+                    className="space-y-2 rounded-xl border border-red-700/50 bg-red-900/20 px-3 py-2 text-xs text-red-300"
+                  >
+                    <p className="font-medium">审计步骤执行失败，进度已暂停</p>
+                    <p className="leading-relaxed">{`失败原因：${stepFailure.reasonText}`}</p>
+                    <p className="leading-relaxed text-red-300/80">{stepFailure.hintText}</p>
+                    <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => void handleRetryStep()}
+                        disabled={isStreaming || !lastFailedRunId}
+                        className="min-h-[36px] rounded-lg border border-red-500/50 bg-red-600/20 px-3 text-xs font-medium text-red-200 hover:bg-red-600/30 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        重试该步骤
+                      </button>
+                      <Link
+                        href={`/session/${sessionIdParam ?? ""}`}
+                        className="inline-flex min-h-[36px] items-center rounded-lg border border-zinc-600/60 px-3 text-xs font-medium text-zinc-200 hover:bg-zinc-700/30"
+                      >
+                        返回工作台
+                      </Link>
+                    </div>
+                  </div>
+                ) : null}
                 {audit.status === "closing" ? (
                   <div className="space-y-2 rounded-xl border border-amber-700/40 bg-amber-900/20 px-3 py-2 text-xs text-amber-300">
                     <p>{closingRecovery.noticeText}</p>
+                    {closingRecovery.showRecovery && failedRun?.errorMessage && failedRunBelongsToAudit ? (
+                      <p className="break-words rounded-lg border border-red-700/40 bg-red-900/20 px-2.5 py-1.5 leading-relaxed text-red-300">
+                        {`失败原因：${failedRun.errorMessage}`}
+                      </p>
+                    ) : null}
                     {closingRecovery.showRecovery ? (
                       <div className="flex flex-wrap items-center gap-2 pt-0.5">
                         <button
@@ -980,7 +1089,7 @@ function AuditPageContent() {
                     onRetry={handleRetryContinuation}
                     onEnd={handleEndAudit}
                   />
-                ) : (
+                ) : stepFailure.show ? null : (
                   <Section title="当前问题">
                     <div className="text-sm text-zinc-500">{`审计${auditStatusLabel(
                       audit.status

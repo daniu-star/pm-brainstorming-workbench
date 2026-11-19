@@ -474,10 +474,14 @@ def loop_round_to_view(db, row: LoopRoundRow) -> C.LoopRoundView:
 def loop_to_snapshot(db, row: LoopRow, *, include_rounds: bool = True) -> C.LoopSnapshot:
     rounds_rows = list_rounds(db, row.id)
     current_ordinal = int(row.current_round or 1)
-    artifacts = list_artifacts(db, loop_id=row.id)
+    # 「本轮产物」只取当前轮的产物：快照字段是页面「本轮产物」面板的数据源，
+    # 跨轮取最新会让第 2 轮把第 1 轮的方案/评分显示成本轮结果。历史轮产物按需
+    # 通过 GET /loops/{id}/rounds/{ordinal}（索引）+ /artifacts/{artifact_id}（负载）读取。
+    artifacts = list_artifacts(db, loop_id=row.id, ordinal=current_ordinal)
 
-    def latest_of(kind: C.LoopArtifactKind) -> LoopArtifactRow | None:
-        for item in artifacts:  # 已按 round_ordinal desc / created_at asc 排序
+    def current_of(kind: C.LoopArtifactKind) -> LoopArtifactRow | None:
+        # 同一轮内按 created_at asc 排序；重试会追加同 kind 的新产物，倒序取最新一次。
+        for item in reversed(artifacts):
             if item.kind == kind.value:
                 return item
         return None
@@ -501,11 +505,11 @@ def loop_to_snapshot(db, row: LoopRow, *, include_rounds: bool = True) -> C.Loop
         updated_at=row.updated_at or "",
     )
 
-    spec_row = latest_of(C.LoopArtifactKind.mvp_spec)
-    validation_row = latest_of(C.LoopArtifactKind.validation)
-    prototype_row = latest_of(C.LoopArtifactKind.prototype)
-    report_row = latest_of(C.LoopArtifactKind.test_report)
-    score_row = latest_of(C.LoopArtifactKind.scorecard)
+    spec_row = current_of(C.LoopArtifactKind.mvp_spec)
+    validation_row = current_of(C.LoopArtifactKind.validation)
+    prototype_row = current_of(C.LoopArtifactKind.prototype)
+    report_row = current_of(C.LoopArtifactKind.test_report)
+    score_row = current_of(C.LoopArtifactKind.scorecard)
 
     if spec_row is not None:
         snapshot.mvp_spec = C.LoopMvpSpec.model_validate(_payload_of(spec_row))

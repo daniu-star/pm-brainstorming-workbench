@@ -142,6 +142,66 @@ test("decisionActionGate：已确认/已否决的决策不再渲染入口", () =
   assert.equal(router.decisionActionGate({ status: null, phase: "brainstorming", productVersion: 2 }).visible, false);
 });
 
+// R4 P1-2：已确认决策被标记 needs_review（简报必填字段修订/复核人反对）后，
+// 必须仍有复核入口，否则 backend/services/command_service.py:1409-1416 的标记
+// 永远无法被清除（清除只发生在再次 confirm_decision：command_service.py:1442-1460）。
+test("isDecisionReviewable：proposed 恒需要，confirmed 仅在 needs_review 时需要复核", () => {
+  assert.equal(router.isDecisionReviewable("proposed", false), true);
+  assert.equal(router.isDecisionReviewable("proposed", true), true);
+  assert.equal(router.isDecisionReviewable("confirmed", true), true);
+  assert.equal(router.isDecisionReviewable("confirmed", false), false);
+  assert.equal(router.isDecisionReviewable("confirmed", null), false);
+  assert.equal(router.isDecisionReviewable("rejected", true), false);
+  assert.equal(router.isDecisionReviewable("superseded", true), false);
+  assert.equal(router.isDecisionReviewable(null, true), false);
+});
+
+test("decisionActionGate：confirmed + needs_review 在 brainstorming 可复核（复用阶段与版本门控）", () => {
+  const gate = router.decisionActionGate({
+    status: "confirmed",
+    needsReview: true,
+    phase: "brainstorming",
+    productVersion: 4,
+  });
+  assert.deepEqual(gate, { visible: true, enabled: true, reason: null });
+  assert.equal(
+    router.decisionActionGate({
+      status: "confirmed",
+      needsReview: true,
+      phase: "audit_completed",
+      productVersion: 1,
+    }).enabled,
+    true
+  );
+  // 阶段门控仍生效：auditing 时后端会拒绝 confirm_decision，前端先禁用并给原因
+  const auditing = router.decisionActionGate({
+    status: "confirmed",
+    needsReview: true,
+    phase: "auditing",
+    productVersion: 2,
+  });
+  assert.equal(auditing.visible, true);
+  assert.equal(auditing.enabled, false);
+  assert.ok(auditing.reason.includes("当前阶段不能确认决策"));
+  // 版本门控仍生效
+  const noVersion = router.decisionActionGate({
+    status: "confirmed",
+    needsReview: true,
+    phase: "brainstorming",
+    productVersion: 0,
+  });
+  assert.equal(noVersion.enabled, false);
+  assert.ok(noVersion.reason.includes("产品状态尚未加载"));
+});
+
+test("decisionActionGate：confirmed 无复核标记时仍不渲染入口（不放开普通已确认决策）", () => {
+  assert.equal(
+    router.decisionActionGate({ status: "confirmed", needsReview: false, phase: "brainstorming", productVersion: 2 })
+      .visible,
+    false
+  );
+});
+
 test("decisionActionGate：auditing 阶段禁用并给出「先结束审计」原因（后端必 INVALID_REQUEST）", () => {
   const gate = router.decisionActionGate({
     status: "proposed",

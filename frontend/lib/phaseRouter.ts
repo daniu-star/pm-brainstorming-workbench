@@ -43,12 +43,29 @@ export function canConfirmDecisionPhase(phase: SessionPhase | null | undefined):
 }
 
 export interface DecisionActionGateInput {
-  /** 决策节点/决策项的 status；只有 proposed 才需要确认 */
+  /** 决策节点/决策项的 status；proposed 需要确认，confirmed 仅在被标记复核时需要 */
   status?: string | null;
+  /**
+   * 该决策是否被后端标记为需要复核（backend/services/command_service.py:1409-1416
+   * 修订简报必填字段会把已确认决策置 needs_review=True）。
+   * 已确认 + needs_review 时仍需给用户复核入口，否则标记永远无法清除。
+   */
+  needsReview?: boolean | null;
   /** 会话 v2 阶段 */
   phase?: SessionPhase | null;
   /** 当前产品状态版本（画布投影依据） */
   productVersion?: number | null;
+}
+
+/**
+ * 决策是否需要一个「确认/复核」入口：
+ * - 待确认（proposed）：首次确认；
+ * - 已确认但被标记复核（confirmed + needs_review）：复核并清除标记。
+ * 其余状态（confirmed 无标记 / rejected / superseded / draft）都不给入口。
+ */
+export function isDecisionReviewable(status: string | null | undefined, needsReview?: boolean | null): boolean {
+  if (status === "proposed") return true;
+  return status === "confirmed" && needsReview === true;
 }
 
 export interface DecisionActionGate {
@@ -67,7 +84,7 @@ export interface DecisionActionGate {
  * 因此这里提前禁用并给出原因，避免「可点但必失败」。
  */
 export function decisionActionGate(input: DecisionActionGateInput): DecisionActionGate {
-  if (input.status !== "proposed") {
+  if (!isDecisionReviewable(input.status, input.needsReview)) {
     return { visible: false, enabled: false, reason: null };
   }
   if (!input.phase) {

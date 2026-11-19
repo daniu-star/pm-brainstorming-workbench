@@ -7,6 +7,7 @@
  * （本机 npm registry 不可达，不能安装 RTL 渲染组件，项目惯例是抽 lib 纯函数）。
  */
 
+import { BRIEF_FIELDS } from "./contracts.generated";
 import type { BriefFieldName, ProductBrief } from "./contracts.generated";
 
 export type BriefEdits = Record<string, string>;
@@ -70,21 +71,28 @@ export function briefPhaseNotice(input: PhaseInput): string | null {
 export const BRIEF_STALE_NOTICE = "服务端已更新，是否覆盖或丢弃本地草稿？";
 
 /**
- * 「已确认简报被改回待确认」的说明（PRD-02 前端兜底）。
+ * 已确认简报里仍停留在「待确认」的字段。
  *
- * backend/services/command_service.py:1336-1341 在已确认简报的必填字段被修订时
- * 会把 status 写回 ready；而 confirm_brief 只允许 clarifying 阶段，
- * 脑暴/审计阶段没有任何确认入口。这里必须如实说明，不能让用户以为还能点确认。
+ * 背景：backend/services/command_service.py:1387-1406 的 revise_brief 会按提交的
+ * status 写字段（缺省 proposed），同时把 brief.status 强制保持 confirmed —— 于是
+ * 头部显示「已确认」、字段旁显示「待确认」，而页面上没有任何再确认入口。
+ * 前端现在在已确认简报上提交 status:"confirmed"（BriefCard.changedFields），新数据
+ * 不再产生漂移；本函数兜底历史数据，让用户仍能一次性把字段并入已确认版本。
  */
-export function briefReconfirmNotice(input: {
-  status?: string | null;
-  phase?: string | null;
-}): string | null {
-  if (input.status !== "ready") return null;
-  const phase = input.phase ?? null;
-  if (!phase || phase === BRIEF_ACTION_PHASE) return null;
-  return "产品定义中的必填字段已更新，简报回到「待确认」；当前阶段不提供再次确认入口，请以本次修订后的内容继续，或回工作台重新发起澄清后再确认。";
+export function briefFieldsAwaitingConfirm(
+  brief: ProductBrief | null | undefined
+): BriefFieldName[] {
+  if (!brief || brief.status !== "confirmed") return [];
+  return BRIEF_FIELDS.filter((field) => {
+    const status = brief[field]?.status;
+    // 缺失字段不算「待确认」：没有内容可并入，提示只会误导
+    return status !== undefined && status !== "confirmed" && status !== "unknown";
+  });
 }
+
+/** 字段漂移提示（配合「确认字段修订」按钮） */
+export const BRIEF_FIELD_DRIFT_NOTICE =
+  "简报已确认，但以下字段仍停留在「待确认」。点「确认字段修订」把它们并入当前版本，无需重新发起澄清。";
 
 /** 是否存在未提交的本地编辑 */
 export function hasBriefEdits(edits: BriefEdits | null | undefined): boolean {

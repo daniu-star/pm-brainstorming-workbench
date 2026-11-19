@@ -84,3 +84,24 @@
 - 收口后真实数字：后端 **512 用例 OK**、前端 **123 用例 pass** + `tsc --noEmit` 0 错 + build 7 路由 + e2e 1 pass。
 - 结论：达到「可交付」，但**未达 95 分收敛**；未闭合项（重试粒度 AC-14、真实浏览器/崩溃注入类验证、软删正文清理与事件压缩、人工更正后重生成报告、并发竞争类用例）与最小调整方案见 `docs/qa-loop-runs/README.md`。
 - 逐轮归档：`docs/qa-loop-runs/README.md` + `round-1.md` … `round-5.md`。
+
+## 9. 升级：Loop Engineering Product（7 角色 / 8 维 / 显式 Harness）
+
+第 8 节的 5 轮闭环暴露了两个方法学缺口：① 角色只有 4 组，缺「设计体验」与「发布运维」视角；
+② 评分卡 7 维对「产品与需求达成」权重不足，且 Harness 约束只靠提示词、没有可执行门禁。
+因此本仓库沉淀了升级版技能包：**`skills/loop-engineering-product/`**（可独立开源）。
+
+与本节 v1 的差异：
+
+| 维度 | v1（`scripts/qa-loop.workflow.js`） | v2（`skills/loop-engineering-product/`） |
+| --- | --- | --- |
+| 角色 | 4 组（产品/客户端/服务端/测试） | 7 组（+设计体验、评测、发布运维） |
+| 评分 | 7 维 100 分（功能 25 / 数据 20 / 错误 15 / 前端 15 / 架构 10 / 测试 10 / 文档 5） | 8 维 100 分（产品与需求达成 20 起） |
+| Harness | 提示词约定 | H1~H10 可执行契约 + `references/harness.md` |
+| 写域 | 提示词约定 | `scripts/verify_write_scopes.py` 可校验 |
+| 产物 | 内联 | `docs/loop-runs/` 归档模板 + 报告规范 |
+| 开源 | 否 | 是（`scripts/export_loop_skill.py` 导出独立仓库） |
+
+已用 v2 跑了 1 次（3 轮，72 → 73 → 66，未达 95，逐轮明细见
+`docs/loop-runs/product-loop-2026-11-19.md`），目前正在跑第 4~5 轮。运行归档索引见
+`docs/loop-runs/README.md`。

@@ -511,6 +511,34 @@ class LoopDetailTests(LoopsApiTestBase):
         for field in ("mvp_spec", "validation", "prototype", "test_report", "scorecard"):
             self.assertIsNone(snapshot[field], field)
 
+    def test_detail_uses_current_round_artifacts_only(self) -> None:
+        """P1-3：第 2 轮还没产物时，「本轮产物」不得回落到第 1 轮。"""
+
+        session = self.create_session()
+        seeded = self.seed_loop(session["id"], now_iso="2026-11-19T09:00:00Z")
+        loop_id = seeded["loop_id"]
+        with database.session_scope() as db:
+            loop = loop_repo.get_loop(db, loop_id)
+            self.assertIsNotNone(loop)
+            loop_repo.ensure_round(db, loop_id=loop_id, ordinal=2, now_iso="2026-11-19T09:10:00Z")
+            loop_repo.touch_loop(
+                db, loop, current_round=2, now_iso="2026-11-19T09:10:00Z"
+            )
+
+        snapshot = self.get(f"/api/v2/loops/{loop_id}").json()
+        self.assertEqual(snapshot["current_round"], 2)
+        for field in ("mvp_spec", "validation", "prototype", "test_report", "scorecard"):
+            self.assertIsNone(
+                snapshot[field], f"第 2 轮无产物时 {field} 不得显示第 1 轮的结果"
+            )
+        second = next(item for item in snapshot["rounds"] if item["ordinal"] == 2)
+        self.assertEqual(second["artifacts"], [])
+        self.assertEqual(second["status"], C.LoopRoundStatus.running.value)
+
+        # 第 1 轮产物仍按轮可读（历史轮回看走 round + artifact 接口）。
+        first = self.get(f"/api/v2/loops/{loop_id}/rounds/1").json()
+        self.assertEqual(len(first["artifacts"]), 5)
+
 
 class LoopRoundTests(LoopsApiTestBase):
     """GET /loops/{loop_id}/rounds/{ordinal}"""

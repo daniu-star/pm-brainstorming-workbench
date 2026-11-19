@@ -99,12 +99,19 @@ function DecisionNodeAction({ node }: { node: CanvasNode }) {
 
   const decisionIds = node.decision_ids ?? [];
   const decisions = (productState?.decisions ?? []).filter((item) => decisionIds.includes(item.id));
+  // 待确认决策优先；没有待确认项时，已确认但被标记复核（needs_review=True）的决策
+  // 仍需给复核入口，否则该标记会永久停留在画布上（command_service.py:1409-1416 置位，
+  // command_service.py:1442-1460 只在再次 confirm_decision 时清除）。
   const decision: DecisionItem | null =
-    decisions.find((item) => item.status === "proposed") ?? null;
+    decisions.find((item) => item.status === "proposed") ??
+    decisions.find((item) => item.status === "confirmed" && item.needs_review === true) ??
+    null;
+  const needsReview = decision?.status === "confirmed" && decision.needs_review === true;
   const phase = v2Phase ?? sessionView?.phase ?? null;
   const version = productState?.version ?? productVersion;
   const gate = decisionActionGate({
     status: decision?.status ?? node.status ?? null,
+    needsReview: decision?.needs_review ?? false,
     phase,
     productVersion: version,
   });
@@ -132,7 +139,7 @@ function DecisionNodeAction({ node }: { node: CanvasNode }) {
         },
         { expectedSessionVersion: sessionVersion }
       );
-      toast.success("决策已确认");
+      toast.success(needsReview ? "决策已复核并确认" : "决策已确认");
     } catch (error) {
       if (isApiError(error) && error.code === "VERSION_CONFLICT") {
         toast.error("内容已在别处更新，已刷新");
@@ -149,6 +156,17 @@ function DecisionNodeAction({ node }: { node: CanvasNode }) {
 
   return (
     <div className="mt-2 flex flex-col gap-1.5">
+      {needsReview ? (
+        <p
+          role="note"
+          className="rounded-md border border-amber-700/40 bg-amber-900/20 px-2 py-1.5 text-[11px] leading-relaxed text-amber-300"
+        >
+          {node.detail && node.detail.trim()
+            ? node.detail
+            : "需要复核：简报必填字段已修订或复核人提出反对，请核对结论与方案选择后确认。"}
+          {" "}复核并确认后该标记会被清除。
+        </p>
+      ) : null}
       {options.length > 1 ? (
         <label className="flex items-center gap-2 text-[11px] text-zinc-500">
           采用方案
@@ -178,7 +196,7 @@ function DecisionNodeAction({ node }: { node: CanvasNode }) {
           {pending ? (
             <span className="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
           ) : null}
-          确认决策
+          {needsReview ? "复核并确认" : "确认决策"}
         </button>
         {gate.reason ? (
           <span className="text-[11px] leading-relaxed text-amber-300">{gate.reason}</span>

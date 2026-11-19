@@ -16,9 +16,14 @@
   原子守卫：Run 已取消、审计已结束、或 ``run.base_audit_version`` 与当前
   ``audit.audit_version`` 不一致时**静默放弃**（PRD「进入 closing/cancelled
   后旧生成的下一问与评估结果失去提交资格」）。
-* 除 :class:`~domain.errors.AppError` 外的异常（``LLMError`` 等）向上抛给
-  runner，由 runner 决定重试；``product_state`` 恒为 ``None``（审计不推进
-  产品版本），``brief_status`` 恒为 ``None``。
+* 上游传输失败（``LLMError``）分两段处理：仍有重试额度时继续向上抛给
+  runner（保持「单步骤最多两次上游尝试」的既有语义）；额度耗尽或错误本身
+  不可重试时，转成带 ``apply`` 的 failed 结果，让审计状态、结束原因与会话
+  阶段一起落库——否则页面会永久停在「开场中/等待回答」，用户既看不到原因
+  也没有恢复入口。
+* 其他非 :class:`~domain.errors.AppError` 异常仍向上抛给 runner；
+  ``product_state`` 恒为 ``None``（审计不推进产品版本），``brief_status``
+  恒为 ``None``。
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ from typing import Any, Iterable, Sequence
 
 from pydantic import Field, ValidationError
 
+from core.llm_client import LLMError
 from core.role_prompts import PROMPT_VERSION, build_role_messages
 from domain import state_machine as SM
 from domain.contracts import (
@@ -702,6 +708,39 @@ def _is_output_invalid(error: Exception) -> bool:
     return isinstance(error, cls)
 
 
+def _max_step_attempts() -> int:
+    """runner 的单步骤上游尝试上限；延迟导入避免 workflows 包内循环依赖。"""
+
+    try:
+        from workflows import runner
+
+        value = int(getattr(runner, "MAX_STEP_ATTEMPTS", 1))
+    except Exception:  # pragma: no cover - runner 不可用
+        return 1
+    return max(1, value)
+
+
+def _defer_transport_failure(ctx: Any, error: LLMError) -> bool:
+    """可重试且仍有尝试额度：交回 runner 重试，此处不落库。
+
+    与 runner 的 ``except LLMError`` 分支保持一致（``attempt_no`` 由 runner 通过
+    :class:`workflows.runner.StepContext` 注入）；额度耗尽后由本模块把失败写进
+    审计状态，避免「Run 失败但审计停在 opening/active」的两套状态脱节。
+    """
+
+    if not bool(getattr(error, "retryable", False)):
+        return False
+    attempt_no = int(getattr(ctx, "attempt_no", 1) or 1)
+    return attempt_no < _max_step_attempts()
+
+
+def _transport_failure_message(error: LLMError) -> str:
+    """把上游错误转成用户可读的失败原因（保留原文里的处置提示，如「更新 API Key」）。"""
+
+    text = str(error).strip() or "上游模型服务调用失败"
+    return text[:300]
+
+
 # --------------------------------------------------------------------------- #
 # 守卫与 apply 工厂
 # --------------------------------------------------------------------------- #
@@ -753,12 +792,18 @@ def _apply_open(
     question_message_id: str,
 ) -> Any:
     def _apply(db: Any) -> None:
-        audit = _guarded_audit(db, ctx=ctx, audit_id=audit_id, expected=(AuditStatus.created, AuditStatus.opening))
+        audit = _guarded_audit(
+            db,
+            ctx=ctx,
+            audit_id=audit_id,
+            expected=(AuditStatus.created, AuditStatus.opening, AuditStatus.failed),
+        )
         if audit is None:
             return
         now = utc_now_iso()
         current = AuditStatus(str(audit.status))
-        if current is AuditStatus.created:
+        if current is not AuditStatus.opening:
+            # created → opening 是首轮；failed → opening 是开场失败后的重放。
             _transition(current, AuditStatus.opening)
 
         repo = _audit_repo()
@@ -795,6 +840,11 @@ def _apply_open_failure(*, ctx: Any, audit_id: str) -> Any:
             return
         now = utc_now_iso()
         _transition(audit.status, AuditStatus.failed)
+        # 失败不推进 audit_version（与 _apply_closing_failure 一致）：开场失败没有
+        # 写入任何审计内容，且 retry_run 建子 Run 时会复制父 Run 的
+        # base_audit_version，这里 bump 会让「重试该步骤」被
+        # RETRY_AUDIT_CONTEXT_CHANGED 拒绝。重复写入由状态守卫
+        # （opening → failed，成功后为 active）与 Run 的 base 版本校验兜住。
         _audit_repo().update_audit(
             db,
             audit,
@@ -803,7 +853,6 @@ def _apply_open_failure(*, ctx: Any, audit_id: str) -> Any:
             end_reason=EndReason.failed,
             question_count=0,
             active_question_id=None,
-            audit_version=int(audit.audit_version) + 1,
         )
 
     return _apply
@@ -969,7 +1018,9 @@ def _apply_answer_failure(*, ctx: Any, audit_id: str) -> Any:
             now_iso=utc_now_iso(),
             active_question_id=None,
             pending_continuation=1,
-            audit_version=int(audit.audit_version) + 1,
+            # 不推进 audit_version：失败没有写入评估/下一问，且 retry_run 的子 Run
+            # 复制父 Run 的 base_audit_version，bump 会让「重试该步骤」被
+            # RETRY_AUDIT_CONTEXT_CHANGED 拒绝（与 _apply_closing_failure 一致）。
         )
 
     return _apply
@@ -1229,10 +1280,21 @@ async def _generate_report(
 async def run_audit_open(ctx: Any) -> Any:
     """审计开场：写入第 1 个问题并把审计推进到 active。"""
 
+    audit_id = str(getattr(getattr(ctx, "run", None), "audit_id", "") or "")
     try:
         return await _open(ctx)
     except AppError as error:
         return _failed(ctx, error.code, error.message)
+    except LLMError as error:
+        if _defer_transport_failure(ctx, error):
+            raise
+        return _failed(
+            ctx,
+            error.code,
+            _transport_failure_message(error),
+            session_phase=SessionPhase.brainstorming,
+            apply=_apply_open_failure(ctx=ctx, audit_id=audit_id) if audit_id else None,
+        )
 
 
 async def _open(ctx: Any) -> Any:
@@ -1250,7 +1312,14 @@ async def _open(ctx: Any) -> Any:
         warnings.append("执行已收到取消请求，本次不再提问")
         return cs.RunOutcome(status=RunStatus.succeeded, warnings=warnings, session_phase=None)
 
-    if status not in (AuditStatus.created, AuditStatus.opening) or int(audit.question_count or 0) > 0:
+    question_count = int(audit.question_count or 0)
+    # 开场传输失败后审计落到 failed（question_count 仍为 0）。此时允许重放开场：
+    # failed → opening 是状态机里的既有恢复路径（见 AUDIT_TRANSITIONS）。
+    replay_failed_open = status is AuditStatus.failed and question_count == 0
+    if status not in (AuditStatus.created, AuditStatus.opening) and not replay_failed_open:
+        warnings.append(f"审计状态为 {status.value}，开场步骤不再重复执行")
+        return cs.RunOutcome(status=RunStatus.succeeded, warnings=warnings, session_phase=None)
+    if question_count > 0:
         warnings.append(f"审计状态为 {status.value}，开场步骤不再重复执行")
         return cs.RunOutcome(status=RunStatus.succeeded, warnings=warnings, session_phase=None)
 
@@ -1350,10 +1419,21 @@ async def _open(ctx: Any) -> Any:
 async def run_audit_answer(ctx: Any) -> Any:
     """评估一个已回答的问题，并生成下一个问题或收尾报告。"""
 
+    audit_id = str(getattr(getattr(ctx, "run", None), "audit_id", "") or "")
     try:
         return await _answer(ctx)
     except AppError as error:
         return _failed(ctx, error.code, error.message)
+    except LLMError as error:
+        if _defer_transport_failure(ctx, error):
+            raise
+        return _failed(
+            ctx,
+            error.code,
+            _transport_failure_message(error),
+            session_phase=SessionPhase.auditing,
+            apply=_apply_answer_failure(ctx=ctx, audit_id=audit_id) if audit_id else None,
+        )
 
 
 async def _answer(ctx: Any) -> Any:

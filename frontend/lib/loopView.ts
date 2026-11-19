@@ -794,6 +794,189 @@ export function roundScoreText(round: LoopRoundView | null | undefined): string 
 }
 
 // --------------------------------------------------------------------------- //
+// 历史轮次回看与多轮对比（R4 P1-3）
+// --------------------------------------------------------------------------- //
+
+/**
+ * 选中轮次：优先用户选中的 ordinal，其次快照 current_round，最后退回最后一轮。
+ * 越界/已删除的 ordinal 必须回落，不能渲染空白页。
+ */
+export function selectRound(
+  rounds: LoopRoundView[] | null | undefined,
+  selectedOrdinal: number | null | undefined,
+  currentRound: number | null | undefined
+): LoopRoundView | null {
+  if (!rounds || rounds.length === 0) return null;
+  if (typeof selectedOrdinal === "number" && Number.isFinite(selectedOrdinal)) {
+    const matched = rounds.find((round) => round.ordinal === selectedOrdinal);
+    if (matched) return matched;
+  }
+  if (typeof currentRound === "number" && Number.isFinite(currentRound)) {
+    const matched = rounds.find((round) => round.ordinal === currentRound);
+    if (matched) return matched;
+  }
+  return rounds[rounds.length - 1] ?? null;
+}
+
+export interface RoundSwitcherOption {
+  ordinal: number;
+  label: string;
+  scoreText: string;
+  statusLabel: string;
+  active: boolean;
+}
+
+/** 轮次切换条：每轮一个按钮（第 N 轮 · 状态 · 分数），按 ordinal 升序。 */
+export function roundSwitcherOptions(
+  rounds: LoopRoundView[] | null | undefined,
+  selectedOrdinal: number | null | undefined
+): RoundSwitcherOption[] {
+  return [...(rounds ?? [])]
+    .sort((a, b) => a.ordinal - b.ordinal)
+    .map((round) => ({
+      ordinal: round.ordinal,
+      label: `第 ${round.ordinal} 轮`,
+      scoreText: roundScoreText(round),
+      statusLabel: ROUND_STATUS_LABELS[round.status] ?? round.status,
+      active: selectedOrdinal ? round.ordinal === selectedOrdinal : false,
+    }));
+}
+
+export interface RoundComparisonRow {
+  key: LoopScoreKey;
+  label: string;
+  before: number | null;
+  after: number | null;
+  delta: number | null;
+}
+
+export interface RoundComparison {
+  hasPrevious: boolean;
+  previousOrdinal: number | null;
+  currentOrdinal: number | null;
+  /** 「72 → 78（+6）」；缺分显示「未生成」 */
+  scoreDeltaText: string;
+  scoreDelta: number | null;
+  /** 「需迭代 → 通过」 */
+  verdictText: string;
+  verdictChanged: boolean;
+  /** 产物索引差异（新增 / 缺少） */
+  artifactDeltaText: string;
+  dimensionRows: RoundComparisonRow[];
+  summary: string;
+}
+
+function scoreOf(round: LoopRoundView | null | undefined, card: LoopScoreCard | null | undefined): number | null {
+  if (card && typeof card.total === "number") return card.total;
+  if (round && typeof round.score === "number") return round.score;
+  return null;
+}
+
+function signedDelta(delta: number): string {
+  if (delta === 0) return "±0";
+  return delta > 0 ? `+${delta}` : `${delta}`;
+}
+
+/**
+ * 「对比上一轮」：总分、七维分差、verdict 变化、产物索引差异。
+ * 没有上一轮时 hasPrevious=false，页面不渲染对比条（不编造对比数据）。
+ */
+export function compareRounds(
+  previous: LoopRoundView | null | undefined,
+  current: LoopRoundView | null | undefined,
+  previousCard?: LoopScoreCard | null,
+  currentCard?: LoopScoreCard | null
+): RoundComparison {
+  const empty: RoundComparison = {
+    hasPrevious: false,
+    previousOrdinal: previous?.ordinal ?? null,
+    currentOrdinal: current?.ordinal ?? null,
+    scoreDeltaText: "",
+    scoreDelta: null,
+    verdictText: "",
+    verdictChanged: false,
+    artifactDeltaText: "",
+    dimensionRows: [],
+    summary: "",
+  };
+  if (!previous || !current) return empty;
+
+  const before = scoreOf(previous, previousCard);
+  const after = scoreOf(current, currentCard);
+  const delta = before !== null && after !== null ? after - before : null;
+  const scoreDeltaText =
+    before === null && after === null
+      ? "两轮均未生成评分"
+      : `${before === null ? NOT_GENERATED : `${before}/100`} → ${
+          after === null ? NOT_GENERATED : `${after}/100`
+        }${delta === null ? "" : `（${signedDelta(delta)}）`}`;
+
+  const beforeVerdict = verdictLabel(previous.verdict);
+  const afterVerdict = verdictLabel(current.verdict);
+  const verdictChanged = previous.verdict !== current.verdict;
+
+  const beforeKinds = new Set((previous.artifacts ?? []).map((artifact) => artifact.kind));
+  const afterKinds = new Set((current.artifacts ?? []).map((artifact) => artifact.kind));
+  const added = LOOP_ARTIFACT_KINDS.filter((kind) => afterKinds.has(kind) && !beforeKinds.has(kind));
+  const missing = LOOP_ARTIFACT_KINDS.filter((kind) => beforeKinds.has(kind) && !afterKinds.has(kind));
+  const artifactDeltaText =
+    beforeKinds.size === 0 && afterKinds.size === 0
+      ? "两轮产物索引均为空"
+      : added.length === 0 && missing.length === 0
+        ? "产物索引无变化"
+        : [
+            added.length > 0 ? `新增：${added.map((kind) => ARTIFACT_TITLES[kind]).join("、")}` : null,
+            missing.length > 0 ? `本轮缺少：${missing.map((kind) => ARTIFACT_TITLES[kind]).join("、")}` : null,
+          ]
+            .filter(Boolean)
+            .join("；");
+
+  const beforeRows = new Map(scoreDimensionRows(previousCard).map((row) => [row.key, row.score]));
+  const afterRows = new Map(scoreDimensionRows(currentCard).map((row) => [row.key, row.score]));
+  // 七维固定输出（缺失维度显示「—」），避免两轮维度集合不同时行数跳动
+  const dimensionRows: RoundComparisonRow[] = LOOP_SCORE_KEYS.map((key) => {
+    const beforeScore = beforeRows.get(key);
+    const afterScore = afterRows.get(key);
+    return {
+      key,
+      label: scoreKeyLabel(key),
+      before: beforeScore ?? null,
+      after: afterScore ?? null,
+      delta:
+        beforeScore !== undefined && afterScore !== undefined ? afterScore - beforeScore : null,
+    };
+  });
+
+  const summary =
+    delta === null
+      ? `第 ${previous.ordinal} 轮 → 第 ${current.ordinal} 轮，评分不完整，无法计算分差`
+      : delta > 0
+        ? `第 ${previous.ordinal} 轮 → 第 ${current.ordinal} 轮，总分提升 ${signedDelta(delta)}`
+        : delta < 0
+          ? `第 ${previous.ordinal} 轮 → 第 ${current.ordinal} 轮，总分下降 ${Math.abs(delta)}`
+          : `第 ${previous.ordinal} 轮 → 第 ${current.ordinal} 轮，总分持平`;
+
+  return {
+    hasPrevious: true,
+    previousOrdinal: previous.ordinal,
+    currentOrdinal: current.ordinal,
+    scoreDeltaText,
+    scoreDelta: delta,
+    verdictText: `${beforeVerdict} → ${afterVerdict}`,
+    verdictChanged,
+    artifactDeltaText,
+    dimensionRows,
+    summary,
+  };
+}
+
+/** 对比条的 tone：涨=emerald、跌=red、平=zinc */
+export function comparisonTone(delta: number | null | undefined): Tone {
+  if (delta === null || delta === undefined || delta === 0) return "zinc";
+  return delta > 0 ? "emerald" : "red";
+}
+
+// --------------------------------------------------------------------------- //
 // 评分卡
 // --------------------------------------------------------------------------- //
 

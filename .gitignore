@@ -24,3 +24,5 @@ backend/audit-test-*/
 dist/
 *TMP_TESTS_EVAL*
 *tmp_tests_eval*
+
+frontend/.tmp_tests/

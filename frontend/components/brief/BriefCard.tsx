@@ -4,9 +4,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSessionStore } from "@/store/sessionStore";
 import {
   briefActionsVisible,
+  briefFieldsAwaitingConfirm,
   briefPhaseNotice,
-  briefReconfirmNotice,
   briefReviseAllowed,
+  BRIEF_FIELD_DRIFT_NOTICE,
   decideBriefDraftOnServerVersion,
   missingRequiredBriefFields,
 } from "@/lib/briefDraft";
@@ -103,15 +104,21 @@ export function BriefCard() {
   const changedFields = useMemo(() => {
     const result: Record<string, { value: string; status: BriefFieldStatus }> = {};
     if (!brief) return result;
+    // 已确认简报的修订必须显式提交 confirmed：否则后端按缺省 proposed 落库，
+    // 出现「头部已确认 / 字段待确认」并存（command_service.py:1387-1406）。
+    const nextStatus: BriefFieldStatus = brief.status === "confirmed" ? "confirmed" : "proposed";
     for (const field of BRIEF_FIELDS) {
       const next = edits[field];
       if (typeof next !== "string") continue;
       const current = brief[field]?.value ?? "";
       if (next === current) continue;
-      result[field] = { value: next, status: "proposed" };
+      result[field] = { value: next, status: nextStatus };
     }
     return result;
   }, [brief, edits]);
+
+  // 历史数据兜底：已确认简报仍带「待确认」字段时给一个真实的再确认入口
+  const driftFields = useMemo(() => briefFieldsAwaitingConfirm(brief), [brief]);
 
   if (legacyMode) return null;
   if (!brief && !sessionLoading) {
@@ -153,7 +160,6 @@ export function BriefCard() {
   const canConfirmOrSkip = briefActionsVisible(phase);
   const canRevise = briefReviseAllowed(phase);
   const phaseNotice = briefPhaseNotice(phase);
-  const reconfirmNotice = briefReconfirmNotice({ status, phase });
 
   async function runCommand(
     label: string,
@@ -169,6 +175,7 @@ export function BriefCard() {
       });
       if (action === "confirm_brief") toast.success("简报已确认");
       else if (action === "skip_clarification") toast.success("已跳过澄清");
+      else if (label === "确认字段修订") toast.success("字段修订已确认");
       else if (phase === "audit_completed")
         // 后端 revise_brief 会把 phase 写回 brainstorming（command_service.py），
         // 这是用户可感知的阶段回退，必须显式提示而不是静默。
@@ -218,6 +225,20 @@ export function BriefCard() {
     void runCommand("revise_brief", "revise_brief", {
       expected_product_version: version,
       fields: changedFields,
+    });
+  }
+
+  function handleConfirmDrift() {
+    if (!brief || driftFields.length === 0) return;
+    // 复用 revise_brief（clarifying/brainstorming/audit_completed 均允许），
+    // 显式提交 confirmed 即可把字段并入已确认版本（command_service.py:1390-1396）。
+    const fields: Record<string, { value: string | null; status: BriefFieldStatus }> = {};
+    for (const field of driftFields) {
+      fields[field] = { value: brief[field]?.value ?? "", status: "confirmed" };
+    }
+    void runCommand("确认字段修订", "revise_brief", {
+      expected_product_version: version,
+      fields,
     });
   }
 
@@ -334,12 +355,24 @@ export function BriefCard() {
         </div>
       ) : null}
 
-      {reconfirmNotice ? (
-        <div className="mx-3 mb-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-relaxed text-amber-200">
-          {reconfirmNotice}
+      {driftFields.length > 0 ? (
+        <div className="mx-3 mb-2 space-y-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-relaxed text-amber-200">
+          <p>{BRIEF_FIELD_DRIFT_NOTICE}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="min-w-0 flex-1 text-amber-300/80">
+              {`待并入：${driftFields.map((field) => BRIEF_FIELD_LABELS[field] ?? field).join("、")}`}
+            </span>
+            <button
+              type="button"
+              onClick={handleConfirmDrift}
+              disabled={locked}
+              className="min-h-[32px] rounded-md border border-amber-500/40 px-2 text-[11px] font-medium text-amber-200 hover:bg-amber-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {pendingAction === "确认字段修订" ? "确认中…" : "确认字段修订"}
+            </button>
+          </div>
         </div>
       ) : null}
-
       {phaseNotice ? (
         <div className="mx-3 mb-2 px-2.5 py-1.5 rounded-lg border border-zinc-600/50 bg-dark-900/60 text-[11px] leading-relaxed text-zinc-400">
           {phaseNotice}

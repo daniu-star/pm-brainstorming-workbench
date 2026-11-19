@@ -573,6 +573,9 @@ class StepContext:
     deadline_epoch: int
     #: 重试子 Run 的调度范围（父 Run 失败步骤 + 可复用的已成功步骤），普通 Run 为 None。
     retry_scope: dict[str, Any] | None = None
+    #: 本次步骤执行是第几次上游尝试（1 起）。工作流据此判断：可重试的传输失败
+    #: 是否还有额度交给 runner 重试，还是应当落成审计自身的失败状态。
+    attempt_no: int = 1
 
 
 # --------------------------------------------------------------------------- #
@@ -1603,6 +1606,7 @@ def _drive_run(
             lease_epoch=lease_epoch,
             deadline_epoch=int(deadline_epoch),
             retry_scope=retry_scope,
+            attempt_no=int(attempt_no),
         )
         try:
             outcome = _invoke_dispatch(dispatch, ctx, workflow_timeout)

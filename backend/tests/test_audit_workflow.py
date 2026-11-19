@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy import select  # noqa: E402
 
 from core.llm_client import (  # noqa: E402
+    LLMAuthError,
     LLMOutputInvalidError,
     LLMResult,
     LLMUsage,
@@ -710,6 +711,80 @@ class AuditOpenTests(AuditWorkflowTestCase):
         self.assertEqual(self.session_row().phase, SessionPhase.brainstorming.value)
         self.assertEqual(self.run_row(run_id).status, RunStatus.failed.value)
 
+    async def test_open_replays_after_transport_failure(self) -> None:
+        """开场传输失败后重放同一审计：failed → opening → active。
+
+        这是「重试开场」恢复路径的后端契约（P2-2）：失败审计不再返回
+        「开场步骤不再重复执行」的 succeeded 空转结果，而是真的重建第 1 问。
+        """
+
+        audit_id = self.create_audit(status=AuditStatus.opening)
+        run_id, lease_epoch = self.create_run(action="start_audit", audit_id=audit_id)
+        llm = FakeLLM(
+            {audit_workflow.PURPOSE_OPEN: [LLMAuthError("上游 401：API Key 无效")]}
+        )
+        ctx = self.make_ctx(run_id, llm=llm, task_kind=C.TaskKind.audit_open)
+
+        failed = await audit_workflow.run_audit_open(ctx)
+        self.assertEqual(failed.status, RunStatus.failed)
+        self.commit_outcome(run_id, lease_epoch, failed)
+        self.assertEqual(self.reload_audit(audit_id).status, AuditStatus.failed.value)
+
+        # 真实恢复入口：「重试该步骤」= POST /runs/{id}/retry → retry_run 建子 Run，
+        # 子 Run 复制父 Run 的 base_audit_version。失败 apply 不推进 audit_version，
+        # 重试才不会被 RETRY_AUDIT_CONTEXT_CHANGED 拒绝。
+        self.assertEqual(int(self.reload_audit(audit_id).audit_version), 1)
+        receipt = command_service.retry_run(
+            self.db,
+            owner_email=OWNER,
+            run_id=run_id,
+            request_id=new_id(),
+        )
+        self.db.commit()
+        self.assertNotEqual(receipt.run_id, run_id)
+        claimed = run_repo.claim_next_run(
+            self.db, worker_id=WORKER, now_epoch=int(time.time()), lease_seconds=30
+        )
+        self.assertIsNotNone(claimed)
+        self.db.commit()
+        replay_run, replay_lease = str(claimed.id), int(claimed.lease_epoch)
+        self.assertEqual(replay_run, receipt.run_id)
+        replay_llm = FakeLLM(
+            {
+                audit_workflow.PURPOSE_OPEN: [
+                    {
+                        "dimension": AUDIT_DIMENSIONS[0],
+                        "question_text": "谁最需要这个工具？为什么？",
+                        "issue_refs": [],
+                        "evidence_refs": [],
+                        "rationale": "先锁定问题真实性",
+                    }
+                ]
+            }
+        )
+        replay_ctx = self.make_ctx(
+            replay_run, llm=replay_llm, task_kind=C.TaskKind.audit_open
+        )
+        outcome = await audit_workflow.run_audit_open(replay_ctx)
+
+        self.assertEqual(outcome.status, RunStatus.succeeded)
+        self.assertEqual(len(replay_llm.calls), 1, "重放必须真的调用模型重建开场")
+        self.assertFalse(
+            any("不再重复执行" in warning for warning in outcome.warnings),
+            "重放不应退化成 succeeded 警告",
+        )
+        self.commit_outcome(replay_run, replay_lease, outcome)
+
+        audit = self.reload_audit(audit_id)
+        self.assertEqual(audit.status, AuditStatus.active.value)
+        self.assertEqual(int(audit.question_count), 1)
+        self.assertIsNotNone(audit.active_question_id)
+        rows = self.questions(audit_id)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(int(rows[0].ordinal), 1)
+        self.assertEqual(self.session_row().phase, SessionPhase.auditing.value)
+        self.assertEqual(self.run_row(replay_run).status, RunStatus.succeeded.value)
+
     async def test_open_uses_planned_dimension_when_model_disagrees(self) -> None:
         audit_id = self.create_audit(status=AuditStatus.opening)
         run_id, lease_epoch = self.create_run(action="start_audit", audit_id=audit_id)
@@ -1055,6 +1130,74 @@ class AuditAnswerTests(AuditWorkflowTestCase):
             Assessment.awaiting_answer.value,
             "评估失败不得改写已提交回答",
         )
+        self.assertEqual(self.session_row().phase, SessionPhase.auditing.value)
+
+    async def test_answer_replays_after_transport_failure_via_retry(self) -> None:
+        """回答步骤传输失败后「重试该步骤」：重新评估同一问题（P1-1 恢复路径）。
+
+        失败 apply 只标记 pending_continuation、不推进 audit_version；retry_run
+        建子 Run 时继承 question_id，重放才能读到已提交的回答。
+        """
+
+        audit_id = self.create_audit(status=AuditStatus.active)
+        question_id, answer_id = self.add_question(
+            audit_id, ordinal=1, dimension=AUDIT_DIMENSIONS[0], answer="一个回答"
+        )
+        run_id, lease_epoch = self.create_run(
+            action="answer_audit", audit_id=audit_id, question_id=question_id
+        )
+        llm = FakeLLM(
+            {audit_workflow.PURPOSE_ANSWER: [LLMAuthError("上游 401：API Key 无效")]}
+        )
+        ctx = self.make_ctx(
+            run_id, llm=llm, current_message_id=answer_id, task_kind=C.TaskKind.audit_answer
+        )
+
+        failed = await audit_workflow.run_audit_answer(ctx)
+        self.assertEqual(failed.status, RunStatus.failed)
+        self.assertEqual(failed.error_code, LLMAuthError.code)
+        self.commit_outcome(run_id, lease_epoch, failed)
+
+        audit = self.reload_audit(audit_id)
+        self.assertEqual(audit.status, AuditStatus.active.value)
+        self.assertEqual(int(audit.pending_continuation), 1)
+        self.assertEqual(int(audit.audit_version), 1, "失败不得推进 audit_version")
+
+        receipt = command_service.retry_run(
+            self.db,
+            owner_email=OWNER,
+            run_id=run_id,
+            request_id=new_id(),
+        )
+        self.db.commit()
+        claimed = run_repo.claim_next_run(
+            self.db, worker_id=WORKER, now_epoch=int(time.time()), lease_seconds=30
+        )
+        self.assertIsNotNone(claimed)
+        self.db.commit()
+        self.assertEqual(str(claimed.id), receipt.run_id)
+        self.assertEqual(
+            str(run_repo.get_run(self.db, str(claimed.id)).question_id),
+            question_id,
+            "重试子 Run 必须继承父 Run 绑定的审计问题",
+        )
+
+        replay_llm = FakeLLM({audit_workflow.PURPOSE_ANSWER: [_answer_payload()]})
+        replay_ctx = self.make_ctx(
+            str(claimed.id),
+            llm=replay_llm,
+            current_message_id=answer_id,
+            task_kind=C.TaskKind.audit_answer,
+        )
+        outcome = await audit_workflow.run_audit_answer(replay_ctx)
+        self.assertEqual(outcome.status, RunStatus.succeeded)
+        self.commit_outcome(str(claimed.id), int(claimed.lease_epoch), outcome)
+
+        audit = self.reload_audit(audit_id)
+        self.assertEqual(audit.status, AuditStatus.active.value)
+        self.assertEqual(int(audit.pending_continuation), 0)
+        self.assertEqual(int(audit.audit_version), 2)
+        self.assertEqual(self.question(audit_id, question_id).assessment, Assessment.gap.value)
         self.assertEqual(self.session_row().phase, SessionPhase.auditing.value)
 
     async def test_answer_ignored_when_audit_not_active(self) -> None:

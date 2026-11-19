@@ -2453,6 +2453,10 @@ def retry_run(
         failed_steps=failed_steps,
         audit_id=original.audit_id,
         base_audit_version=original.base_audit_version,
+        # 审计回答步骤的重试必须绑定同一个问题：Run 行是工作流的兜底数据源
+        # （workflows/audit.py::_answer 在 ctx 缺 question_id 时读 Run 行），
+        # 不继承会让重试以 INVALID_REQUEST「缺少 question_id」直接失败。
+        question_id=getattr(original, "question_id", None),
         loop_id=loop.id if loop is not None else None,
         run_id=child_id,
     )

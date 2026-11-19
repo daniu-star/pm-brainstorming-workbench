@@ -745,3 +745,79 @@ test("resolveAuditFailureRecoveryState 失败态给出原因与恢复指引", ()
   assert.equal(active.isFailed, false);
   assert.equal(active.showRecovery, false);
 });
+
+// ---------------------------------------------------------------------------
+// P1-1：开场/回答阶段失败（审计仍停在 opening/active）必须可见、可重试
+// 复现：backend/.tmp_tests/test_repro_audit_open_llm.py 令 FakeLLM 抛 LLMAuthError，
+// 实际得 audit.status=opening / end_reason=None（workflows/audit.py:1229-1235）。
+// ---------------------------------------------------------------------------
+test("resolveAuditStepFailureState：opening + 属于当前审计的失败 Run 给出原因与重试指引", () => {
+  const opening = view.resolveAuditStepFailureState({
+    status: "opening",
+    failedRunBelongsToAudit: true,
+    runErrorText: "模型服务鉴权失败（401），请检查 LLM_API_KEY",
+  });
+  assert.equal(opening.show, true);
+  assert.match(opening.reasonText, /鉴权失败/);
+  assert.match(opening.hintText, /重试/);
+  assert.match(opening.hintText, /返回工作台/);
+
+  // 回答阶段失败同样认领（audit 停在 active）
+  const active = view.resolveAuditStepFailureState({
+    status: "active",
+    failedRunBelongsToAudit: true,
+    endReasonRaw: "LLM_UPSTREAM_ERROR",
+  });
+  assert.equal(active.show, true);
+  assert.ok(active.reasonText.length > 0);
+
+  // 没有 Run 文案时也要有可读原因，不能空白
+  const bare = view.resolveAuditStepFailureState({ status: "opening", failedRunBelongsToAudit: true });
+  assert.match(bare.reasonText, /失败/);
+});
+
+test("resolveAuditStepFailureState：失败 Run 不属于当前审计时不认领（不串审计/会话）", () => {
+  const other = view.resolveAuditStepFailureState({
+    status: "opening",
+    failedRunBelongsToAudit: false,
+    runErrorText: "上一次审计的失败",
+  });
+  assert.equal(other.show, false);
+  assert.equal(other.reasonText, "");
+});
+
+test("resolveAuditStepFailureState：终态交给失败卡，closing 交给收尾恢复，避免重复卡片", () => {
+  for (const status of ["failed", "completed", "cancelled", "closing", null]) {
+    assert.equal(
+      view.resolveAuditStepFailureState({ status, failedRunBelongsToAudit: true }).show,
+      false,
+      String(status),
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// P1-4：旧版本简报生成的报告必须标注过期（PRD v4:464）
+// ---------------------------------------------------------------------------
+test("resolveAuditStaleness：报告版本落后当前产品版本时给出过期提示", () => {
+  const stale = view.resolveAuditStaleness({ auditProductVersion: 1, currentProductVersion: 2 });
+  assert.equal(stale.stale, true);
+  assert.match(stale.text, /v1/);
+  assert.match(stale.text, /v2/);
+  assert.match(stale.text, /重新审计/);
+});
+
+test("resolveAuditStaleness：版本相同/报告更新/版本缺失时不误报过期", () => {
+  for (const input of [
+    { auditProductVersion: 2, currentProductVersion: 2 },
+    { auditProductVersion: 3, currentProductVersion: 2 },
+    { auditProductVersion: 0, currentProductVersion: 5 },
+    { auditProductVersion: 3, currentProductVersion: 0 },
+    { auditProductVersion: null, currentProductVersion: 4 },
+    {},
+  ]) {
+    const state = view.resolveAuditStaleness(input);
+    assert.equal(state.stale, false, JSON.stringify(input));
+    assert.equal(state.text, "");
+  }
+});

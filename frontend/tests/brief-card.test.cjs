@@ -43,7 +43,7 @@ test("服务端版本更新时：没有草稿才允许清空", () => {
 
 const REQUIRED = ["target_users", "usage_scenario", "core_problem", "success_criteria"];
 
-function briefWith(values) {
+function valuesBriefWith(values) {
   const brief = {};
   for (const field of REQUIRED) {
     brief[field] = { value: values[field] ?? "", status: "confirmed" };
@@ -52,7 +52,7 @@ function briefWith(values) {
 }
 
 test("missingRequiredBriefFields：服务端齐全且无编辑时不缺", () => {
-  const brief = briefWith({
+  const brief = valuesBriefWith({
     target_users: "3-10 人财务团队",
     usage_scenario: "每周五下午写周报",
     core_problem: "手工汇总耗时 40 分钟",
@@ -63,7 +63,7 @@ test("missingRequiredBriefFields：服务端齐全且无编辑时不缺", () => 
 });
 
 test("missingRequiredBriefFields：本地编辑清空必填项必须被判定缺失（AUD-02）", () => {
-  const brief = briefWith({
+  const brief = valuesBriefWith({
     target_users: "3-10 人财务团队",
     usage_scenario: "每周五下午写周报",
     core_problem: "手工汇总耗时 40 分钟",
@@ -82,7 +82,7 @@ test("missingRequiredBriefFields：本地编辑清空必填项必须被判定缺
 });
 
 test("missingRequiredBriefFields：服务端本来就缺字段时也返回缺失", () => {
-  const brief = briefWith({ target_users: "3-10 人财务团队" });
+  const brief = valuesBriefWith({ target_users: "3-10 人财务团队" });
   assert.deepEqual(
     draft.missingRequiredBriefFields(brief, null, REQUIRED),
     ["usage_scenario", "core_problem", "success_criteria"]
@@ -130,21 +130,47 @@ test("briefPhaseNotice：非 clarifying 阶段给出只读说明，audit_complet
 });
 
 // --------------------------------------------------------------------------- //
-// PRD-02：已确认简报被改回 ready 时如实说明「当前阶段无确认入口」
+// P1-4：已确认简报的字段漂移必须可再确认（不再是不可达的说明文案）
 // --------------------------------------------------------------------------- //
 
-test("briefReconfirmNotice 只在 ready 且非 clarifying 阶段给出说明", () => {
-  const view = require("../node_modules/.cache/test-build/lib/briefDraft.js");
-  assert.match(
-    view.briefReconfirmNotice({ status: "ready", phase: "brainstorming" }) ?? "",
-    /当前阶段不提供再次确认入口/,
+function briefWith(overrides = {}) {
+  const base = {};
+  for (const field of [
+    "target_users",
+    "usage_scenario",
+    "core_problem",
+    "current_alternatives",
+    "product_form",
+    "constraints",
+    "success_criteria",
+  ]) {
+    base[field] = { value: `${field} 内容`, status: "confirmed", source_message_ids: [] };
+  }
+  return { ...base, status: "confirmed", skipped: false, ...overrides };
+}
+
+test("briefFieldsAwaitingConfirm：只挑出已确认简报里非 confirmed 的字段", () => {
+  assert.deepEqual(draft.briefFieldsAwaitingConfirm(briefWith()), []);
+  assert.deepEqual(
+    draft.briefFieldsAwaitingConfirm(briefWith({ target_users: { value: "新用户", status: "proposed", source_message_ids: [] } })),
+    ["target_users"],
   );
-  assert.match(
-    view.briefReconfirmNotice({ status: "ready", phase: "audit_completed" }) ?? "",
-    /必填字段已更新/,
+  // 未确认/已跳过简报不产生「再确认」入口
+  assert.deepEqual(draft.briefFieldsAwaitingConfirm(briefWith({ status: "ready" })), []);
+  assert.deepEqual(draft.briefFieldsAwaitingConfirm(briefWith({ status: "skipped" })), []);
+  assert.deepEqual(draft.briefFieldsAwaitingConfirm(null), []);
+  // unknown 字段不算漂移（还没填过，不该催确认）
+  assert.deepEqual(
+    draft.briefFieldsAwaitingConfirm(briefWith({ constraints: { value: null, status: "unknown", source_message_ids: [] } })),
+    [],
   );
-  // clarifying 阶段仍可正常点「确认」，不应出现误导说明
-  assert.equal(view.briefReconfirmNotice({ status: "ready", phase: "clarifying" }), null);
-  assert.equal(view.briefReconfirmNotice({ status: "confirmed", phase: "brainstorming" }), null);
-  assert.equal(view.briefReconfirmNotice({ status: "ready", phase: null }), null);
+  // 字段整体缺失（旧数据）也不算漂移：没有内容可并入
+  const partial = briefWith();
+  delete partial.success_criteria;
+  assert.deepEqual(draft.briefFieldsAwaitingConfirm(partial), []);
+});
+
+test("BRIEF_FIELD_DRIFT_NOTICE 指向真实存在的「确认字段修订」入口", () => {
+  assert.match(draft.BRIEF_FIELD_DRIFT_NOTICE, /确认字段修订/);
+  assert.match(draft.BRIEF_FIELD_DRIFT_NOTICE, /待确认/);
 });
