@@ -19,3 +19,6 @@ backend/.tmp_tests/
 backend/runner-test-*/
 backend/audit-test-*/
 .run/
+
+# exported standalone repos
+dist/
