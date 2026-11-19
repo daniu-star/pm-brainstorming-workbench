@@ -73,7 +73,6 @@ const SCORE = {
   properties: {
     total: { type: "number" },
     verdict: { type: "string" },
-    dims: { type: "array", items: { type: "object", additionalProperties: true } },
     dimensions: {
       type: "array",
       items: {
