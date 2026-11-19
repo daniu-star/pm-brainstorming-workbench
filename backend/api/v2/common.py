@@ -392,7 +392,13 @@ def create_session_core(
     request_id: str | None,
     now_iso: str,
 ) -> tuple[SessionView, bool]:
-    """创建会话；返回 (视图, 是否幂等重放)。"""
+    """创建会话；返回 (视图, 是否幂等重放)。
+
+    同一事务内完成「会话 + 首条 user 消息 + 首个 clarify Run」：消息由
+    ``session_repo.create_session`` 写入，Run 由 ``command_service.start_initial_run``
+    写入，因此会话一创建就处于「正在澄清」且 ``active_run_id`` 非空，前端
+    订阅 ``active_run_id`` / SSE 即可拿到教练的问题，无需再发一次命令。
+    """
 
     text = (problem_statement or "").strip()
     if not text:
@@ -417,6 +423,9 @@ def create_session_core(
         owner_email=owner_email,
         problem_statement=text,
         now_iso=now_iso,
+    )
+    service("command_service").start_initial_run(
+        db, session=session, owner_email=owner_email, now_iso=now_iso
     )
     view = session_view(db, session)
     if request_id:

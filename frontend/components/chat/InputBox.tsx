@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useSessionStore } from "@/store/sessionStore";
+import { isAuditAnswerPhase } from "@/lib/phaseRouter";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { ROLES } from "@/lib/types";
 import { BrainIcon, VideoIcon, SendIcon, MicIcon, ArrowRightIcon } from "@/components/icons";
@@ -17,6 +18,7 @@ export function InputBox() {
     answerInterview,
     skipCoach,
     phase,
+    v2Phase,
     isStreaming,
     generateCanvas,
     sessionId,
@@ -24,16 +26,26 @@ export function InputBox() {
     setTargetRole,
   } = useSessionStore();
 
+  // v2 阶段以原值为准：旧 phase 会把 auditing 与 audit_completed 混成 interview，
+  // 只有 auditing 才允许回答审计问题（audit_completed 下发送走 brainstorm）
+  const auditing = v2Phase ? isAuditAnswerPhase(v2Phase) : phase === "interview";
+
   const handleSend = () => {
     if (!input.trim() || isStreaming) return;
-    if (phase === "interview") {
-      answerInterview(input.trim());
-    } else if (phase === "coach") {
-      sendToCoach(input.trim());
-    } else {
-      sendMessage(input.trim(), useSessionStore.getState().targetRole);
-    }
-    setInput("");
+    void (async () => {
+      if (auditing) {
+        // 提交失败（无待回答的问题 / 网络错误）时保留输入，便于直接重发
+        const submitted = await answerInterview(input.trim());
+        if (submitted) setInput("");
+        return;
+      }
+      if (!v2Phase && phase === "coach") {
+        sendToCoach(input.trim());
+      } else {
+        sendMessage(input.trim(), useSessionStore.getState().targetRole);
+      }
+      setInput("");
+    })();
   };
 
   const { isRecording, transcript, start, stop, status, error: speechError, isSupported } = useSpeechRecognition();
@@ -73,7 +85,9 @@ export function InputBox() {
             </button>
           </>
         )}
-        {phase === "brainstorm" && (
+        {(v2Phase
+          ? v2Phase === "brainstorming" || v2Phase === "audit_completed"
+          : phase === "brainstorm") && (
           <>
             <button
               onClick={() => void generateCanvas()}
@@ -84,18 +98,24 @@ export function InputBox() {
             </button>
             <span className="text-zinc-500">|</span>
             <button
-              onClick={() => sessionId && router.push(`/session/${sessionId}/interview`)}
+              onClick={() => sessionId && router.push(`/session/${sessionId}/audit`)}
               disabled={isStreaming || !sessionId}
               className="text-xs text-zinc-400 hover:text-cyan-300 transition-colors duration-150 disabled:opacity-40 flex items-center gap-1.5 min-h-[44px] min-w-[44px] justify-center"
             >
-              <VideoIcon size={14} /> 进入 AI 审计通话
+              <VideoIcon size={14} /> 进入 AI 审计
             </button>
           </>
         )}
-        {phase === "interview" && (
+        {auditing && (
           <span className="text-xs text-red-400/70 flex items-center gap-1">
             <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
-            面试模式中 — 回答每个问题以继续
+            审计进行中 — 回答每个问题以继续
+          </span>
+        )}
+        {v2Phase === "audit_completed" && (
+          <span className="text-xs text-emerald-400/70 flex items-center gap-1">
+            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
+            审计已完成 — 可继续讨论或重新审计
           </span>
         )}
       </div>
@@ -131,18 +151,20 @@ export function InputBox() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder={
-              phase === "interview"
-                ? "回答面试官的问题..."
-                : phase === "coach"
-                  ? "回答产品教练的问题，帮助理清你的想法..."
-                  : targetRole !== "all" && targetRoleInfo
-                    ? `向 ${targetRoleInfo.name} 提问...`
-                    : "插话、追问或提出你的想法..."
+              auditing
+                ? "回答审计官的问题..."
+                : v2Phase === "audit_completed"
+                  ? "继续讨论、追问或提出新的想法..."
+                  : phase === "coach"
+                    ? "回答产品教练的问题，帮助理清你的想法..."
+                    : targetRole !== "all" && targetRoleInfo
+                      ? `向 ${targetRoleInfo.name} 提问...`
+                      : "插话、追问或提出你的想法..."
             }
             rows={2}
             aria-label={
-              phase === "interview"
-                ? "回答面试官问题"
+              auditing
+                ? "回答审计官问题"
                 : phase === "coach"
                   ? "回答产品教练的问题"
                   : "输入你的想法或追问"

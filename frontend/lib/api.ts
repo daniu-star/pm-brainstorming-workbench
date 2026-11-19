@@ -130,10 +130,17 @@ export function errorMessage(error: unknown): string {
   return "请求失败，请稍后重试";
 }
 
-/** v2 端点不存在 / 网关不可达：用于 store 的 legacy 降级判断。 */
+/**
+ * v2 端点不存在 / 网关不可达：用于 store 的 legacy 降级判断。
+ *
+ * 只有「端点确实不存在」才允许切到 legacy：404 / 405 / 501。
+ * 410（EVENT_CURSOR_EXPIRED）应走快照恢复、503（FEATURE_NOT_READY 或启动中）
+ * 与 502（网关抖动）应作为可重试错误提示用户——否则一次临时故障会让整个
+ * 会话永久降级到旧写路径（QA 第 5 轮 P1）。
+ */
 export function isEndpointUnavailable(error: unknown): boolean {
   if (isApiError(error)) {
-    return [404, 405, 410, 501, 502, 503].includes(error.status);
+    return [404, 405, 501].includes(error.status);
   }
   // fetch 网络层失败（后端未启动 / CORS）
   return error instanceof TypeError;

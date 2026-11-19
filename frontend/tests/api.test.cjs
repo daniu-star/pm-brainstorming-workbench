@@ -136,11 +136,15 @@ test("isApiError 正确区分 ApiError 与普通 Error", () => {
   assert.equal(isApiError(new Error("x")), false);
 });
 
-test("isEndpointUnavailable 判定 404/501/网络错误（用于 legacy 回落）", () => {
+test("isEndpointUnavailable 只认端点确实不存在（404/405/501）与网络错误", () => {
   assert.equal(isEndpointUnavailable(new ApiError("NOT_FOUND", "x", 404)), true);
   assert.equal(isEndpointUnavailable(new ApiError("INTERNAL", "x", 501)), true);
   assert.equal(isEndpointUnavailable(new TypeError("Failed to fetch")), true);
   assert.equal(isEndpointUnavailable(new ApiError("VERSION_CONFLICT", "x", 409)), false);
+  // 410/502/503 是「暂时不可用」而非「端点缺失」：不得据此永久降级到 legacy
+  assert.equal(isEndpointUnavailable(new ApiError("EVENT_CURSOR_EXPIRED", "x", 410)), false);
+  assert.equal(isEndpointUnavailable(new ApiError("INTERNAL", "x", 502)), false);
+  assert.equal(isEndpointUnavailable(new ApiError("FEATURE_NOT_READY", "x", 503)), false);
 });
 
 test("newRequestId 返回非空且唯一", () => {

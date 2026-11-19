@@ -38,8 +38,8 @@ def create_session(req: CreateSessionRequest, request: Request):
             now_iso=C.utc_now_iso(),
         )
         session = common.require_owned_session(db, view.id, owner_email)
-        # 与旧实现保持一致：新建会话时 messages 为空。
-        return common.legacy_session_payload(db, session, messages=[])
+        # 首条 user 消息在创建事务内已落库，旧接口直接返回真实消息列表。
+        return common.legacy_session_payload(db, session)
 
 
 @router.get("/{session_id}")

@@ -201,6 +201,8 @@ class RunRow(Base):
     audit_id = Column(String(64), nullable=True)
     base_audit_version = Column(Integer, nullable=True)
     retry_audit_version = Column(Integer, nullable=True)
+    #: 重试子 Run 只调度这些 logical_key（retry_run 从父 Run 的失败/未完成步骤复制）。
+    failed_steps_json = Column(Text, nullable=False, default="[]", server_default="[]")
     question_id = Column(String(64), nullable=True)
     continuation_token = Column(String(64), nullable=True)
     error_code = Column(String(64), nullable=True)
@@ -573,7 +575,26 @@ def initialize_database(engine: Engine | None = None, *, drop_first: bool = Fals
     if drop_first:
         Base.metadata.drop_all(target)
     Base.metadata.create_all(target)
+    _additive_schema_upgrade(target)
     return target
+
+
+def _additive_schema_upgrade(engine: Engine) -> None:
+    """给已存在的 SQLite 库补“新增列”（无 Alembic 的本地最小升级路径）。
+
+    只做向后兼容的加列：旧库（backend/data/app.db）在 ``create_all`` 之后不会自动
+    获得新列，缺列会让 ORM 的 INSERT/SELECT 直接失败。这里按列名探测后 ``ALTER``，
+    可重复执行；非 SQLite 方言交给正式迁移，不做任何写入。
+    """
+
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.begin() as conn:
+        columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(runs)")}
+        if "failed_steps_json" not in columns:
+            conn.exec_driver_sql(
+                "ALTER TABLE runs ADD COLUMN failed_steps_json TEXT NOT NULL DEFAULT '[]'"
+            )
 
 
 def dispose_engine() -> None:

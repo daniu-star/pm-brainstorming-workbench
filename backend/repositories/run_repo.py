@@ -71,6 +71,7 @@ def create_run(
     deadline_at: int | None = None,
     queue_deadline_at: int | None = None,
     parent_run_id: str | None = None,
+    failed_steps: list[str] | None = None,
     audit_id: str | None = None,
     base_audit_version: int | None = None,
     question_id: str | None = None,
@@ -95,6 +96,7 @@ def create_run(
         deadline_at=int(deadline_at) if deadline_at is not None else None,
         queue_deadline_at=int(queue_deadline_at) if queue_deadline_at is not None else None,
         parent_run_id=parent_run_id,
+        failed_steps_json=canonical_json(list(failed_steps or [])),
         audit_id=audit_id,
         base_audit_version=base_audit_version,
         question_id=question_id,
@@ -257,6 +259,27 @@ def renew_lease(db, run: RunRow, *, worker_id: str, lease_epoch: int, now_epoch:
     )
     db.flush()
     return result.rowcount == 1
+
+
+def save_usage(
+    db,
+    run: RunRow,
+    *,
+    usage: dict[str, Any],
+    worker_id: str,
+    lease_epoch: int,
+) -> bool:
+    """持久化预算账本（不改 Run 状态）；租约不符时返回 False。
+
+    执行器在每个步骤落库后调用，使租约接管/重试后的 ``BudgetTracker``
+    能从上一 epoch 的计数继续累计（单 Run 上游调用上限跨进程成立）。
+    """
+
+    if run.lease_owner != worker_id or int(run.lease_epoch or 0) != int(lease_epoch):
+        return False
+    run.usage_json = canonical_json(usage or {})
+    db.flush()
+    return True
 
 
 def release_run(

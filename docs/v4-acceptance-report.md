@@ -1,7 +1,7 @@
 # PM Brainstorm V4.0 验收报告（M1–M3 交付）
 
 - 分支：`feat/prd-v4-m1`（基于 `ad77bd2`）
-- 提交：`5915020`（基础设施与领域契约）、`f7b4d59`（原子幂等/原子领取/跨进程验收）、`e252410`（检索接入/前端 e2e/README）、`34254fc`（M2 专家收敛 + M3 审计闭环 + 发布件 + 验收报告）、`c0ac89a`（契约同步）
+- 提交：`5915020`（基础设施与领域契约）、`f7b4d59`（原子幂等/原子领取/跨进程验收）、`e252410`（检索接入/前端 e2e/README）、`34254fc`（M2 专家收敛 + M3 审计闭环 + 发布件 + 验收报告）、`c0ac89a`（契约同步）、`f4b8f8d`（Windows 一键启动：start.bat/stop.bat）；QA Loop 收口改动见 §7（提交号以 `git log -1` 为准）
 - 报告日期：2026-11-19
 - PRD：`docs/superpowers/specs/2026-11-18-pm-brainstorm-agent-architecture-prd-v4.md`（V4.0，807 行）
 - 本报告**只记录真实执行过的命令与结果**；未实现项标「未实现」，不预填通过、不改期望值迁就现状。
@@ -14,10 +14,10 @@
 | WP-01 | 领域协议 | 完成 | `backend/domain/{contracts,state_machine,errors}.py`（39+30 用例） |
 | WP-02 | 存储与迁移 | 完成 | `backend/repositories/{database,session_repo,run_repo,audit_repo,auth_repo}.py`、`backend/migrations/import_json_sessions.py`（16/19/11/14/12 用例） |
 | WP-03 | 持久执行 | 完成 | `backend/workflows/runner.py`、`backend/workers/run_worker.py`、租约/预算/终结/恢复（17+13 用例） |
-| WP-04 | 前端与 v1 兼容 | 完成 | `backend/api/v2/*`（21 路由）、`backend/api/sse.py`、旧 4 路由 adapter、`frontend/lib|store|components`（21+7+87 用例） |
+| WP-04 | 前端与 v1 兼容 | 完成 | `backend/api/v2/*`（21 路由）、`backend/api/sse.py`、旧 4 路由 adapter、`frontend/lib|store|components`（23+7+123 用例） |
 | WP-05 | 教练与上下文 | 完成 | `backend/services/{context_builder,canvas_projector}.py`、`backend/core/role_prompts.py`、`backend/workflows/coach.py`（25+23+25 用例） |
 | WP-06 | 检索与证据 | 完成 | `backend/rag/{contracts,retriever}.py`（47 用例）+ 已接入 `context_builder`（5 用例，背景知识标「不可引用」） |
-| WP-07 | 专家收敛 | 完成（除 synthesis/复核） | `backend/services/reducer.py`（34）、`backend/workflows/brainstorm.py`（23）、runner 集成（7） |
+| WP-07 | 专家收敛 | 完成 | `backend/services/reducer.py`（34）、`backend/workflows/brainstorm.py`（23）、`backend/workflows/synthesis.py`（696 行；`MAX_REPAIR_ROUNDS=1`/`MAX_REVIEWERS=2`，8 用例）、runner 集成（7） |
 | WP-08 | 画布结论 | 完成 | 确定性投影 + Reducer 归并 + 前端 `CanvasPanel`（23 用例） |
 | WP-09 | 审计闭环 | 完成 | `backend/workflows/audit.py`（28 用例）、前端审计页（19 用例）、控制意图与 closing Run 链路 |
 | WP-10 | 发布闭环 | 完成（除浏览器自动化） | `.github/workflows/ci.yml`、`scripts/v4_migration_drill.py`（演练实跑 DRILL_OK）、`/health/detail` 增加 Worker 诊断、`frontend/tests/e2e` |
@@ -25,9 +25,9 @@
 ## 2. 实际执行的验证命令与结果
 
 ```bash
-# 后端全量（496 用例，含 M2/M3）
+# 后端全量（512 用例，含 M2/M3 + QA Loop 收口新增用例）
 cd backend && ../.venv/Scripts/python.exe -m unittest discover -s tests
-# → Ran 496 tests / OK / exit 0（含 tests/test_audit_runner.py 的 3 个真 runner 审计用例）
+# → Ran 512 tests / OK / exit 0（含 tests/test_audit_runner.py 的 3 个真 runner 审计用例）
 
 # 跨进程（真 subprocess + 共享 SQLite）
 cd backend && ../.venv/Scripts/python.exe -m unittest tests.test_run_repo tests.test_cross_process
@@ -35,7 +35,7 @@ cd backend && ../.venv/Scripts/python.exe -m unittest tests.test_run_repo tests.
 
 # 前端（本机 registry.npmjs.org 不可达，用既有 node_modules）
 cd frontend && npx tsc --noEmit      # exit 0
-cd frontend && npm test              # 87/87 pass（tsc -p tsconfig.test.json + node --test）
+cd frontend && npm test              # 123/123 pass（tsc -p tsconfig.test.json + node --test）
 cd frontend && npm run build         # exit 0，7 条路由（含 /session/[id]/audit 8.11 kB）
 cd frontend && npm run test:e2e      # 1 pass（真起 uvicorn，401/404 语义断言）
 
@@ -71,13 +71,13 @@ cd frontend && npm run test:e2e      # 1 pass（真起 uvicorn，401/404 语义�
 | AC-13 | 通过 | `frontend/tests/store.test.cjs`（切换会话/generation 守卫）；`test_api_v2.py::test_sse_disconnect_does_not_cancel_run` | 切 A→B 取消订阅但不取消服务器任务 |
 | AC-14 | 部分通过 | `test_brainstorm.py::test_repeated_invalid_output_fails_role_but_run_partial`；`test_brainstorm_runner.py::test_invalid_role_output_marks_partial` | 一专家失败不中止、run 标 partial_succeeded；**重试仍是整 Run 重放，未做「只调失败专家」** |
 | AC-15 | 通过 | `test_reducer.py::test_merge_is_independent_of_arrival_order`；`test_brainstorm_runner.py`（4 角色各自 `build_context(product_version=base)`，首轮互不可见） | 结果不依赖完成顺序、同基准产品版本 |
-| AC-16 | 未实现 | — | 主持人 synthesis/冲突收敛与「最多 1 轮 + 2 专家复核」尚未实现；当前 Reducer 直接归并候选并保留分歧，不做冲突复核 |
+| AC-16 | 通过 | `backend/workflows/synthesis.py`（`MAX_REPAIR_ROUNDS=1`、`MAX_REVIEWERS=2`、冲突上限 2、只看冲突相关对方结论、degraded 回退）；`backend/tests/test_synthesis.py`(8)：归并/复核上限/复核专家不可再开复核/降级；`workflows/runner.py` 注册 `TaskKind.synthesis`；brainstorm 成功后由 `command_service._enqueue_follow_up` 同事务排入子 Run | 最多 1 轮修复 + 至多 2 位专家复核，冲突与分歧进 `SynthesisResult`；预算不足时降级并标注 |
 | AC-17 | 通过 | `test_context_builder.py::test_protected_content_is_never_dropped_by_budget`；`test_coach.py::test_confirmed_field_is_never_overwritten_by_model` | 受保护字段不因预算丢弃；模型不可改写已确认项 |
 | AC-18 | 通过 | `test_canvas_projector.py::test_two_calls_are_byte_identical`、`test_projection_does_not_mutate_state`；`test_reducer.py::test_merge_is_independent_of_arrival_order`；`frontend/tests/store.test.cjs`（acceptProductVersion 单调） | 投影纯函数、零模型调用、旧版本不覆盖；「待合并建议」UI 未单独做（角色结果仅在合并后进画布） |
 | AC-19 | 部分通过 | `test_canvas_projector.py::test_branch_order_follows_declared_order`、`test_every_node_carries_refs_and_status`；`components/canvas/CanvasPanel.tsx` | 节点带 claim/option/decision/experiment 引用与状态；**8 分支展开未做浏览器 e2e** |
 | AC-20 | 部分通过 | `test_retriever.py`（零相关→[]、同源去重、加权）；`test_context_builder_rag.py`（命中注入标「不可引用/未验证」、无命中不注入） | 检索已接入且不编造引用；**「模型是否编造数字」属模型行为，未做端到端人工标注** |
 | AC-21 | 通过 | `test_audit_workflow.py::test_open_writes_first_question_and_activates_audit`、`test_open_uses_planned_dimension_when_model_disagrees`；`test_audit_runner.py::test_audit_open_via_runner_commits_question_and_activates_audit`；`.tmp/e2e_audit.py` | 开场输入锚定 ProductState，问题含维度与依据 |
-| AC-22 | 通过 | `test_audit_workflow.py::test_open_is_idempotent_when_question_already_exists`；`test_api_v2.py`（GET /audits 带 questions/active_question_id）；`test_audit_runner.py`（answer 后 active_question_id 指向第 2 问）；前端 `hydrateAuditById` | 同一 audit_id/问题可恢复，不重建、不二次开场 |
+| AC-22 | 通过 | `test_audit_workflow.py::test_open_is_idempotent_when_question_already_exists`；`test_api_v2.py::AuditEndpointTests`（真实 `GET /api/v2/audits/{id}` 返回 questions/active_question_id；他会话 403 且不泄漏 questions）；`test_audit_runner.py`（answer 后 active_question_id 指向第 2 问）；前端 `hydrateAuditById` | 同一 audit_id/问题可恢复，不重建、不二次开场 |
 | AC-23 | 部分通过 | `test_audit_workflow.py::test_answer_ignored_when_audit_not_active`、`test_answer_rejects_unknown_question`；`test_command_service.py::test_answer_audit_requires_open_question` | 单进程语义已覆盖；**两进程同时回答同一问题未做真并发用例**（幂等框架层面由 AC-06 覆盖） |
 | AC-24 | 通过 | `test_audit_workflow.py::test_open_uses_planned_dimension_when_model_disagrees`、`test_plan_next_dimension_prefers_uncovered_then_gaps`、`test_normalize_assessment_downgrades_supported_without_evidence` | 维度由问题指定与规划器决定，不按回答关键词归类；supported 必须有证据否则降级 |
 | AC-25 | 通过 | `test_audit_workflow.py::test_answer_at_hard_limit_closes_and_never_asks_nineteenth`、`test_answer_at_question_target_closes_audit`；`test_audit_runner.py::test_closing_run_generates_model_report_and_completes_audit`；`.tmp/e2e_audit.py`（完成后 409 AUDIT_CLOSED） | 第 18 问后直接 closing、无第 19 问、完成后拒绝继续回答 |
@@ -101,7 +101,7 @@ cd frontend && npm run test:e2e      # 1 pass（真起 uvicorn，401/404 语义�
 
 ## 4. 已知偏差（如实列出，含影响与最小调整方案）
 
-1. **主持人 synthesis/复核未实现（AC-16）**：Reducer 直接按固定 `role_order` 归并候选并保留分歧，没有 `SynthesisResult`、冲突收敛与「最多 1 轮 + 2 专家复核」。影响：FR-04D 的复合结论质量与 AC-16。最小调整：新增 `workflows/synthesis.py`，输入为角色结果 + 冲突候选，输出 `SynthesisResult` 并注册到 `runner.WORKFLOWS`。
+1. **主持人 synthesis/复核（AC-16）— 已解决（QA Loop 第 1 轮修复）**：新增 `backend/workflows/synthesis.py`（696 行）实现 `SynthesisResult`、冲突上限 2、「最多 1 轮修复 + 至多 2 位专家复核 + 复核专家不可再开复核」、预算不足 degraded 回退；brainstorm 成功后由 `command_service._enqueue_follow_up` 在同一事务排入 `TaskKind.synthesis` 子 Run；`backend/tests/test_synthesis.py` 8 例覆盖。
 2. **重试粒度是整 Run（AC-14）**：`retry_run` 建子 Run 重放整个 action；已成功步骤会被跳过（不重复调模型），但失败专家的上下文仍按当前产品版本重建。影响：重试成本略高于「只调失败专家」。最小调整：在子 Run 上记录失败 step 列表，runner 只调度这些 logical_key。
 3. **越权 evidence_id 只做格式/长度校验（AC-05）**：`RoleResult` 校验引用数量与形状，未逐条回查 evidence 表归属该会话。影响：模型可引用不存在的 ID（渲染层会显示为缺失）。最小调整：归并前用 `session_repo.get_evidence` 过滤未知/他会话引用并记 warning。
 4. **前端测试用 `node --test` 而非 vitest/RTL**：本机 `registry.npmjs.org` 不可达，无法安装新依赖。影响：无组件渲染测试，AC-01/19/31/33 只能到 store/逻辑层。最小调整：网络恢复后补 vitest + RTL。
@@ -127,6 +127,15 @@ cd frontend && npm run test:e2e      # 1 pass（真起 uvicorn，401/404 语义�
 ## 6. 结论
 
 - M1（WP-00～05）、M2（WP-06～08）、M3（WP-09）与 WP-10 的发布件（CI、迁移演练、健康诊断、前端 e2e 冒烟）均已交付。
-- 真实执行结果：后端 **496 用例 OK**、前端 **87 用例 pass** + `tsc` 0 错 + `build` 成功、`test:e2e` 1 pass、跨进程 4 用例 OK、真 Worker 审计端到端 **30 项 ALL PASS**、迁移演练 **DRILL_OK**。
-- AC 统计（按 §3 表）：**通过 25 条**（AC-02/03/04/06/07/08/11/12/13/15/17/18/21/22/24/25/26/27/28/29/30/32/35/37/38）、**部分通过 16 条**（AC-01/05/09/10/14/19/20/23/31/33/34/36/39/40/41/42）、**未实现 1 条**（AC-16）。
-- 剩余差距集中在：主持人 synthesis/复核（AC-16）、重试粒度（AC-14）、真实浏览器与崩溃注入类验证（AC-01/09/10/19/31/33/34）、软删正文清理与事件压缩作业（AC-39）、人工更正后重生成报告（AC-40）。每条均给出最小调整方案，未通过修改期望值或预填结果取得任何「通过」。
+- 真实执行结果：后端 **512 用例 OK**、前端 **123 用例 pass** + `tsc` 0 错 + `build` 成功、`test:e2e` 1 pass、跨进程 4 用例 OK、真 Worker 审计端到端 **30 项 ALL PASS**、迁移演练 **DRILL_OK**。
+- AC 统计（按 §3 表）：**通过 26 条**（AC-02/03/04/06/07/08/11/12/13/15/16/17/18/21/22/24/25/26/27/28/29/30/32/35/37/38）、**部分通过 15 条**（AC-01/05/09/10/14/19/20/23/31/33/34/36/39/40/41/42）、**未实现 0 条**。
+- 剩余差距集中在：重试粒度（AC-14）、真实浏览器与崩溃注入类验证（AC-01/09/10/19/31/33/34）、软删正文清理与事件压缩作业（AC-39）、人工更正后重生成报告（AC-40）。每条均给出最小调整方案，未通过修改期望值或预填结果取得任何「通过」。
+
+## 7. QA Loop Engineering 首次运行（用户要求，2026-11-19）
+
+- 方法学与评分卡：`docs/qa-loop-engineering.md`；可复用脚本：`scripts/qa-loop.workflow.js`；完整逐轮记录：`docs/qa-loop-runs/README.md` 与 `docs/qa-loop-runs/round-1.md` … `round-5.md`。
+- 执行方式：workflow 编排（37 个子 agent），每轮「四组并行审计 → 评测组打分 → 客户端/服务端并行修复 → 测试组复测」，写权限按 `frontend/**` 与 `backend/**` 隔离，评测组须先真跑命令再打分（未修 P0 上限 70、≥3 条 P1 上限 85）。
+- 逐轮结果（真实分值）：**R1 62 → R2 64 → R3 71 → R4 67 → R5 72**，5 轮均未达 95 收敛线；R4 的结构化 payload 未落盘，仅保留 verdict 片段（无维度明细，如实标注）。
+- 主要修复：AC-16 synthesis/复核（新增 `workflows/synthesis.py`）、AC-01 会话创建即排首个 clarify Run（`start_initial_run`）、前端 `phaseRouter`/审计页交互/「重新审计」入口、跨会话画布与版本串用、无限重连、乐观消息被剥离、BriefCard 草稿被清空、审计错误被吞。
+- 收口后另修三项 P1：`backend/db/session_store.py` 原子写在 Windows 下的 `WinError 5` 丢消息（mkstemp + 有界重试）、`frontend/lib/api.ts` 把 410/502/503 误判为端点缺失导致永久 legacyMode、`sessionStore.refreshCanvas` 的 `product_version=0`。
+- 结论：**达到「可交付」但未达「95 分收敛」**；未闭合项与最小调整方案见 `docs/qa-loop-runs/README.md` §未闭合项。

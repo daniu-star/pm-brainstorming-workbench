@@ -26,6 +26,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -54,7 +55,7 @@ from domain.contracts import (  # noqa: E402
     new_id,
     utc_now_iso,
 )
-from domain.errors import ErrorCode  # noqa: E402
+from domain.errors import AppError, ErrorCode  # noqa: E402
 from repositories import audit_repo, database, run_repo, session_repo  # noqa: E402
 from repositories.database import (  # noqa: E402
     AuditAssessmentRevisionRow,
@@ -1287,6 +1288,60 @@ class AuditReportTests(AuditWorkflowTestCase):
         audit = self.reload_audit(audit_id)
         self.assertEqual(audit.status, AuditStatus.completed.value)
         self.assertEqual(audit.end_reason, EndReason.failed.value)
+
+    async def test_report_failure_marks_closing_failure_and_recovers(self) -> None:
+        """closing 阶段报告失败：落 failed + 错误码、保留草稿，再 start_audit 可恢复。"""
+
+        audit_id, _ = self.seed_closing_audit()
+        run_id, lease_epoch = self.create_run(action="end_audit", audit_id=audit_id)
+        llm = FakeLLM({audit_workflow.PURPOSE_REPORT: [_report_payload()]})
+        ctx = self.make_ctx(run_id, llm=llm, task_kind=C.TaskKind.audit_report)
+
+        async def _boom(*_args: Any, **_kwargs: Any) -> Any:
+            raise AppError(ErrorCode.MODEL_OUTPUT_INVALID, "报告生成失败")
+
+        with mock.patch.object(audit_workflow, "_generate_report", new=_boom):
+            outcome = await audit_workflow.run_audit_report(ctx)
+
+        self.assertEqual(outcome.status, RunStatus.failed)
+        self.assertEqual(outcome.error_code, ErrorCode.MODEL_OUTPUT_INVALID)
+        self.assertEqual(outcome.session_phase, SessionPhase.auditing)
+        self.assert_no_product_state_change(outcome)
+        self.commit_outcome(run_id, lease_epoch, outcome)
+
+        audit = self.reload_audit(audit_id)
+        self.assertEqual(audit.status, AuditStatus.failed.value, "closing 失败应落 failed")
+        self.assertEqual(audit.end_reason, ErrorCode.MODEL_OUTPUT_INVALID)
+        self.assertEqual(int(audit.audit_version), 1, "失败不得 bump audit_version")
+        self.assertEqual(
+            self.report_revisions(audit_id), [], "失败不得写报告修订"
+        )
+        self.assertEqual(self.session_row().phase, SessionPhase.auditing.value)
+
+        # 再次 start_audit：应返回「待完成报告」回执，而不是新建审计、重置开场。
+        session_id = self.session_row().id
+        with database.session_scope() as db:
+            session = session_repo.get_session(db, session_id)
+            self.assertIsNotNone(session)
+            command = C.CommandRequest(
+                request_id=new_id(),
+                action=C.Action.start_audit,
+                payload={},
+                expected_session_version=int(session.session_version),
+            )
+            recovery = command_service.submit_command(
+                db,
+                owner_email=OWNER,
+                session_id=session_id,
+                command=command,
+            )
+        self.assertEqual(recovery.audit_id, audit_id)
+        self.assertIs(recovery.reused, True)
+        self.assertIs(recovery.status, AuditStatus.failed)
+        self.assertEqual(recovery.latest_run_id, run_id)
+        self.assertEqual(
+            self.reload_audit(audit_id).status, AuditStatus.failed.value, "不得重置开场"
+        )
 
     async def test_stale_audit_version_skips_writes(self) -> None:
         audit_id, _ = self.seed_closing_audit()

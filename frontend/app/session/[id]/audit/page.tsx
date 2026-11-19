@@ -7,6 +7,8 @@ import { useSessionStore } from "@/store/sessionStore";
 import { isApiError } from "@/lib/api";
 import type { CommandReceipt, StartAuditRecovery } from "@/lib/contracts.generated";
 import {
+  AUDIT_LOAD_ERROR_TEXT,
+  AUDIT_LOADING_TEXT,
   AUDIT_QUESTION_HARD_LIMIT,
   AUDIT_STATUS_CLASSES,
   ASSESSMENT_CLASSES,
@@ -17,7 +19,10 @@ import {
   auditErrorText,
   auditStatusLabel,
   canControlAudit,
+  canRetryContinuation,
   canSubmitAnswer,
+  CLOSING_POLL_DELAYS_MS,
+  CONTINUATION_NOTICE_TEXT,
   controlStatusHint,
   endReasonLabel,
   isAuditFinished,
@@ -25,9 +30,13 @@ import {
   pickCurrentQuestion,
   questionOrdinalText,
   resolveAnswerText,
+  resolveAuditEntryState,
+  resolveClosingRecoveryState,
+  resolveClosingRetryTarget,
   validateAnswerInput,
 } from "@/lib/auditView";
 import type { NormalizedAudit, NormalizedQuestion } from "@/lib/auditView";
+import { canStartAuditPhase } from "@/lib/phaseRouter";
 import { BrainIcon, ShieldIcon } from "@/components/icons";
 
 /** 200 的 StartAuditRecovery 与 202 的 RunReceipt / ControlReceipt 判别 */
@@ -69,7 +78,15 @@ function StringList({ items }: { items: string[] }) {
   );
 }
 
-function ReportView({ audit }: { audit: NormalizedAudit }) {
+function ReportView({
+  audit,
+  onRestart,
+  restarting = false,
+}: {
+  audit: NormalizedAudit;
+  onRestart?: () => void;
+  restarting?: boolean;
+}) {
   const report = audit.report;
   const cancelled = audit.status === "cancelled";
 
@@ -97,6 +114,20 @@ function ReportView({ audit }: { audit: NormalizedAudit }) {
           ) : null}
         </div>
       )}
+
+      {onRestart ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={onRestart}
+            disabled={restarting}
+            className="min-h-[36px] rounded-lg border border-brand-500/40 bg-brand-600/20 px-3 text-xs font-medium text-brand-300 transition-colors hover:bg-brand-600/30 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {restarting ? "启动中…" : "重新审计"}
+          </button>
+          <span className="text-[11px] text-zinc-500">基于当前产品版本重新发起一轮审计</span>
+        </div>
+      ) : null}
 
       {!report ? (
         <Section title="审计报告">
@@ -203,14 +234,55 @@ function QuestionHistory({
   );
 }
 
+/** pending_continuation：上一问处理失败，提供「重试继续 / 结束审计」而不是空等 */
+function ContinuationNotice({
+  busy,
+  onRetry,
+  onEnd,
+}: {
+  busy: boolean;
+  onRetry: () => void;
+  onEnd: () => void;
+}) {
+  return (
+    <Section title="当前问题">
+      <div className="text-sm leading-relaxed text-amber-300">
+        {CONTINUATION_NOTICE_TEXT}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={onRetry}
+          disabled={busy}
+          className="min-h-[40px] rounded-lg border border-amber-500/40 bg-amber-500/15 px-3 text-xs font-medium text-amber-300 hover:bg-amber-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          重试继续
+        </button>
+        <button
+          type="button"
+          onClick={onEnd}
+          disabled={busy}
+          className="min-h-[40px] rounded-lg border border-zinc-600/60 px-3 text-xs font-medium text-zinc-200 hover:bg-zinc-700/30 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          结束审计
+        </button>
+      </div>
+    </Section>
+  );
+}
+
 function CurrentQuestionCard({
   audit,
   submitting,
   onSubmit,
+  onRetry,
+  onEnd,
 }: {
   audit: NormalizedAudit;
   submitting: boolean;
   onSubmit: (value: string) => Promise<void>;
+  onRetry: () => void;
+  onEnd: () => void;
 }) {
   const question: NormalizedQuestion | null = pickCurrentQuestion(audit);
   const [text, setText] = useState("");
@@ -238,6 +310,9 @@ function CurrentQuestionCard({
   };
 
   if (!question) {
+    if (canRetryContinuation(audit, false)) {
+      return <ContinuationNotice busy={submitting} onRetry={onRetry} onEnd={onEnd} />;
+    }
     return (
       <Section title="当前问题">
         <div className="text-sm text-zinc-500">
@@ -307,6 +382,7 @@ function AuditPageContent() {
   const sessionId = useSessionStore((state) => state.currentSessionId);
   const sessionView = useSessionStore((state) => state.sessionView);
   const audits = useSessionStore((state) => state.audits);
+  const auditErrors = useSessionStore((state) => state.auditErrors);
   const messagesBySession = useSessionStore((state) => state.messagesBySession);
   const productVersion = useSessionStore((state) => state.productVersion);
   const sessionLoading = useSessionStore((state) => state.sessionLoading);
@@ -316,12 +392,19 @@ function AuditPageContent() {
   const sendCommand = useSessionStore((state) => state.sendCommand);
   const hydrateAuditById = useSessionStore((state) => state.hydrateAuditById);
   const reloadSession = useSessionStore((state) => state.reloadSession);
+  const v2Phase = useSessionStore((state) => state.v2Phase);
+  const lastFailedRunId = useSessionStore((state) => state.lastFailedRunId);
+  const retryFailedRun = useSessionStore((state) => state.retryFailedRun);
 
   const [starting, setStarting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  // 已提交结束/取消请求但没有可订阅的收尾 Run：靠轮询等后端把审计推进到终态
+  const [closeRequested, setCloseRequested] = useState(false);
+  // closing 退避轮询耗尽（60s 封顶）后置 true：渲染「重试生成报告」恢复入口
+  const [closingPollExhausted, setClosingPollExhausted] = useState(false);
 
   // 1) 进入页面先确保会话已加载（直接访问 /session/{id}/audit 时 store 可能是空的）
   useEffect(() => {
@@ -332,22 +415,48 @@ function AuditPageContent() {
 
   // 2) 有审计 id 就拉快照：?audit=<id> 优先，否则用会话上的 current_audit_id
   const auditId = auditParam ?? sessionView?.current_audit_id ?? null;
+  const [auditLoading, setAuditLoading] = useState(false);
+  // hydrateAuditById 把握取失败写进 auditErrors 并返回 false：这里只负责收尾 loading
+  const reloadAudit = useCallback(
+    async (targetId: string): Promise<boolean> => {
+      setAuditLoading(true);
+      try {
+        return await hydrateAuditById(targetId);
+      } finally {
+        setAuditLoading(false);
+      }
+    },
+    [hydrateAuditById]
+  );
   useEffect(() => {
     if (!auditId) return;
-    void hydrateAuditById(auditId);
-  }, [auditId, hydrateAuditById]);
+    void reloadAudit(auditId);
+  }, [auditId, reloadAudit]);
 
   const audit = useMemo(
     () => (auditId ? normalizeAudit(audits[auditId]) : null),
     [auditId, audits]
   );
+  const auditError = auditId ? auditErrors[auditId] ?? null : null;
 
   const sessionVersion = sessionView?.session_version ?? null;
   const expectedProductVersion = productVersion || sessionView?.current_product_version || 1;
   const currentMessageViews = sessionId ? messagesBySession[sessionId] ?? [] : [];
   const finished = isAuditFinished(audit);
-  // legacy 路由没有审计能力（旧 interview 流程），不提供「开始审计」
-  const canStart = !audit && !starting && !sessionLoading && !legacyMode;
+  // 只有 brainstorming / audit_completed 允许发起（重新）审计（state_machine.py:43）
+  const canRestart = finished && Boolean(v2Phase && canStartAuditPhase(v2Phase));
+  // 读取失败 ≠ 没有审计：非 404 的失败只渲染错误态 + 重试，禁止渲染成「开始审计」
+  const entryState = resolveAuditEntryState({
+    auditId,
+    hasAudit: Boolean(audit),
+    auditError,
+    auditLoading,
+    sessionLoading,
+    legacyMode,
+    starting,
+    v2Phase,
+  });
+  const canStart = entryState.canStart;
 
   const handleStartAudit = useCallback(async () => {
     setStarting(true);
@@ -365,6 +474,8 @@ function AuditPageContent() {
         await hydrateAuditById(receipt.audit_id);
       } else {
         setActionNotice("审计已启动");
+        // 重新审计 / 首次审计：立即拉新一轮审计快照（不必等轮询）
+        if (receipt.audit_id) await hydrateAuditById(receipt.audit_id);
       }
     } catch (error) {
       setActionError(
@@ -416,6 +527,8 @@ function AuditPageContent() {
           { expectedSessionVersion: sessionVersion }
         );
         const controlStatus = "control_id" in receipt ? receipt.status : null;
+        // 只有在没有收尾 Run 可订阅时才需要页面轮询兜底
+        if ("control_id" in receipt && !receipt.related_run_id) setCloseRequested(true);
         setActionNotice(
           `${action === "end_audit" ? "结束审计请求" : "取消审计请求"}：${controlStatusHint(
             controlStatus
@@ -434,9 +547,86 @@ function AuditPageContent() {
     [audit, sendCommand, sessionVersion, hydrateAuditById]
   );
 
+  // 刷新失败时也走同一错误态（store 已把失败写进 auditErrors）
   const handleRefresh = useCallback(async () => {
-    if (audit) await hydrateAuditById(audit.id);
-  }, [audit, hydrateAuditById]);
+    const targetId = audit?.id ?? auditId;
+    if (!targetId) return;
+    setActionError(null);
+    const ok = await reloadAudit(targetId);
+    // 只有 store 里确实记了读取失败才报错（切会话导致的守卫失效不算失败）
+    if (!ok && useSessionStore.getState().auditErrors[targetId]) {
+      setActionError(AUDIT_LOAD_ERROR_TEXT);
+    }
+  }, [audit, auditId, reloadAudit]);
+
+  // pending_continuation：重试上一问失败的 Run（store 会订阅新 Run 并回执）
+  const handleRetryContinuation = useCallback(() => {
+    if (!lastFailedRunId) {
+      setActionError("没有可重试的任务，请点「刷新」重新读取审计状态。");
+      return;
+    }
+    void retryFailedRun(lastFailedRunId);
+  }, [lastFailedRunId, retryFailedRun]);
+
+  const handleEndAudit = useCallback(() => {
+    void handleControl("end_audit");
+  }, [handleControl]);
+
+  // closing 超时/失败后的「重试生成报告」：有 failed run 就重试该 run，否则重拉快照
+  const handleRetryReport = useCallback(() => {
+    setActionError(null);
+    if (
+      resolveClosingRetryTarget(lastFailedRunId) === "retry_failed_run" &&
+      lastFailedRunId
+    ) {
+      void retryFailedRun(lastFailedRunId);
+      return;
+    }
+    void handleRefresh();
+  }, [lastFailedRunId, retryFailedRun, handleRefresh]);
+
+  // 审计收尾（closing）但没有可订阅的收尾 Run 时，按 1s/2s/4s… 退避轮询快照（≤60s）。
+  // 依赖 id/status 而非整个 audit 对象，避免每次轮询结果都重置退避序列。
+  const auditIdentity = audit?.id ?? null;
+  const auditStatus = audit?.status ?? null;
+  const auditFinished = isAuditFinished(audit);
+  // 阶段/审计对象变化后重新计时，避免上一轮的超时状态污染新状态
+  useEffect(() => {
+    setClosingPollExhausted(false);
+  }, [auditIdentity, auditStatus]);
+  useEffect(() => {
+    const waitingClose = auditStatus === "closing" || (closeRequested && !auditFinished);
+    if (!auditIdentity || !waitingClose || isStreaming) return;
+    let cancelled = false;
+    let index = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const tick = () => {
+      if (cancelled) return;
+      if (index >= CLOSING_POLL_DELAYS_MS.length) {
+        setClosingPollExhausted(true);
+        return;
+      }
+      const delay = CLOSING_POLL_DELAYS_MS[index];
+      index += 1;
+      timer = setTimeout(() => {
+        if (cancelled) return;
+        void hydrateAuditById(auditIdentity).finally(() => {
+          if (!cancelled) tick();
+        });
+      }, delay);
+    };
+    tick();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [auditIdentity, auditStatus, auditFinished, closeRequested, isStreaming, hydrateAuditById]);
+
+  const closingRecovery = resolveClosingRecoveryState({
+    status: auditStatus,
+    pollExhausted: closingPollExhausted,
+    hasFailedRun: Boolean(lastFailedRunId),
+  });
 
   // VERSION_CONFLICT 等需要重新同步：提示 + 重载会话与审计快照
   useEffect(() => {
@@ -492,46 +682,115 @@ function AuditPageContent() {
         ) : null}
 
         {!audit ? (
-          <Section title="开始审计">
-            <div className="flex items-start gap-3">
-              <BrainIcon className="mt-0.5 h-8 w-8 shrink-0 text-brand-300/70" />
-              <div className="min-w-0 flex-1 space-y-2">
-                <p className="text-sm leading-relaxed text-zinc-300">
-                  审计会围绕六个维度连续提问（最多 {AUDIT_QUESTION_HARD_LIMIT} 问），
-                  并在结束后生成带论据与缺口的评估报告。审计基于当前产品状态（v
-                  {expectedProductVersion}）进行。
+          entryState.showLoadError ? (
+            <Section title="审计信息">
+              <div className="space-y-2">
+                <p className="text-sm text-red-400">
+                  {AUDIT_LOAD_ERROR_TEXT}
+                  {entryState.loadErrorText ? `：${entryState.loadErrorText}` : ""}
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     onClick={() => {
-                      void handleStartAudit();
+                      if (auditId) void reloadAudit(auditId);
                     }}
-                    disabled={!canStart}
-                    className="min-h-[44px] rounded-lg border border-brand-500/40 bg-brand-600/20 px-4 text-sm font-medium text-brand-300 transition-colors hover:bg-brand-600/30 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={auditLoading}
+                    className="min-h-[40px] rounded-lg border border-zinc-600/60 px-3 text-xs font-medium text-zinc-200 hover:bg-zinc-700/30 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {starting ? "启动中…" : "开始审计"}
+                    {auditLoading ? "重试中…" : "重试"}
                   </button>
-                  {sessionLoading ? (
-                    <span className="text-[11px] text-zinc-500">正在读取会话…</span>
+                </div>
+              </div>
+            </Section>
+          ) : entryState.showNotReady ? (
+            <Section title="审计信息">
+              <div className="flex items-start gap-3">
+                <BrainIcon className="mt-0.5 h-8 w-8 shrink-0 text-brand-300/70" />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <p className="text-sm leading-relaxed text-zinc-300">
+                    {entryState.notReadyText}
+                  </p>
+                  <Link
+                    href={`/session/${sessionIdParam ?? ""}`}
+                    className="inline-flex min-h-[40px] items-center rounded-lg border border-zinc-600/60 px-3 text-xs font-medium text-zinc-200 hover:bg-zinc-700/30"
+                  >
+                    回到工作台
+                  </Link>
+                </div>
+              </div>
+            </Section>
+          ) : entryState.showStartPanel ? (
+            <Section title="开始审计">
+              <div className="flex items-start gap-3">
+                <BrainIcon className="mt-0.5 h-8 w-8 shrink-0 text-brand-300/70" />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <p className="text-sm leading-relaxed text-zinc-300">
+                    审计会围绕六个维度连续提问（最多 {AUDIT_QUESTION_HARD_LIMIT} 问），
+                    并在结束后生成带论据与缺口的评估报告。审计基于当前产品状态（v
+                    {expectedProductVersion}）进行。
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={() => {
+                        void handleStartAudit();
+                      }}
+                      disabled={!canStart}
+                      className="min-h-[44px] rounded-lg border border-brand-500/40 bg-brand-600/20 px-4 text-sm font-medium text-brand-300 transition-colors hover:bg-brand-600/30 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {starting ? "启动中…" : "开始审计"}
+                    </button>
+                    {sessionLoading ? (
+                      <span className="text-[11px] text-zinc-500">正在读取会话…</span>
+                    ) : null}
+                  </div>
+                  {!sessionView ? (
+                    <div className="text-[11px] text-amber-300/80">
+                      会话状态尚未加载，暂时无法启动审计。
+                    </div>
                   ) : null}
                 </div>
-                {!sessionView ? (
-                  <div className="text-[11px] text-amber-300/80">
-                    会话状态尚未加载，暂时无法启动审计。
-                  </div>
-                ) : null}
               </div>
-            </div>
-          </Section>
+            </Section>
+          ) : (
+            <Section title="审计信息">
+              <div className="flex items-center gap-2 text-xs text-zinc-400">
+                <span className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                {AUDIT_LOADING_TEXT}
+              </div>
+            </Section>
+          )
         ) : (
           <>
-            {finished ? <ReportView audit={audit} /> : null}
+            {finished ? (
+              <ReportView
+                audit={audit}
+                onRestart={canRestart ? handleStartAudit : undefined}
+                restarting={starting}
+              />
+            ) : null}
 
             {!finished ? (
               <>
                 {audit.status === "closing" ? (
-                  <div className="rounded-xl border border-amber-700/40 bg-amber-900/20 px-3 py-2 text-xs text-amber-300">
-                    审计正在收尾，报告生成后会自动显示。
+                  <div className="space-y-2 rounded-xl border border-amber-700/40 bg-amber-900/20 px-3 py-2 text-xs text-amber-300">
+                    <p>{closingRecovery.noticeText}</p>
+                    {closingRecovery.showRecovery ? (
+                      <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                        <button
+                          onClick={handleRetryReport}
+                          disabled={isStreaming}
+                          className="min-h-[36px] rounded-lg border border-amber-600/50 px-3 text-xs font-medium text-amber-200 hover:bg-amber-800/30 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          重试生成报告
+                        </button>
+                        <Link
+                          href={`/session/${sessionIdParam ?? ""}`}
+                          className="inline-flex min-h-[36px] items-center rounded-lg border border-zinc-600/60 px-3 text-xs font-medium text-zinc-200 hover:bg-zinc-700/30"
+                        >
+                          返回工作台
+                        </Link>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
                 {canSubmitAnswer(audit) ? (
@@ -539,6 +798,14 @@ function AuditPageContent() {
                     audit={audit}
                     submitting={submitting || isStreaming}
                     onSubmit={handleAnswer}
+                    onRetry={handleRetryContinuation}
+                    onEnd={handleEndAudit}
+                  />
+                ) : canRetryContinuation(audit, false) ? (
+                  <ContinuationNotice
+                    busy={submitting || isStreaming}
+                    onRetry={handleRetryContinuation}
+                    onEnd={handleEndAudit}
                   />
                 ) : (
                   <Section title="当前问题">

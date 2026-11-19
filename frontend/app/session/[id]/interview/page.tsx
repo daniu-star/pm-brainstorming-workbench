@@ -40,6 +40,9 @@ function InterviewContent() {
   const isPreview = searchParams.get("preview") === "1";
   const { sessionId, loadSession, startInterview, isHistoryOpen, toggleHistory } =
     useSessionStore();
+  const v2Phase = useSessionStore((state) => state.v2Phase);
+  const sessionView = useSessionStore((state) => state.sessionView);
+  const sendCommand = useSessionStore((state) => state.sendCommand);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   // B007：同意状态（sessionStorage 持久，刷新不重复弹窗）
@@ -97,7 +100,8 @@ function InterviewContent() {
 
   const handleSkipCamera = useCallback(() => setCameraEnabled(false), []);
 
-  // B041/B087：结束面试——导出监考数据（本地落盘）后返回工作台
+  // B041/B087：结束面试——先结束审计（派发 end_audit 让后端收尾并生成报告，
+  // 回执里的收尾 Run 由 store 订阅），再导出监考数据（本地落盘）后返回工作台
   const handleEndInterview = useCallback(() => {
     const session = proctorSessionRef.current;
     if (session) {
@@ -115,8 +119,17 @@ function InterviewContent() {
       }
       proctorSessionRef.current = null;
     }
+    // 只有审计进行中才需要结束审计（audit_completed 下无需再结束）
+    const auditId = sessionView?.current_audit_id ?? null;
+    if (v2Phase === "auditing" && auditId) {
+      void sendCommand(
+        "end_audit",
+        { audit_id: auditId },
+        { expectedSessionVersion: sessionView?.session_version ?? null }
+      ).catch(() => undefined);
+    }
     router.push(sessionId ? `/session/${sessionId}` : "/");
-  }, [router, sessionId]);
+  }, [router, sessionId, v2Phase, sessionView, sendCommand]);
 
   if (loading) {
     return (

@@ -88,6 +88,40 @@ class SessionStoreTests(unittest.TestCase):
         # delete 对不存在的合法 ID 静默成功
         self.store.delete(fake_id)
 
+    def test_atomic_write_retries_when_target_is_temporarily_locked(self):
+        """Windows 上 os.replace 可能被占用文件的进程短暂拒绝，必须有界重试而不是丢消息。"""
+        from unittest import mock
+
+        session = self.store.create("重试测试")
+        real_replace = os.replace
+        attempts = {"count": 0}
+
+        def flaky_replace(src, dst):
+            attempts["count"] += 1
+            if attempts["count"] <= 2:
+                raise PermissionError(13, "拒绝访问")
+            return real_replace(src, dst)
+
+        with mock.patch("db.session_store.os.replace", side_effect=flaky_replace):
+            self.store.add_message(session["id"], "user", "第一次就应当写成功")
+
+        self.assertEqual(attempts["count"], 3)
+        stored = self.store.get(session["id"])
+        self.assertEqual([m["content"] for m in stored["messages"]], ["第一次就应当写成功"])
+        self.assertEqual(sorted(os.listdir(self._tmp.name)), [f"{session['id']}.json"])
+
+    def test_atomic_write_raises_after_retries_are_exhausted(self):
+        """重试耗尽后必须把错误抛出去，不能静默返回成功。"""
+        from unittest import mock
+
+        session = self.store.create("重试耗尽")
+
+        with mock.patch("db.session_store.os.replace", side_effect=PermissionError(13, "拒绝访问")):
+            with self.assertRaises(PermissionError):
+                self.store.add_message(session["id"], "user", "这条写不进去")
+        # 临时文件必须被清理，数据目录只留原始会话文件
+        self.assertEqual(sorted(os.listdir(self._tmp.name)), [f"{session['id']}.json"])
+
 
 if __name__ == "__main__":
     unittest.main()

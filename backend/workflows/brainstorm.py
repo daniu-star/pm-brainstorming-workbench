@@ -102,6 +102,8 @@ class _RoleRun:
     warning: str | None = None
     error: str | None = None
     calls: int = 0
+    #: 重试子 Run 直接复用父 Run 已成功角色的产物（不重复调模型）。
+    reused: bool = False
 
 
 # --------------------------------------------------------------------------- #
@@ -523,6 +525,8 @@ async def _run_role(
             "role_code": role_code.value,
             "logical_key": role_logical_key(role_code),
             "product_version": state.version,
+            # 供重试子 Run 复用（step 是内部审计载体，不是对外消息）。
+            "result": result.model_dump(mode="json"),
             "candidates": outcome.stage_map,
             "counts": {
                 "claims": len(result.claims),
@@ -567,6 +571,33 @@ def _id_factory_from(stage_maps: dict[RoleCode, dict[str, dict[str, str]]]):
     return factory
 
 
+def _reused_role_run(ctx: Any, role_code: RoleCode) -> _RoleRun | None:
+    """重试子 Run：从父 Run 已成功的角色 step 复用产物；无可用产物时返回 None。"""
+
+    scope = getattr(ctx, "retry_scope", None)
+    if not isinstance(scope, dict):
+        return None
+    entry = (scope.get("reused") or {}).get(role_logical_key(role_code))
+    if not isinstance(entry, dict):
+        return None
+    raw = entry.get("result")
+    if not isinstance(raw, dict):
+        return None
+    try:
+        result = RoleResult.model_validate(raw)
+    except Exception:  # noqa: BLE001 - 父 step 产物不可解析时退化为重新调用该角色
+        return None
+    if result.role_code is not role_code:
+        return None
+    return _RoleRun(
+        role_code=role_code,
+        step_id=str(entry.get("step_id") or ""),
+        result=result,
+        stage_map=dict(entry.get("candidates") or {}),
+        reused=True,
+    )
+
+
 async def run_brainstorm(ctx: Any):
     """执行一轮四角色 brainstorm，返回 ``RunOutcome``（不提交事务）。"""
 
@@ -595,8 +626,31 @@ async def run_brainstorm(ctx: Any):
     roles = select_roles(target, content, state)
     warnings.append(f"本轮角色分配：{'、'.join(role.value for role in roles)}（target={_target_value(target)}）")
 
+    # 重试子 Run：父 Run 未成功的角色重新调用，已成功角色直接复用其持久化产物。
+    retry_scope = getattr(ctx, "retry_scope", None)
+    retry_failed = (
+        {str(key) for key in retry_scope.get("failed_keys") or []}
+        if isinstance(retry_scope, dict)
+        else set()
+    )
+    reused: dict[RoleCode, _RoleRun] = {}
+    run_roles: list[RoleCode] = []
+    for role_code in roles:
+        if isinstance(retry_scope, dict) and role_logical_key(role_code) not in retry_failed:
+            reused_run = _reused_role_run(ctx, role_code)
+            if reused_run is not None:
+                reused[role_code] = reused_run
+                continue
+        run_roles.append(role_code)
+    if isinstance(retry_scope, dict):
+        reused_names = "、".join(role.value for role in roles if role in reused) or "无"
+        run_names = "、".join(role.value for role in run_roles) or "无"
+        warnings.append(
+            f"重试调度：只执行失败步骤（{run_names}），复用父 Run 已成功角色（{reused_names}）"
+        )
+
     try:
-        _ensure_budget(ctx, len(roles))
+        _ensure_budget(ctx, len(run_roles))
     except AppError as exc:
         return RunOutcome(
             status=RunStatus.failed,
@@ -610,6 +664,9 @@ async def run_brainstorm(ctx: Any):
 
     role_runs: list[_RoleRun] = []
     for role_code in roles:
+        if role_code in reused:
+            role_runs.append(reused[role_code])
+            continue
         try:
             role_runs.append(
                 await _run_role(
@@ -639,18 +696,19 @@ async def run_brainstorm(ctx: Any):
 
     events: list[dict[str, Any]] = []
     for run in role_runs:
-        events.append(
-            {
-                "type": EventType.role_completed.value,
-                "payload": {
-                    "role_code": run.role_code.value,
-                    "step_id": run.step_id,
-                    "status": "succeeded" if run.result is not None else "failed",
-                    "claim_count": len(run.result.claims) if run.result is not None else 0,
-                    "option_count": len(run.result.option_proposals) if run.result is not None else 0,
-                },
-            }
-        )
+        payload = {
+            "role_code": run.role_code.value,
+            "step_id": run.step_id,
+            "status": "succeeded" if run.result is not None else "failed",
+            "claim_count": len(run.result.claims) if run.result is not None else 0,
+            "option_count": len(run.result.option_proposals) if run.result is not None else 0,
+        }
+        if run.reused:
+            payload["reused"] = True
+            payload["source_run_id"] = (
+                retry_scope.get("parent_run_id") if isinstance(retry_scope, dict) else None
+            )
+        events.append({"type": EventType.role_completed.value, "payload": payload})
 
     if not succeeded:
         return RunOutcome(
@@ -724,6 +782,9 @@ async def run_brainstorm(ctx: Any):
         usage=usage,
         session_phase=None,
         brief_status=None,
+        # FR-04D：四角色观点合并后交给主持人归并（决策建议/分歧/未解决缺口），
+        # 子 Run 由 apply_outcome 在同一事务内排入，避免本 Run 变成并行观点清单。
+        follow_up=TaskKind.synthesis,
     )
 
 

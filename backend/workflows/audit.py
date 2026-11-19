@@ -809,6 +809,35 @@ def _apply_open_failure(*, ctx: Any, audit_id: str) -> Any:
     return _apply
 
 
+def _apply_closing_failure(*, ctx: Any, audit_id: str, code: Any) -> Any:
+    """closing 阶段报告生成失败：closing → failed，并保留待完成的报告草稿。
+
+    与 ``_apply_open_failure`` 的差别：
+    - ``end_reason`` 记录稳定错误码（``ErrorCode`` 全大写），作为「报告可恢复」
+      的判据，``AuditSnapshot`` 侧会降级为 ``failed``；
+    - **不 bump** ``audit_version``：失败没有产出新报告，版本保持不变，
+      ``retry_run`` 的 ``base_audit_version`` 校验才能继续复跑；
+    - 不清 ``closing_control_id`` / ``report_json``：恢复后仍可生成报告。
+    """
+
+    def _apply(db: Any) -> None:
+        audit = _guarded_audit(db, ctx=ctx, audit_id=audit_id, expected=(AuditStatus.closing,))
+        if audit is None:
+            return
+        now = utc_now_iso()
+        _transition(audit.status, AuditStatus.failed)
+        _audit_repo().update_audit(
+            db,
+            audit,
+            now_iso=now,
+            status=AuditStatus.failed,
+            end_reason=str(code) if code else EndReason.failed,
+            active_question_id=None,
+        )
+
+    return _apply
+
+
 def _apply_answer(
     *,
     ctx: Any,
@@ -916,7 +945,7 @@ def _apply_answer(
             audit,
             now_iso=now,
             status=AuditStatus.completed,
-            end_reason=audit.end_reason or EndReason.completed,
+            end_reason=_end_reason_of(audit),
             active_question_id=None,
             dimension_states=states,
             report=final_report.model_dump(mode="json"),
@@ -991,7 +1020,7 @@ def _apply_report(
             audit,
             now_iso=now,
             status=AuditStatus.completed,
-            end_reason=audit.end_reason or EndReason.completed,
+            end_reason=_end_reason_of(audit),
             active_question_id=None,
             dimension_states=states,
             report=final_report.model_dump(mode="json"),
@@ -1591,7 +1620,17 @@ async def run_audit_report(ctx: Any) -> Any:
     try:
         return await _report(ctx)
     except AppError as error:
-        return _failed(ctx, error.code, error.message)
+        return _failed(
+            ctx,
+            error.code,
+            error.message,
+            session_phase=SessionPhase.auditing,
+            apply=_apply_closing_failure(
+                ctx=ctx,
+                audit_id=str(getattr(getattr(ctx, "run", None), "audit_id", "") or ""),
+                code=error.code,
+            ),
+        )
 
 
 async def _report(ctx: Any) -> Any:

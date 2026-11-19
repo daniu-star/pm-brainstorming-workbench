@@ -2,7 +2,7 @@
 
 import { useEffect, useState, Suspense } from "react";
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import { useSessionStore } from "@/store/sessionStore";
 import { Header } from "@/components/Header";
 import { ChatPanel } from "@/components/chat/ChatPanel";
@@ -16,7 +16,6 @@ type MobileTab = "canvas" | "chat";
 
 function WorkbenchContent() {
   const params = useParams();
-  const searchParams = useSearchParams();
   const {
     sessionId,
     loadSession,
@@ -35,21 +34,12 @@ function WorkbenchContent() {
     const id = params?.id as string;
     if (!id) return;
     let cancelled = false;
+    // 初始问题已由后端 create_session_core 写入并启动首个 clarify Run
+    // （backend/api/v2/common.py:397-429）：这里只加载会话，绝不再发一次 clarify。
     loadSession(id)
       .then(() => {
         if (cancelled) return;
         setLoading(false);
-        // Auto-trigger coach clarification first (not direct brainstorm).
-        // Guarded by store state so React StrictMode's double-invoke
-        // cannot fire the coach message twice (or abort it mid-flight).
-        const problem = searchParams.get("problem");
-        if (problem) {
-          const store = useSessionStore.getState();
-          if (store.coachTriggeredFor !== id) {
-            store.setCoachTriggered(id);
-            store.sendToCoach(problem);
-          }
-        }
       })
       .catch((err) => {
         if (cancelled) return;
@@ -59,7 +49,7 @@ function WorkbenchContent() {
     return () => {
       cancelled = true;
     };
-  }, [params?.id, loadSession, searchParams]);
+  }, [params?.id, loadSession]);
 
   // Cleanup SSE / run subscription on unmount. Switching sessions only
   // cancels the local subscription — it never cancels the server-side run.

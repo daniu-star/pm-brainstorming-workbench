@@ -3,7 +3,9 @@ import json
 import logging
 import os
 import re
+import tempfile
 import threading
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -49,14 +51,37 @@ class SessionStore:
             return lock
 
     def _save(self, session: dict) -> None:
-        """临时文件 + os.replace 原子写，避免崩溃时损坏会话文件（B028）。"""
+        """临时文件 + os.replace 原子写，避免崩溃时损坏会话文件（B028）。
+
+        Windows 上 os.replace 可能因为目标文件被杀毒/索引器短暂占用而抛
+        PermissionError（[WinError 5]）；这里用「唯一临时文件 + 有界重试」
+        兜底，避免静默丢消息（QA 第 5 轮 P1：40% 概率只写入 39/40 条）。
+        """
         path = self._path(session["id"])
-        tmp_path = path.with_name(f".{path.name}.tmp")
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(session, f, ensure_ascii=False, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, path)
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(session, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            last_error: OSError | None = None
+            for attempt in range(10):
+                try:
+                    os.replace(tmp_name, path)
+                    return
+                except PermissionError as exc:  # 目标文件被短暂占用
+                    last_error = exc
+                    time.sleep(0.02 * (attempt + 1))
+            assert last_error is not None
+            raise last_error
+        finally:
+            if os.path.exists(tmp_name):
+                try:
+                    os.unlink(tmp_name)
+                except OSError:  # 清理失败不影响已完成的写入
+                    logger.warning("临时文件清理失败：%s", tmp_name)
 
     # ---------- 对外接口 ----------
 

@@ -23,7 +23,9 @@ import type {
   AuditStatus,
   ControlStatus,
   EndReason,
+  SessionPhase,
 } from "./contracts.generated";
+import { canStartAuditPhase } from "./phaseRouter";
 
 /** 后端常量 AUDIT_QUESTION_HARD_LIMIT（contracts.py）：问题数硬上限 */
 export const AUDIT_QUESTION_HARD_LIMIT = 18;
@@ -232,6 +234,8 @@ export interface NormalizedAudit {
   activeQuestionId: string | null;
   endReason: EndReason | null;
   closeRequested: boolean;
+  /** 上一问处理失败、后端要求继续（AuditSnapshot.pending_continuation） */
+  pendingContinuation: boolean;
   dimensionStates: NormalizedDimensionState[];
   questions: NormalizedQuestion[];
   report: NormalizedReport | null;
@@ -350,6 +354,7 @@ export function normalizeAudit(raw: unknown): NormalizedAudit | null {
     activeQuestionId: asNullableString(raw.active_question_id),
     endReason: typeof raw.end_reason === "string" ? asKnown(END_REASONS, raw.end_reason, "completed") : null,
     closeRequested: asBoolean(raw.close_requested),
+    pendingContinuation: asBoolean(raw.pending_continuation),
     dimensionStates,
     questions,
     report: normalizeReport(raw.report),
@@ -394,6 +399,75 @@ export function canSubmitAnswer(audit: NormalizedAudit | null): boolean {
 export function isAuditFinished(audit: NormalizedAudit | null): boolean {
   if (!audit) return false;
   return audit.status === "completed" || audit.status === "cancelled" || audit.status === "failed";
+}
+
+/** pending_continuation 时审计页的提示文案（上一问处理失败） */
+export const CONTINUATION_NOTICE_TEXT = "上一问处理失败，可重试继续或结束审计";
+
+/** 审计进入 closing 且没有可等待的 Run 时的提示文案 */
+export const CLOSING_NOTICE_TEXT = "正在生成报告，可稍候或点刷新";
+
+/**
+ * 上一问处理失败（pending_continuation）且当前没有可回答的问题：
+ * 页面应显示「重试继续 / 结束审计」，而不是空等。
+ */
+export function canRetryContinuation(
+  audit: NormalizedAudit | null,
+  hasCurrentQuestion: boolean
+): boolean {
+  if (!audit || hasCurrentQuestion) return false;
+  return audit.status === "active" && audit.pendingContinuation;
+}
+
+/**
+ * 审计收尾（closing）时的退避轮询间隔：1s/2s/4s/8s/16s/29s，累计 60s 封顶。
+ * 没有 related_run_id 可订阅时，页面按这些间隔拉取审计快照。
+ */
+export const CLOSING_POLL_DELAYS_MS: readonly number[] = [1000, 2000, 4000, 8000, 16000, 29000];
+
+/** closing 轮询耗尽（60s 封顶）后的提示：报告仍未生成出来 */
+export const CLOSING_TIMEOUT_TEXT = "报告生成超时，可重试";
+/** closing 关联 Run 失败后的提示 */
+export const CLOSING_FAILED_TEXT = "报告生成失败，可重试";
+
+export interface ClosingRecoveryInput {
+  status: AuditStatus | null | undefined;
+  /** 退避轮询是否已耗尽 */
+  pollExhausted: boolean;
+  /** 是否有失败、可重试的 Run */
+  hasFailedRun: boolean;
+}
+
+export interface ClosingRecoveryState {
+  /** 是否展示「重试生成报告 / 返回工作台」恢复入口 */
+  showRecovery: boolean;
+  noticeText: string;
+}
+
+/**
+ * closing 分支的提示与恢复入口：
+ * 轮询耗尽或关联 Run 失败后不能静默停在加载条上，必须给出可点的重试入口。
+ */
+export function resolveClosingRecoveryState(
+  input: ClosingRecoveryInput,
+): ClosingRecoveryState {
+  const showRecovery =
+    input.status === "closing" && (input.pollExhausted || input.hasFailedRun);
+  return {
+    showRecovery,
+    noticeText: showRecovery
+      ? input.hasFailedRun
+        ? CLOSING_FAILED_TEXT
+        : CLOSING_TIMEOUT_TEXT
+      : CLOSING_NOTICE_TEXT,
+  };
+}
+
+/** 点「重试生成报告」的目标：有 failed run 就重试该 run，否则重新拉取快照 */
+export function resolveClosingRetryTarget(
+  lastFailedRunId: string | null | undefined,
+): "retry_failed_run" | "refresh_snapshot" {
+  return lastFailedRunId ? "retry_failed_run" : "refresh_snapshot";
 }
 
 export interface AnswerValidation {
@@ -464,6 +538,7 @@ const AUDIT_ERROR_TEXT: Record<string, string> = {
   QUESTION_NOT_ACTIVE: "该问题不是当前待回答的问题",
   CONTROL_SUPERSEDED: "该请求已被更新的请求取代",
   FEATURE_NOT_READY: "该功能尚未开放",
+  AUDIT_NOT_READY: "请先完成澄清或跳过引导，再发起审计",
   INTERNAL: "服务暂时不可用，请稍后重试",
   NETWORK_ERROR: "网络连接失败，请检查网络后重试",
 };
@@ -518,4 +593,74 @@ export function describeControlOutcome(
 export function canControlAudit(audit: NormalizedAudit | null): boolean {
   if (!audit) return false;
   return audit.status === "active" || audit.status === "opening" || audit.status === "created";
+}
+
+/** 审计快照读取失败的统一文案（读取失败不得渲染成「开始审计」，避免误判为还没建审计） */
+export const AUDIT_LOAD_ERROR_TEXT = "审计信息读取失败，请重试";
+/** 有 auditId 但快照还没回来时的占位文案 */
+export const AUDIT_LOADING_TEXT = "正在读取审计信息…";
+/** 会话还处于 clarifying（或其它不允许阶段）时的入口替代文案 */
+export const AUDIT_NOT_READY_TEXT = "请先完成澄清或跳过引导，再发起审计";
+
+export interface AuditEntryStateInput {
+  /** 当前页面要展示的 auditId（URL 参数或会话快照里的 current_audit_id） */
+  auditId: string | null;
+  /** 已有可渲染的审计快照 */
+  hasAudit: boolean;
+  /** store 里记录的读取失败（404 视为「确实没有审计」） */
+  auditError: { message: string; notFound: boolean } | null;
+  /** 页面是否正在读取审计快照 */
+  auditLoading: boolean;
+  sessionLoading: boolean;
+  legacyMode: boolean;
+  starting: boolean;
+  /** v2 会话阶段；缺省（旧调用/旧路由）时不拦截 */
+  v2Phase?: SessionPhase | null;
+}
+
+export interface AuditEntryState {
+  /** 展示「审计信息读取失败，请重试」+ 重试按钮 */
+  showLoadError: boolean;
+  /** 展示「正在读取审计信息…」占位 */
+  showLoading: boolean;
+  /** 展示「开始审计」面板 */
+  showStartPanel: boolean;
+  /** 展示「请先完成澄清或跳过引导」替代态（不渲染「开始审计」） */
+  showNotReady: boolean;
+  /** 「开始审计」按钮是否可点：仅在没有 auditId、或已确认 404 时才为真 */
+  canStart: boolean;
+  /** 失败时附带的细节文案 */
+  loadErrorText: string | null;
+  /** 阶段不满足时的说明文案 */
+  notReadyText: string | null;
+}
+
+/**
+ * 审计页入口状态机：
+ * - 有 auditId 且快照未命中、读取又失败（非 404）→ 错误态，禁止展示「开始审计」；
+ * - 有 auditId 且还没读完 → 加载态；
+ * - 没有 auditId，或已确认 404 → 才允许展示 / 点击「开始审计」；
+ * - 会话仍在 clarifying 等不允许阶段 → 替代态，引导先完成澄清。
+ */
+export function resolveAuditEntryState(input: AuditEntryStateInput): AuditEntryState {
+  const hasAuditId = Boolean(input.auditId);
+  const error = input.auditError;
+  const notFound = Boolean(error && error.notFound);
+  const showLoadError = hasAuditId && !input.hasAudit && Boolean(error) && !notFound;
+  const wouldStart = !input.hasAudit && !showLoadError && (!hasAuditId || notFound);
+  const phaseBlocked = Boolean(input.v2Phase) && !canStartAuditPhase(input.v2Phase);
+  const showNotReady = wouldStart && phaseBlocked;
+  const showStartPanel = wouldStart && !phaseBlocked;
+  const showLoading = !input.hasAudit && !showLoadError && !wouldStart;
+  const canStart =
+    showStartPanel && !input.starting && !input.sessionLoading && !input.legacyMode;
+  return {
+    showLoadError,
+    showLoading,
+    showStartPanel,
+    showNotReady,
+    canStart,
+    loadErrorText: showLoadError && error ? error.message || AUDIT_LOAD_ERROR_TEXT : null,
+    notReadyText: showNotReady ? AUDIT_NOT_READY_TEXT : null,
+  };
 }

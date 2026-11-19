@@ -10,6 +10,7 @@
     "sourceMap": false,
     "incremental": false,
     "isolatedModules": false,
+    "jsx": "react-jsx",
     "allowJs": false
   },
   "include": [],
@@ -18,6 +19,9 @@
     "lib/stateGuards.ts",
     "lib/api.ts",
     "lib/auditView.ts",
-    "lib/sse.ts"
+    "lib/briefDraft.ts",
+    "lib/sse.ts",
+    "lib/phaseRouter.ts",
+    "store/sessionStore.ts"
   ]
 }

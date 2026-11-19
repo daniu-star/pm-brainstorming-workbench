@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -24,7 +25,7 @@ from core.llm_client import LLMResult, LLMUsage  # noqa: E402
 from domain import contracts as C  # noqa: E402
 from domain.contracts import RunStatus, StepStatus, TaskKind  # noqa: E402
 from domain.errors import ErrorCode  # noqa: E402
-from repositories import database  # noqa: E402
+from repositories import database, run_repo  # noqa: E402
 from repositories.database import ProductStateRow  # noqa: E402
 from tests.test_runner import WORKER, RunnerTestCase, _success_outcome  # noqa: E402
 from workflows import runner  # noqa: E402
@@ -202,6 +203,76 @@ class BudgetAccumulationTests(RunnerTestCase):
         self.assertEqual(run.status, RunStatus.failed.value)
         self.assertEqual(run.error_code, ErrorCode.BUDGET_EXCEEDED)
         self.assertEqual(self._product_state_versions(session_id), [1])
+
+
+class BudgetContinuityTests(RunnerTestCase):
+    """租约接管后预算账本不清零（单 Run 上游调用上限跨 epoch 成立）。"""
+
+    def test_takeover_restores_usage_and_rejects_eleventh_call(self) -> None:
+        """接管后从 usage_json 恢复计数：第 11 次上游调用被拒且不发请求。"""
+
+        _, run_id = self.create_run()
+        self.claim(run_id)
+
+        # 模拟上一 epoch 已结算 9 次上游调用（usage_json 是唯一跨进程账本）。
+        with database.session_scope() as db:
+            run = run_repo.get_run(db, run_id)
+            self.assertIsNotNone(run)
+            run.usage_json = json.dumps(
+                {
+                    "prompt_tokens": PROMPT_TOKENS * 9,
+                    "completion_tokens": COMPLETION_TOKENS * 9,
+                    "total_tokens": (PROMPT_TOKENS + COMPLETION_TOKENS) * 9,
+                    "calls": 9,
+                    "upstream_calls": 9,
+                    "provider_calls": 9,
+                    "estimated_calls": 0,
+                    "usage_source": "provider",
+                }
+            )
+            # 租约过期：允许 claim_next_run 以新 epoch 接管。
+            run.lease_expires_at = 0
+
+        with database.session_scope() as db:
+            claimed = run_repo.claim_next_run(
+                db, worker_id=WORKER, now_epoch=int(time.time()), lease_seconds=30
+            )
+        self.assertIsNotNone(claimed)
+        self.assertEqual(claimed.id, run_id)
+
+        llm = _CountingLLM()
+        seen: dict[str, int] = {}
+
+        async def dispatch(ctx):
+            seen["restored"] = int(ctx.budget.upstream_calls)
+            # 第 10 次仍在上限内：真正发上游请求。
+            await ctx.llm.complete(
+                messages=[{"role": "user", "content": "第 10 次调用"}],
+                max_output_tokens=50,
+                timeout_seconds=5,
+                purpose="test.budget.takeover.tenth",
+            )
+            seen["after_tenth"] = int(ctx.budget.upstream_calls)
+            # 第 11 次必须被账本拒绝（异常向上抛，由 runner 终结 Run）。
+            await ctx.llm.complete(
+                messages=[{"role": "user", "content": "第 11 次调用"}],
+                max_output_tokens=50,
+                timeout_seconds=5,
+                purpose="test.budget.takeover.eleventh",
+            )
+            return _success_outcome("不应到达")
+
+        runner.WORKFLOW_DISPATCH[TaskKind.clarify] = dispatch
+        self.run_once(run_id, llm=llm)
+
+        self.assertEqual(seen["restored"], 9, "接管后账本必须延续")
+        self.assertEqual(seen["after_tenth"], 10, "第 10 次调用应被允许")
+        self.assertEqual(len(llm.calls), 1, "第 11 次上游调用不得发出")
+        run = self.get_run(run_id)
+        self.assertEqual(run.status, RunStatus.failed.value)
+        self.assertEqual(run.error_code, ErrorCode.BUDGET_EXCEEDED)
+        usage = json.loads(run.usage_json or "{}")
+        self.assertEqual(usage["upstream_calls"], 10, "跨 epoch 账本不得清零")
 
 
 class DefaultCapTests(unittest.TestCase):

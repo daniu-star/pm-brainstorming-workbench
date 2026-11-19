@@ -1,6 +1,8 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useSessionStore } from "@/store/sessionStore";
+import { shouldShowStartDiscussion } from "@/lib/phaseRouter";
 import { MessageList } from "./MessageList";
 import { RoleSelector } from "./RoleSelector";
 import { InputBox } from "./InputBox";
@@ -9,14 +11,30 @@ import { InterviewBanner } from "./InterviewBanner";
 export function ChatPanel() {
   const {
     phase,
+    v2Phase,
+    runs,
+    currentSessionId,
     error,
     clearError,
     messages,
+    messagesBySession,
     lastFailedSend,
     clearLastFailedSend,
     sendMessage,
     isStreaming,
   } = useSessionStore();
+
+  // 「开始讨论」的 once 守卫：点击后在回执到达（runs 出现 brainstorm）前禁用，防止重复提交
+  const [discussionRequested, setDiscussionRequested] = useState(false);
+
+  useEffect(() => {
+    setDiscussionRequested(false);
+  }, [currentSessionId]);
+
+  useEffect(() => {
+    // 请求失败时解除守卫，允许重试；成功后由 runs / 消息证据接管（横幅自然消失）
+    if (error) setDiscussionRequested(false);
+  }, [error]);
 
   const retrySend = () => {
     if (!lastFailedSend || isStreaming) return;
@@ -25,12 +43,49 @@ export function ChatPanel() {
     sendMessage(content, targetRole);
   };
 
+  // 澄清结束进入脑暴后，尚无 brainstorm 产物时给一个显式的「开始讨论」入口，
+  // 不点按钮就不会发请求（避免页面一进来就自动开跑）。
+  // 产物判断以持久化消息为准（刷新后 runs 为空，仅靠内存会在 F5 后重复开 Run）。
+  const sessionMessages = currentSessionId
+    ? messagesBySession[currentSessionId] ?? []
+    : [];
+  const hasBrainstormRun = Object.values(runs).some(
+    (run) => run.sessionId === currentSessionId && run.action === "brainstorm"
+  );
+  const showStartDiscussion = shouldShowStartDiscussion({
+    v2Phase,
+    phase,
+    hasBrainstormRun,
+    messages: sessionMessages,
+  });
+
+  const requestDiscussion = () => {
+    if (discussionRequested || isStreaming) return;
+    setDiscussionRequested(true);
+    sendMessage("开始讨论", "all");
+  };
+
+  const auditing = v2Phase ? v2Phase === "auditing" : phase === "interview";
+  const chatTitle = v2Phase
+    ? v2Phase === "auditing"
+      ? "AI 审计官"
+      : v2Phase === "audit_completed"
+        ? "审计已完成"
+        : v2Phase === "clarifying"
+          ? "产品教练 · 思路梳理"
+          : "产品脑暴群聊"
+    : phase === "interview"
+      ? "AI 面试官"
+      : phase === "coach"
+        ? "产品教练 · 思路梳理"
+        : "产品脑暴群聊";
+
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Chat header — group name */}
       <div className="h-11 bg-dark-800/60 border-b border-zinc-800/40 flex items-center px-4 shrink-0">
         <span className="text-sm font-medium text-zinc-300">
-          {phase === "interview" ? "AI 面试官" : phase === "coach" ? "产品教练 · 思路梳理" : "产品脑暴群聊"}
+          {chatTitle}
         </span>
         <span className="ml-auto text-[10px] text-zinc-500">
           {messages.length} 条消息
@@ -76,7 +131,22 @@ export function ChatPanel() {
         </div>
       )}
 
-      {phase === "interview" && <InterviewBanner />}
+      {showStartDiscussion && (
+        <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-brand-500/30 bg-brand-600/10 px-3 py-2">
+          <span className="text-xs text-zinc-300">简报已就绪，四位专家可以开始讨论了。</span>
+          <button
+            onClick={requestDiscussion}
+            disabled={isStreaming || discussionRequested}
+            className="ml-auto inline-flex min-h-[40px] items-center justify-center rounded-lg border border-brand-500/40 bg-brand-600/25 px-3 text-xs font-medium text-brand-300 transition-colors hover:bg-brand-600/35 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {discussionRequested ? "提交中…" : "开始讨论"}
+          </button>
+        </div>
+      )}
+
+      {auditing || v2Phase === "audit_completed" || (!v2Phase && phase === "interview") ? (
+        <InterviewBanner />
+      ) : null}
 
       <MessageList />
 

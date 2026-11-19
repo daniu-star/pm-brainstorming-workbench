@@ -50,6 +50,7 @@ from domain.contracts import (
     SessionPhase,
     SessionView,
     StartAuditRecovery,
+    StepStatus,
     canonical_json,
     input_hash,
     new_id,
@@ -139,6 +140,8 @@ class RunOutcome:
     session_version_bump: bool = True
     #: 额外写入钩子（审计问题/评估等），在同一个事务内执行。
     apply: Callable[[Any], None] | None = None
+    #: 成功结果后自动排入的后续任务（如 brainstorm → synthesis），同事务建子 Run。
+    follow_up: C.TaskKind | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -544,23 +547,32 @@ def submit_command(
         )
         return receipt
 
+    if command.action is Action.start_audit:
+        recovery = _maybe_audit_recovery(db, session)
+        if recovery is not None and recovery.status is AuditStatus.failed:
+            # closing 阶段报告生成失败的恢复：直接返回待完成报告回执（200）。
+            # 必须放在 phase 校验之前——此时会话 phase 仍是 auditing，
+            # 否则会被 AUDIT_ACTIVE 拦掉，或落到新建审计、重置开场。
+            return _recovery_receipt(
+                db,
+                owner_email=owner_email,
+                parsed=parsed,
+                recovery=recovery,
+                now_iso=now_iso,
+            )
+
     SM.validate_action_for_phase(command.action, SessionPhase(session.phase))
 
     if command.action is Action.start_audit:
         recovery = _maybe_audit_recovery(db, session)
         if recovery is not None:
-            _store_idempotent(
+            return _recovery_receipt(
                 db,
-                owner_email,
-                parsed,
-                kind="recovery",
-                body=recovery.model_dump(mode="json"),
-                http_status=200,
-                related_run_id=recovery.current_run_id,
-                related_control_id=None,
+                owner_email=owner_email,
+                parsed=parsed,
+                recovery=recovery,
                 now_iso=now_iso,
             )
-            return recovery
 
     _ensure_no_active_run(db, session)
     _ensure_queue_budget(db, owner_email)
@@ -732,22 +744,96 @@ def _submit_async(
     return _receipt(run, session)
 
 
-def _maybe_audit_recovery(db, session: SessionRow) -> StartAuditRecovery | None:
-    """已存在未完成审计时，返回当前审计与活动 Run，不新建（PRD FR-07）。"""
+# --------------------------------------------------------------------------- #
+# 会话创建：首个 clarify Run（FR-02，与首条用户消息同一事务）
+# --------------------------------------------------------------------------- #
 
-    open_audit = audit_repo.open_audit_for_session(db, session.id)
-    if open_audit is None:
+
+def start_initial_run(
+    db,
+    *,
+    session: SessionRow,
+    owner_email: str,
+    now_iso: str,
+    now_epoch: int | None = None,
+) -> RunRow:
+    """为新建会话排入首个 clarify Run，占住 ``active_run_id``。
+
+    放在服务层而不是 API 层，保证「会话 + 首条 user 消息 + 首个 Run」一次事务
+    提交；会话版本保持创建值（该 Run 属于创建动作本身），由 Worker 提交结果时
+    正常推进版本。
+    """
+
+    now_epoch = int(now_epoch if now_epoch is not None else time.time())
+    content = (session.problem_statement or "").strip()
+    scope = f"session:{session.id}"
+    run = run_repo.create_run(
+        db,
+        session_id=session.id,
+        owner_email=owner_email,
+        request_id=C.new_request_id(),
+        action=Action.clarify.value,
+        input_hash=input_hash(Action.clarify.value, scope, {"content": content}, None),
+        base_session_version=session.session_version,
+        base_product_version=session.current_product_version,
+        budget=default_budget(),
+        now_iso=now_iso,
+        deadline_at=now_epoch + C.RUN_TIMEOUT_SECONDS,
+        queue_deadline_at=now_epoch + C.QUEUE_WAIT_LIMIT_SECONDS,
+        run_id=new_id(),
+    )
+    session_repo.touch_session(db, session, now_iso=now_iso, active_run_id=run.id)
+    logger.info("会话创建已排入首个 clarify Run：session=%s run=%s", session.id, run.id)
+    return run
+
+
+def _recovery_receipt(
+    db,
+    *,
+    owner_email: str,
+    parsed: C.ParsedCommand,
+    recovery: StartAuditRecovery,
+    now_iso: str,
+) -> StartAuditRecovery:
+    """幂等记录 start_audit 的恢复回执（200，不新建审计/Run）。"""
+
+    _store_idempotent(
+        db,
+        owner_email,
+        parsed,
+        kind="recovery",
+        body=recovery.model_dump(mode="json"),
+        http_status=200,
+        related_run_id=recovery.current_run_id,
+        related_control_id=None,
+        now_iso=now_iso,
+    )
+    return recovery
+
+
+def _maybe_audit_recovery(db, session: SessionRow) -> StartAuditRecovery | None:
+    """已存在未完成审计时，返回当前审计与活动 Run，不新建（PRD FR-07）。
+
+    除 created/opening/active/closing 外，closing 阶段报告生成失败
+    （``status=failed`` + ``end_reason`` 为错误码）的审计同样属于「待恢复」：
+    再次 start_audit 应返回待完成报告回执，而不是重置开场。
+    """
+
+    audit = audit_repo.open_audit_for_session(db, session.id)
+    if audit is None:
+        audit = audit_repo.report_retryable_audit_for_session(db, session.id)
+    if audit is None:
         return None
     active = run_repo.active_run_for_session(db, session.id)
     latest = db.execute(
         select(RunRow)
-        .where(RunRow.session_id == session.id, RunRow.audit_id == open_audit.id)
+        .where(RunRow.session_id == session.id, RunRow.audit_id == audit.id)
         .order_by(RunRow.created_at.desc())
         .limit(1)
     ).scalar_one_or_none()
     return StartAuditRecovery(
-        audit_id=open_audit.id,
-        status=AuditStatus(open_audit.status),
+        audit_id=audit.id,
+        status=AuditStatus(audit.status),
         current_run_id=active.id if active else None,
         latest_run_id=latest.id if latest is not None else None,
         session_version=session.session_version,
@@ -1447,6 +1533,46 @@ def _walk_run_status(db, run: RunRow, target: RunStatus, *, now_iso: str) -> Non
         _set_run_fields(db, run, status=target.value, finished_at=now_iso)
 
 
+def _enqueue_follow_up(
+    db,
+    *,
+    session: SessionRow,
+    parent: RunRow,
+    task_kind: Any,
+    now_iso: str,
+    now_epoch: int | None = None,
+) -> RunRow:
+    """在同一事务内排入后续任务（如 brainstorm → synthesis）。
+
+    复用 ``retry_run`` 的子 Run 语义：``parent_run_id`` 指向触发它的 Run，基础版本
+    取当前已提交的产品版本，因此重放/迟到结果不会串版本；子 Run 重新占住
+    ``active_run_id``，前端订阅它即可看到主持人归并结果。
+    """
+
+    now_epoch = int(now_epoch if now_epoch is not None else time.time())
+    action = C.TaskKind(task_kind).value
+    scope = f"session:{session.id}"
+    child = run_repo.create_run(
+        db,
+        session_id=session.id,
+        owner_email=session.owner_email,
+        request_id=C.new_request_id(),
+        action=action,
+        input_hash=input_hash(action, scope, {"follow_up_of": parent.id}, None),
+        base_session_version=session.session_version,
+        base_product_version=session.current_product_version,
+        budget=default_budget(),
+        now_iso=now_iso,
+        deadline_at=now_epoch + C.RUN_TIMEOUT_SECONDS,
+        queue_deadline_at=now_epoch + C.QUEUE_WAIT_LIMIT_SECONDS,
+        parent_run_id=parent.id,
+        run_id=new_id(),
+    )
+    session_repo.touch_session(db, session, now_iso=now_iso, active_run_id=child.id)
+    logger.info("已排入后续任务：parent=%s action=%s run=%s", parent.id, action, child.id)
+    return child
+
+
 def _commit_outcome(
     db,
     *,
@@ -1606,6 +1732,20 @@ def _commit_outcome(
     if outcome.apply is not None:
         outcome.apply(db)
 
+    # 7) 成功结果的后续任务（FR-04D：brainstorm → synthesis），同一事务建子 Run。
+    #    取消/失败不排后续；子 Run 继承本次已提交的产品版本并占住 active_run_id。
+    if outcome.follow_up is not None and target in (
+        RunStatus.succeeded,
+        RunStatus.partial_succeeded,
+    ):
+        _enqueue_follow_up(
+            db,
+            session=session,
+            parent=run,
+            task_kind=outcome.follow_up,
+            now_iso=now_iso,
+        )
+
 
 def apply_outcome(
     db,
@@ -1745,6 +1885,13 @@ def retry_run(
     parsed_input_hash = input_hash(
         original.action, f"session:{session.id}", {"retry_of": original.id}, session.session_version
     )
+    # 子 Run 只调度父 Run 里失败/未完成的步骤；已成功的步骤由 runner 从父 Run
+    # 的 step.output_json 复用（brainstorm 的角色产物随 step 落库）。
+    failed_steps = [
+        str(step.logical_key)
+        for step in run_repo.list_steps(db, original.id)
+        if StepStatus(step.status) is not StepStatus.succeeded
+    ]
     child = run_repo.create_run(
         db,
         session_id=session.id,
@@ -1759,6 +1906,7 @@ def retry_run(
         deadline_at=now_epoch + C.RUN_TIMEOUT_SECONDS,
         queue_deadline_at=now_epoch + C.QUEUE_WAIT_LIMIT_SECONDS,
         parent_run_id=original.id,
+        failed_steps=failed_steps,
         audit_id=original.audit_id,
         base_audit_version=original.base_audit_version,
         run_id=new_id(),

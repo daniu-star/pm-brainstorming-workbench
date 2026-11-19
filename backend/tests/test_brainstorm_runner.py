@@ -16,7 +16,9 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
+import time
 import unittest
 from pathlib import Path
 from typing import Any
@@ -25,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import select  # noqa: E402
 
-from core.llm_client import LLMResult, LLMUsage  # noqa: E402
+from core.llm_client import LLMRequestError, LLMResult, LLMUsage  # noqa: E402
 from domain import contracts as C  # noqa: E402
 from domain.contracts import (  # noqa: E402
     Action,
@@ -39,11 +41,13 @@ from domain.contracts import (  # noqa: E402
     StepStatus,
     TaskKind,
     new_id,
+    utc_now_iso,
 )
 from domain.errors import ErrorCode  # noqa: E402
 from repositories import database, session_repo  # noqa: E402
-from repositories.database import MessageRow, ProductStateRow, StepRow  # noqa: E402
+from repositories.database import MessageRow, ProductStateRow, RunRow, StepRow  # noqa: E402
 from services import command_service  # noqa: E402
+from services.canvas_projector import project_canvas  # noqa: E402
 from services.reducer import role_logical_key  # noqa: E402
 from tests.test_runner import OWNER, RunnerTestCase  # noqa: E402
 from workflows import runner  # noqa: E402
@@ -133,6 +137,39 @@ class _BrainstormLLM:
         return _role_payload(RoleCode(role)), _llm_result()
 
 
+class _FailRoleLLM(_BrainstormLLM):
+    """让指定角色抛不可重试的上游错误，用于构造“部分角色已成功”的失败 Run。"""
+
+    def __init__(self, role: RoleCode, error: Exception) -> None:
+        super().__init__()
+        self.fail_role = role
+        self.error = error
+        self.attempted: list[str] = []
+
+    async def complete_json(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        max_output_tokens: int | None = None,
+        timeout_seconds: float | None = None,
+        purpose: str = "",
+        json_schema: dict[str, Any] | None = None,
+        temperature: float = 0.2,
+    ) -> tuple[Any, LLMResult]:
+        role = purpose.rsplit(".", 1)[-1]
+        if role == self.fail_role.value:
+            self.attempted.append(role)
+            raise self.error
+        return await super().complete_json(
+            messages=messages,
+            max_output_tokens=max_output_tokens,
+            timeout_seconds=timeout_seconds,
+            purpose=purpose,
+            json_schema=json_schema,
+            temperature=temperature,
+        )
+
+
 class _ElevenCallLLM:
     """记录调用；供“第 11 次被拒”的端到端用例。"""
 
@@ -142,6 +179,67 @@ class _ElevenCallLLM:
     async def complete(self, **kwargs: Any) -> LLMResult:
         self.calls.append(kwargs)
         return _llm_result()
+
+
+_ID_PATTERN = r"\[([0-9a-f]{32})\]"
+
+
+class _SynthesisLLM:
+    """主持人/复核替身：从提示词里读真实 claim/option id，保证引用不越界。"""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def complete_json(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        max_output_tokens: int | None = None,
+        timeout_seconds: float | None = None,
+        purpose: str = "",
+        json_schema: dict[str, Any] | None = None,
+        temperature: float = 0.2,
+    ) -> tuple[Any, LLMResult]:
+        self.calls.append(purpose)
+        if purpose != "synthesis.moderator":
+            return {"agree": True, "concerns": []}, _llm_result()
+
+        digest = messages[-1].get("content", "") if messages else ""
+        claims_block, _, options_block = digest.partition("### 方案与主张的引用关系")
+        claim_ids = re.findall(_ID_PATTERN, claims_block)
+        option_ids = re.findall(_ID_PATTERN, options_block)
+        conflicts = []
+        if claim_ids:
+            conflicts.append(
+                {
+                    "topic": "首版是否先做采集",
+                    "claim_ids": claim_ids[:2],
+                    "impact": "决定首版信息架构",
+                    "needed_evidence": "一次 5 人可用性测试",
+                    "role_codes": ["cto", "designer"],
+                }
+            )
+        return (
+            {
+                "schema_version": 1,
+                "consensus_claim_ids": claim_ids[:1],
+                "conflicts": conflicts,
+                "recommended_option_id": option_ids[0] if option_ids else None,
+                "alternative_option_ids": option_ids[1:2],
+                "decision_proposals": [
+                    {
+                        "option_id": option_ids[0] if option_ids else None,
+                        "rationale": "引用主张最多的方案，建议作为首版方向",
+                        "evidence_refs": claim_ids[:1],
+                    }
+                ],
+                "unresolved_issue_ids": [],
+                "next_experiment_ids": [],
+                "limitations": "样本量小，需一次可用性测试验证",
+                "degraded": False,
+            },
+            _llm_result(),
+        )
 
 
 class BrainstormRunnerTests(RunnerTestCase):
@@ -361,6 +459,149 @@ class BrainstormRunnerTests(RunnerTestCase):
         # 部分成功也写出缺失角色说明（PRD FR-03）。
         warnings = json.loads(run.warnings_json or "[]")
         self.assertTrue(any("ops" in str(item) for item in warnings), warnings)
+
+    def test_retry_only_reruns_failed_role_and_reuses_successes(self) -> None:
+        """AC-14：重试子 Run 只调度失败步骤，已成功角色的产物直接复用。"""
+
+        session_id = self._prepare_brainstorm_session()
+        parent_id = self._submit_brainstorm("all").run_id
+        self.claim(parent_id)
+
+        # target_user 是最后一个角色：前三个角色 step 已 succeeded，随后上游报错使 Run 失败。
+        failing = _FailRoleLLM(RoleCode.target_user, LLMRequestError("bad key"))
+        self.run_once(parent_id, llm=failing)
+        self.assertEqual(failing.attempted, [RoleCode.target_user.value])
+
+        parent = self.get_run(parent_id)
+        self.assertEqual(parent.status, RunStatus.failed.value, parent.error_message)
+        self.assertEqual(parent.error_code, "LLM_REQUEST_ERROR")
+        parent_steps = self._role_steps(parent_id)
+        self.assertEqual(set(parent_steps), {role.value for role in FOUR_ROLES})
+        for role in (RoleCode.cto, RoleCode.designer, RoleCode.ops):
+            self.assertEqual(parent_steps[role.value].status, StepStatus.succeeded.value)
+        self.assertNotEqual(parent_steps[RoleCode.target_user.value].status, StepStatus.succeeded.value)
+        # 失败 Run 未提交产品状态，重试上下文仍与父 Run 一致。
+        self.assertEqual(self._product_versions(session_id), [1, 2])
+
+        with database.session_scope() as db:
+            retry = command_service.retry_run(
+                db,
+                owner_email=OWNER,
+                run_id=parent_id,
+                request_id=new_id(),
+                now_iso=utc_now_iso(),
+                now_epoch=int(time.time()),
+            )
+
+        child = self.get_run(retry.run_id)
+        self.assertNotEqual(child.id, parent_id)
+        self.assertEqual(child.parent_run_id, parent_id)
+        self.assertEqual(
+            set(json.loads(child.failed_steps_json)),
+            {TOP_STEP_KEY, role_logical_key(RoleCode.target_user)},
+        )
+
+        self.claim(child.id)
+        retry_llm = _BrainstormLLM()
+        self.run_once(child.id, llm=retry_llm)
+
+        # 只重新调用失败专家，cto/designer/ops 不重复调用、也不新建子 Run 角色 step。
+        self.assertEqual([call["role"] for call in retry_llm.calls], [RoleCode.target_user.value])
+        child = self.get_run(child.id)
+        self.assertEqual(child.status, RunStatus.succeeded.value, child.error_message)
+        self.assertEqual(set(self._role_steps(child.id)), {RoleCode.target_user.value})
+        self.assertEqual(self._usage(child.id)["calls"], 1)
+        self.assertEqual(self._product_versions(session_id), [1, 2, 3])
+        self.assertEqual(len(self._agent_messages(session_id)), 4)
+
+        # 复用而非重新生成：父 Run cto 的候选 ID 原样出现在最终产品状态中。
+        parent_cto_step = self.get_step(parent_id, role_logical_key(RoleCode.cto))
+        self.assertIsNotNone(parent_cto_step)
+        assert parent_cto_step is not None
+        parent_cto_output = json.loads(parent_cto_step.output_json or "{}")
+        reused_claim_id = parent_cto_output["candidates"]["c1"]["id"]
+        with database.session_scope() as db:
+            state = session_repo.get_product_state(db, session_id)
+        self.assertIsNotNone(state)
+        assert state is not None
+        self.assertIn(reused_claim_id, {claim.id for claim in state.claims})
+
+    def test_brainstorm_enqueues_synthesis_child_run(self) -> None:
+        """FR-04D：四角色合并后自动排入主持人归并 Run，结论投影到画布。"""
+
+        session_id = self._prepare_brainstorm_session()
+        receipt = self._submit_brainstorm("all")
+        run_id = receipt.run_id
+        self.claim(run_id)
+        self.run_once(run_id, llm=_BrainstormLLM())
+
+        parent = self.get_run(run_id)
+        self.assertEqual(parent.status, RunStatus.succeeded.value, parent.error_message)
+
+        # 同事务排入的合成子 Run：queued、action=synthesis、parent 指向本 Run。
+        with database.session_scope() as db:
+            child = db.execute(
+                select(RunRow)
+                .where(RunRow.session_id == session_id)
+                .where(RunRow.action == TaskKind.synthesis.value)
+            ).scalars().one_or_none()
+            session = session_repo.get_session(db, session_id)
+        self.assertIsNotNone(child, "brainstorm 成功后应排入 synthesis 子 Run")
+        assert child is not None
+        self.assertEqual(child.status, RunStatus.queued.value)
+        self.assertEqual(child.parent_run_id, run_id)
+        self.assertEqual(int(child.base_product_version), 3)
+        self.assertIsNotNone(session)
+        self.assertEqual(session.active_run_id, child.id)
+
+        # 子 Run 由同一个 Worker 继续领跑：主持人 1 次 + 两位复核。
+        self.claim(child.id)
+        llm = _SynthesisLLM()
+        self.run_once(child.id, llm=llm)
+
+        child = self.get_run(child.id)
+        self.assertEqual(child.status, RunStatus.succeeded.value, child.error_message)
+        self.assertEqual(child.result_product_version, 4)
+        self.assertEqual(llm.calls[0], "synthesis.moderator")
+        self.assertEqual(len(llm.calls), 3)
+        self.assertTrue(all(call.startswith("synthesis.review.") for call in llm.calls[1:]))
+        self.assertEqual(self._product_versions(session_id), [1, 2, 3, 4])
+
+        # 主持人消息进入会话；产品状态包含 proposed 决策与分歧/缺口。
+        messages = self._agent_messages(session_id)
+        self.assertIn(RoleCode.moderator.value, {message.role_code for message in messages})
+        moderator_message = [m for m in messages if m.role_code == RoleCode.moderator.value]
+        self.assertEqual(len(moderator_message), 1)
+        self.assertIn("决策建议", moderator_message[0].content)
+        self.assertIn("主要分歧", moderator_message[0].content)
+
+        with database.session_scope() as db:
+            state = session_repo.get_product_state(db, session_id)
+        self.assertEqual(state.version, 4)
+        self.assertEqual(state.source_run_id, child.id)
+        self.assertEqual(len(state.decisions), 1)
+        self.assertEqual(state.decisions[0].status.value, "proposed")
+        self.assertEqual(state.decisions[0].origin.value, "model")
+        self.assertEqual({issue.kind for issue in state.unresolved_issues}, {"conflict", "gap"})
+
+        # 画布：决策节点 + 分歧/缺口（question）节点，不再只有四份并列观点。
+        canvas = project_canvas(state)
+        branch_keys = {branch.key for branch in canvas.branches}
+        self.assertIn("decision", branch_keys)
+        self.assertIn("unresolved", branch_keys)
+        decision_nodes = [node for branch in canvas.branches if branch.key == "decision" for node in branch.nodes]
+        self.assertEqual(len(decision_nodes), 1)
+        self.assertEqual(decision_nodes[0].kind, "decision")
+        unresolved_nodes = [node for branch in canvas.branches if branch.key == "unresolved" for node in branch.nodes]
+        self.assertGreaterEqual(len([node for node in unresolved_nodes if node.kind == "question"]), 1)
+
+        # 事件：主持人产出 + 产品状态推进；终结事件唯一。
+        types = self._event_types(child.id)
+        self.assertEqual(types.count(EventType.role_completed.value), 1)
+        self.assertEqual(types.count(EventType.product_state_updated.value), 1)
+        terminal = [event for event in self.events(child.id) if str(event.type) in TERMINAL_EVENT_TYPES]
+        self.assertEqual(len(terminal), 1)
+        self.assertEqual(terminal[0].type, EventType.run_completed.value)
 
     def test_budget_exhausted_midway_writes_no_product_state(self) -> None:
         # 直接构造 Run：输出预算只够两次 1500 token 的预留（第三次 1200+1500 > 1600）。

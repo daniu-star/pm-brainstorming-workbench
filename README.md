@@ -211,3 +211,6 @@ cd frontend && npm run test:e2e                                             # �
 - 验收报告（逐 AC-01…AC-42 + 已知偏差）：`docs/v4-acceptance-report.md`
 - 发布就绪清单（部署顺序、回滚、验收命令）：`docs/v4-release-checklist.md`
 - 模块接口契约（仓储/服务/SSE 语义）：`docs/v4-m1-interfaces.md`
+- QA Loop 方法学与首次运行结果：`docs/qa-loop-engineering.md`
+- QA Loop 逐轮归档（5 轮分数/发现/修复）：`docs/qa-loop-runs/README.md`
+- 可复用闭环脚本：`scripts/qa-loop.workflow.js`

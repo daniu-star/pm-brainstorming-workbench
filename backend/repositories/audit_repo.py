@@ -89,6 +89,37 @@ def _enum_values(enum_cls: Any) -> frozenset[str]:
     return frozenset(item.value for item in enum_cls)
 
 
+_ERROR_CODE_VALUES: frozenset[str] = frozenset(
+    value for value in vars(ErrorCode).values() if isinstance(value, str)
+)
+
+
+def _valid_end_reason(value: str) -> bool:
+    """``end_reason`` 接受 :class:`EndReason`，或 closing 阶段失败时记录的稳定错误码。
+
+    正常结束原因是小写枚举值，``ErrorCode`` 全大写，两者不会混淆；错误码只在
+    ``closing -> failed``（报告生成失败）时写入，作为恢复重试与追查的锚点。
+    """
+
+    return value in _enum_values(EndReason) or value in _ERROR_CODE_VALUES
+
+
+def _parse_end_reason(raw: str | None) -> EndReason | None:
+    """把库里可能存着错误码的 ``end_reason`` 转成对外的 :class:`EndReason`。
+
+    对外快照没有错误码字段，遇到错误码时降级为 ``failed``（语义即“审计失败”）；
+    错误码本身仍保留在 ``audits.end_reason`` 里供恢复逻辑判断。
+    """
+
+    if not raw:
+        return None
+    try:
+        return EndReason(str(raw))
+    except ValueError:
+        logger.warning("审计 end_reason 是失败错误码（%s），快照降级为 failed", raw)
+        return EndReason.failed
+
+
 def _load_list(text: str | None) -> list[Any]:
     if not text:
         return []
@@ -202,6 +233,33 @@ def open_audit_for_session(db: Session, session_id: str) -> AuditRow | None:
     return db.execute(stmt).scalar_one_or_none()
 
 
+def report_retryable_audit_for_session(db: Session, session_id: str) -> AuditRow | None:
+    """返回「closing 阶段报告生成失败、仍可恢复」的审计，无则 None。
+
+    ``_apply_closing_failure`` 在 closing → failed 时把稳定错误码（``ErrorCode``，
+    全大写）写进 ``end_reason``；普通失败记录的是 ``EndReason.failed``。因此
+    「``end_reason`` 不是 ``EndReason``」即可判定该审计还留有未完成的报告草稿。
+    """
+
+    stmt = (
+        select(AuditRow)
+        .where(
+            AuditRow.session_id == session_id,
+            AuditRow.status == AuditStatus.failed.value,
+        )
+        .order_by(AuditRow.created_at.desc(), AuditRow.id.desc())
+        .limit(1)
+    )
+    audit = db.execute(stmt).scalar_one_or_none()
+    if audit is None or not audit.end_reason:
+        return None
+    try:
+        EndReason(str(audit.end_reason))
+    except ValueError:
+        return audit
+    return None
+
+
 def latest_audit_for_session(db: Session, session_id: str) -> AuditRow | None:
     """返回会话最近一次审计实例（任意状态）。"""
 
@@ -253,7 +311,7 @@ def update_audit(
 
     if end_reason is not UNSET:
         value = _value(end_reason)
-        if value is not None and value not in _enum_values(EndReason):
+        if value is not None and not _valid_end_reason(str(value)):
             raise AppError(ErrorCode.INVALID_REQUEST, f"未知结束原因：{value!r}")
         audit.end_reason = None if value is None else str(value)
 
@@ -546,7 +604,7 @@ def audit_to_snapshot(db: Session, audit: AuditRow) -> AuditSnapshot:
         audit_version=audit.audit_version,
         status=AuditStatus(audit.status),
         question_count=audit.question_count,
-        end_reason=EndReason(audit.end_reason) if audit.end_reason else None,
+        end_reason=_parse_end_reason(audit.end_reason),
         active_question_id=audit.active_question_id,
         pending_continuation=bool(audit.pending_continuation),
         close_requested=bool(audit.close_requested),

@@ -11,10 +11,20 @@ const PHASE_LABELS: Record<string, { label: string; color: string }> = {
   interview: { label: "AI 面试官", color: "text-red-400" },
 };
 
-export function Header() {
-  const { phase, sessionId, toggleHistory } = useSessionStore();
+/** v2 阶段文案：auditing 与 audit_completed 不能被旧 phase 混成「AI 面试官」 */
+const V2_PHASE_LABELS: Record<string, { label: string; color: string }> = {
+  clarifying: { label: "产品教练 · 思路梳理", color: "text-amber-400" },
+  brainstorming: { label: "多角色脑暴", color: "text-brand-300" },
+  auditing: { label: "AI 审计中", color: "text-red-400" },
+  audit_completed: { label: "审计已完成", color: "text-emerald-400" },
+};
 
-  const phaseInfo = PHASE_LABELS[phase] || { label: "脑暴中", color: "text-zinc-400" };
+export function Header() {
+  const { phase, v2Phase, sessionId, toggleHistory } = useSessionStore();
+
+  const phaseInfo =
+    (v2Phase ? V2_PHASE_LABELS[v2Phase] : null) ??
+    PHASE_LABELS[phase] ?? { label: "脑暴中", color: "text-zinc-400" };
 
   return (
     <header className="h-14 bg-dark-800/80 backdrop-blur border-b border-zinc-800/50 flex items-center justify-between px-4 shrink-0">

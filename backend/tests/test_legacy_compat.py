@@ -209,10 +209,19 @@ class LegacySessionTests(LegacyCompatTestBase):
 
         created = self.create_legacy_session()
         self.assertEqual(created["phase"], "coach")  # v1 旧值
-        self.assertEqual(created["messages"], [])
+        # 会话创建即写入首条 user 消息（FR-02），旧接口不再返回空列表。
+        self.assertEqual(len(created["messages"]), 1)
+        self.assertEqual(created["messages"][0]["role"], "user")
+        self.assertEqual(created["messages"][0]["content"], created["problem_statement"])
         self.assertIn("canvas_tree", created)
         self.assertIsNone(created["canvas_tree"])
         session_id = created["id"]
+
+        # 连续刷新 3 次：消息不重复追加、不产生 4xx。
+        for _ in range(3):
+            refreshed = self.get(f"/api/session/{session_id}")
+            self.assertEqual(refreshed.status_code, 200, refreshed.text)
+            self.assertEqual(len(refreshed.json()["messages"]), 1)
 
         detail = self.get(f"/api/session/{session_id}")
         self.assertEqual(detail.status_code, 200, detail.text)

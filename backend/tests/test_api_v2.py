@@ -28,6 +28,7 @@ from pathlib import Path
 from unittest import mock
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 import main
 from core import auth
@@ -35,6 +36,7 @@ from core.config import settings
 from domain import contracts as C
 from domain.errors import ErrorCode
 from repositories import audit_repo, database, run_repo, session_repo
+from services import command_service
 
 TEST_SECRET = "test-secret-key-that-is-longer-than-32-characters"
 
@@ -142,6 +144,16 @@ class V2ApiTestBase(unittest.TestCase):
         self.assertEqual(resp.status_code, 201, resp.text)
         return resp.json()
 
+    def cancel_initial_run(self, session_id: str) -> int:
+        """取消创建会话时自动排入的 clarify Run（FR-02），返回推进后的会话版本。"""
+
+        with database.session_scope() as db:
+            active = run_repo.active_run_for_session(db, session_id)
+            self.assertIsNotNone(active, "新建会话应已排入首个 clarify Run")
+            command_service.cancel_run(db, owner_email=self.email, run_id=active.id)
+            session = session_repo.require_session(db, session_id, owner_email=self.email)
+            return int(session.session_version)
+
     def seed_ready_brief(self, session_id: str) -> int:
         """模拟澄清阶段已完成（coach 尚未落地），让 confirm_brief 可执行。
 
@@ -248,6 +260,21 @@ class AuthAndSessionTests(V2ApiTestBase):
         self.assertEqual(session["session_version"], 1)
         self.assertEqual(session["current_product_version"], 1)
         self.assertEqual(session["message_count"], 1)
+        # 创建即排入首个 clarify Run（FR-02），前端订阅 active_run_id 即可拿问题。
+        self.assertIsNotNone(session["active_run_id"])
+
+        with database.session_scope() as db:
+            active = run_repo.active_run_for_session(db, session_id)
+            self.assertIsNotNone(active, "新建会话应有一个活动的 clarify Run")
+            self.assertEqual(active.action, C.Action.clarify.value)
+            self.assertEqual(active.status, C.RunStatus.queued.value)
+            runs = db.execute(
+                select(database.RunRow).where(
+                    database.RunRow.session_id == session_id,
+                    database.RunRow.action == C.Action.clarify.value,
+                )
+            ).scalars().all()
+            self.assertEqual(len(runs), 1)
 
         detail = self.get(f"/api/v2/sessions/{session_id}")
         self.assertEqual(detail.status_code, 200, detail.text)
@@ -325,21 +352,27 @@ class AuthAndSessionTests(V2ApiTestBase):
 
 
 class CommandTests(V2ApiTestBase):
-    def _confirm_brief_body(self, session_id: str, request_id: str) -> dict:
+    def _confirm_brief_body(
+        self, session_id: str, request_id: str, *, expected_session_version: int = 1
+    ) -> dict:
         return {
             "request_id": request_id,
             "action": C.Action.confirm_brief.value,
-            "expected_session_version": 1,
+            "expected_session_version": expected_session_version,
             "payload": {"expected_product_version": 2},
         }
 
     def test_confirm_brief_idempotent_replay_and_version_conflict(self) -> None:
         session = self.create_session()
         session_id = session["id"]
+        # 创建时已排入 clarify Run（FR-02）：先取消，才能在同一会话上验证同步命令。
+        session_version = self.cancel_initial_run(session_id)
         self.seed_ready_brief(session_id)
         request_id = str(uuid.uuid4())
 
-        body = self._confirm_brief_body(session_id, request_id)
+        body = self._confirm_brief_body(
+            session_id, request_id, expected_session_version=session_version
+        )
         first = self.post(f"/api/v2/sessions/{session_id}/commands", json=body)
         self.assertEqual(first.status_code, 202, first.text)
         receipt = first.json()
@@ -420,6 +453,8 @@ class CommandTests(V2ApiTestBase):
     def test_session_busy_returns_active_run_id(self) -> None:
         session = self.create_session()
         session_id = session["id"]
+        # 创建时自动排入的 clarify Run 先取消，再验证「第二条命令」被 SESSION_BUSY 挡住。
+        self.cancel_initial_run(session_id)
         first = self.post(
             f"/api/v2/sessions/{session_id}/commands",
             json={
@@ -771,6 +806,90 @@ class DeleteAndAuthMigrationTests(V2ApiTestBase):
             self.assertFalse(auth.verify_email_code(email, "000000"))
         # 超过尝试次数后，即使输入正确验证码也失败（防止爆破）。
         self.assertFalse(auth.verify_email_code(email, captured["code"]))
+
+
+class AuditEndpointTests(V2ApiTestBase):
+    """GET /api/v2/audits/{aid}：审计快照 + 问题列表（AC-22 的最小 HTTP 证据）。"""
+
+    def _seed_active_audit(self, session_id: str) -> tuple[str, str]:
+        """直接写库造一个 active 审计 + 2 个问题（第 2 个为当前问题）。"""
+
+        with database.session_scope() as db:
+            session = session_repo.require_session(db, session_id, owner_email=self.email)
+            audit = audit_repo.create_audit(
+                db,
+                session_id=session_id,
+                product_version=int(session.current_product_version),
+                now_iso=C.utc_now_iso(),
+            )
+            audit_repo.update_audit(
+                db,
+                audit,
+                status=C.AuditStatus.active.value,
+                now_iso=C.utc_now_iso(),
+            )
+            audit_repo.add_question(
+                db,
+                audit,
+                ordinal=1,
+                dimension="problem_validity",
+                issue_refs=None,
+                question_text="这个问题现在有多痛？",
+                now_iso=C.utc_now_iso(),
+            )
+            active = audit_repo.add_question(
+                db,
+                audit,
+                ordinal=2,
+                dimension="user_adoption",
+                issue_refs=None,
+                question_text="目标用户现在用什么替代方案？",
+                now_iso=C.utc_now_iso(),
+            )
+            audit_repo.update_audit(
+                db,
+                audit,
+                active_question_id=active.id,
+                now_iso=C.utc_now_iso(),
+            )
+            return audit.id, active.id
+
+    def test_get_audit_returns_snapshot_with_questions(self) -> None:
+        session = self.create_session()
+        audit_id, active_question_id = self._seed_active_audit(session["id"])
+
+        resp = self.get(f"/api/v2/audits/{audit_id}")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+
+        self.assertEqual(body["id"], audit_id)
+        self.assertEqual(body["session_id"], session["id"])
+        self.assertEqual(body["status"], C.AuditStatus.active.value)
+        self.assertEqual(body["active_question_id"], active_question_id)
+        self.assertEqual(body["question_count"], 2)
+
+        questions = body["questions"]
+        self.assertEqual([q["ordinal"] for q in questions], [1, 2])
+        self.assertEqual(questions[0]["dimension"], "problem_validity")
+        self.assertEqual(questions[1]["question_text"], "目标用户现在用什么替代方案？")
+        # 当前问题必须能被前端直接定位（AC-22：刷新后同一 audit_id、同一问题）
+        active = [q for q in questions if q["id"] == active_question_id]
+        self.assertEqual(len(active), 1)
+        # 当前问题处于「等待回答」；已答问题才会带具体评估。
+        self.assertEqual(active[0]["assessment"], C.Assessment.awaiting_answer.value)
+
+    def test_get_audit_rejects_other_owner(self) -> None:
+        session = self.create_session()
+        audit_id, _ = self._seed_active_audit(session["id"])
+
+        resp = self.get(
+            f"/api/v2/audits/{audit_id}",
+            email=f"other-{uuid.uuid4().hex[:8]}@example.com",
+        )
+        # 审计归属校验走 FORBIDDEN（与 v2 其余资源一致），重点是「不泄漏正文」。
+        self.assertEqual(resp.status_code, 403, resp.text)
+        self.assertEqual(resp.json()["error"]["code"], ErrorCode.FORBIDDEN)
+        self.assertNotIn("questions", resp.json())
 
 
 if __name__ == "__main__":  # pragma: no cover

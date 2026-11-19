@@ -362,3 +362,249 @@ test("describeControlOutcome 区分结束/取消且 scheduled 不谎报已完成
   assert.equal(view.describeControlOutcome("cancel_audit", "applied"), "取消审计请求已立即生效");
   assert.equal(view.describeControlOutcome("end_audit", null), "结束审计请求已提交");
 });
+
+// ---------------------------------------------------------------------------
+// 6. pending_continuation：上一问处理失败后的「重试继续 / 结束审计」
+// ---------------------------------------------------------------------------
+test("normalizeAudit 映射 pending_continuation，缺失或非布尔按 false（不臆造失败态）", () => {
+  const failed = view.normalizeAudit({
+    id: "aud_cont_1",
+    status: "active",
+    pending_continuation: true,
+    active_question_id: null,
+    questions: [{ id: "q_1", ordinal: 1, answer_message_id: "m_1" }],
+  });
+  assert.equal(failed.pendingContinuation, true);
+
+  const normal = view.normalizeAudit({ id: "aud_cont_2", status: "active" });
+  assert.equal(normal.pendingContinuation, false);
+
+  // 后端 JSON 里若是字符串 "true" 也不当成 true，避免误报「继续失败」
+  const stringy = view.normalizeAudit({ id: "aud_cont_3", status: "active", pending_continuation: "true" });
+  assert.equal(stringy.pendingContinuation, false);
+});
+
+test("canRetryContinuation 只在 active + pending_continuation + 无当前问题时为 true", () => {
+  const base = { id: "aud_retry", status: "active", pending_continuation: true, questions: [] };
+  const retry = view.normalizeAudit(base);
+  assert.equal(view.canRetryContinuation(retry, false), true);
+  // 有当前问题时应正常作答，不显示「重试继续」
+  assert.equal(view.canRetryContinuation(retry, true), false);
+
+  for (const status of ["closing", "completed", "cancelled", "failed", "created"]) {
+    const audit = view.normalizeAudit({ ...base, status });
+    assert.equal(view.canRetryContinuation(audit, false), false, `${status} 不应显示重试继续`);
+  }
+
+  // pending_continuation 缺失 → 走原来的「等待审计收尾 / 暂无待回答的问题」
+  const noFlag = view.normalizeAudit({ id: "aud_retry_none", status: "active", questions: [] });
+  assert.equal(view.canRetryContinuation(noFlag, false), false);
+  assert.equal(view.canRetryContinuation(null, false), false);
+});
+
+test("CLOSING_POLL_DELAYS_MS：退避递增且累计不超过 60s", () => {
+  const delays = view.CLOSING_POLL_DELAYS_MS;
+  assert.ok(Array.isArray(delays) && delays.length > 0);
+  assert.deepEqual([...delays], [1000, 2000, 4000, 8000, 16000, 29000]);
+  for (let index = 1; index < delays.length; index += 1) {
+    assert.ok(delays[index] > delays[index - 1], "退避间隔必须递增");
+  }
+  const total = delays.reduce((sum, ms) => sum + ms, 0);
+  assert.equal(total, 60000);
+  assert.ok(total <= 60000, "轮询上限 60s");
+});
+
+// ---------------------------------------------------------------------------
+// 7. 审计页关键文案：失败继续 / 收尾等待
+// ---------------------------------------------------------------------------
+test("审计页文案常量与产品口径一致（失败继续、收尾可刷新）", () => {
+  assert.equal(view.CONTINUATION_NOTICE_TEXT, "上一问处理失败，可重试继续或结束审计");
+  assert.equal(view.CLOSING_NOTICE_TEXT, "正在生成报告，可稍候或点刷新");
+});
+
+// ---------------------------------------------------------------------------
+// 8. 快照读取失败 vs 「确实没有审计」：读取失败不得渲染成「开始审计」
+// ---------------------------------------------------------------------------
+test("resolveAuditEntryState：读取 500 时只渲染错误态 + 重试，canStart=false", () => {
+  const state = view.resolveAuditEntryState({
+    auditId: "a_fail",
+    hasAudit: false,
+    auditError: { message: "服务器内部错误", notFound: false },
+    auditLoading: false,
+    sessionLoading: false,
+    legacyMode: false,
+    starting: false,
+  });
+  assert.equal(state.showLoadError, true);
+  assert.equal(state.showStartPanel, false, "读取失败时不能显示「开始审计」");
+  assert.equal(state.canStart, false, "读取失败时不能点「开始审计」");
+  assert.equal(state.loadErrorText, "服务器内部错误");
+  assert.equal(state.showLoading, false);
+});
+
+test("resolveAuditEntryState：确认 404 后才允许「开始审计」", () => {
+  const state = view.resolveAuditEntryState({
+    auditId: "a_missing",
+    hasAudit: false,
+    auditError: { message: "审计不存在", notFound: true },
+    auditLoading: false,
+    sessionLoading: false,
+    legacyMode: false,
+    starting: false,
+  });
+  assert.equal(state.showLoadError, false);
+  assert.equal(state.showStartPanel, true);
+  assert.equal(state.canStart, true);
+});
+
+test("resolveAuditEntryState：没有 auditId 直接进入开始审计；加载中显示占位", () => {
+  const fresh = view.resolveAuditEntryState({
+    auditId: null,
+    hasAudit: false,
+    auditError: null,
+    auditLoading: false,
+    sessionLoading: false,
+    legacyMode: false,
+    starting: false,
+  });
+  assert.equal(fresh.showStartPanel, true);
+  assert.equal(fresh.canStart, true);
+
+  const loading = view.resolveAuditEntryState({
+    auditId: "a_loading",
+    hasAudit: false,
+    auditError: null,
+    auditLoading: true,
+    sessionLoading: false,
+    legacyMode: false,
+    starting: false,
+  });
+  assert.equal(loading.showLoading, true);
+  assert.equal(loading.showStartPanel, false, "快照未回来前不能先闪一下「开始审计」");
+  assert.equal(loading.canStart, false);
+});
+
+test("resolveAuditEntryState：sessionLoading / legacy / starting 时禁止开始审计", () => {
+  const base = {
+    auditId: null,
+    hasAudit: false,
+    auditError: null,
+    auditLoading: false,
+    sessionLoading: false,
+    legacyMode: false,
+    starting: false,
+  };
+  assert.equal(view.resolveAuditEntryState({ ...base, sessionLoading: true }).canStart, false);
+  assert.equal(view.resolveAuditEntryState({ ...base, legacyMode: true }).canStart, false);
+  assert.equal(view.resolveAuditEntryState({ ...base, starting: true }).canStart, false);
+});
+
+test("AUDIT_LOAD_ERROR_TEXT 文案包含「读取失败」与「重试」", () => {
+  assert.match(view.AUDIT_LOAD_ERROR_TEXT, /读取失败/);
+  assert.match(view.AUDIT_LOAD_ERROR_TEXT, /重试/);
+  assert.match(view.AUDIT_LOADING_TEXT, /读取/);
+});
+
+// ---------------------------------------------------------------------------
+// 9. closing 超时 / 失败恢复入口
+// ---------------------------------------------------------------------------
+test("resolveClosingRecoveryState：轮询耗尽显示超时重试，未耗尽保持原提示", () => {
+  const exhausted = view.resolveClosingRecoveryState({
+    status: "closing",
+    pollExhausted: true,
+    hasFailedRun: false,
+  });
+  assert.equal(exhausted.showRecovery, true);
+  assert.equal(exhausted.noticeText, view.CLOSING_TIMEOUT_TEXT);
+  assert.match(exhausted.noticeText, /超时/);
+  assert.match(exhausted.noticeText, /重试/);
+
+  const waiting = view.resolveClosingRecoveryState({
+    status: "closing",
+    pollExhausted: false,
+    hasFailedRun: false,
+  });
+  assert.equal(waiting.showRecovery, false);
+  assert.equal(waiting.noticeText, view.CLOSING_NOTICE_TEXT);
+
+  // 已终结的审计不再显示收尾恢复入口
+  assert.equal(
+    view.resolveClosingRecoveryState({
+      status: "completed",
+      pollExhausted: true,
+      hasFailedRun: false,
+    }).showRecovery,
+    false
+  );
+});
+
+test("resolveClosingRecoveryState：关联 Run 失败显示失败重试，重试目标为 retry-failed", () => {
+  const state = view.resolveClosingRecoveryState({
+    status: "closing",
+    pollExhausted: false,
+    hasFailedRun: true,
+  });
+  assert.equal(state.showRecovery, true);
+  assert.equal(state.noticeText, view.CLOSING_FAILED_TEXT);
+  assert.match(state.noticeText, /失败/);
+  assert.match(state.noticeText, /重试/);
+  // 有 failed run 时页面必须调用 retryFailedRun，而不是只刷新快照
+  assert.equal(view.resolveClosingRetryTarget("run_failed"), "retry_failed_run");
+  assert.equal(view.resolveClosingRetryTarget(null), "refresh_snapshot");
+});
+
+// ---------------------------------------------------------------------------
+// 10. clarifying 阶段：审计入口必须让路给澄清引导
+// ---------------------------------------------------------------------------
+test("resolveAuditEntryState：clarifying 不显示「开始审计」，引导先完成澄清", () => {
+  const state = view.resolveAuditEntryState({
+    auditId: null,
+    hasAudit: false,
+    auditError: null,
+    auditLoading: false,
+    sessionLoading: false,
+    legacyMode: false,
+    starting: false,
+    v2Phase: "clarifying",
+  });
+  assert.equal(state.showStartPanel, false);
+  assert.equal(state.canStart, false);
+  assert.equal(state.showNotReady, true);
+  assert.equal(state.showLoading, false);
+  assert.match(state.notReadyText, /澄清/);
+  assert.match(state.notReadyText, /审计/);
+});
+
+test("resolveAuditEntryState：brainstorming 可开始；旧调用不传 v2Phase 行为不变", () => {
+  const base = {
+    auditId: null,
+    hasAudit: false,
+    auditError: null,
+    auditLoading: false,
+    sessionLoading: false,
+    legacyMode: false,
+    starting: false,
+  };
+  const brainstorming = view.resolveAuditEntryState({ ...base, v2Phase: "brainstorming" });
+  assert.equal(brainstorming.showStartPanel, true);
+  assert.equal(brainstorming.canStart, true);
+  assert.equal(brainstorming.showNotReady, false);
+
+  const legacyCaller = view.resolveAuditEntryState(base);
+  assert.equal(legacyCaller.showStartPanel, true, "旧调用（无 v2Phase）保持原行为");
+
+  // 已确认 404 但仍在 clarifying：同样不应放行「开始审计」
+  const notFoundClarifying = view.resolveAuditEntryState({
+    ...base,
+    auditId: "a_missing",
+    auditError: { message: "审计不存在", notFound: true },
+    v2Phase: "clarifying",
+  });
+  assert.equal(notFoundClarifying.showNotReady, true);
+  assert.equal(notFoundClarifying.showStartPanel, false);
+});
+
+test("AUDIT_NOT_READY 错误码映射为「先完成澄清」文案", () => {
+  assert.match(view.auditErrorText("AUDIT_NOT_READY"), /澄清/);
+  assert.match(view.auditErrorText("AUDIT_NOT_READY"), /审计/);
+});

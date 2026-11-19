@@ -17,6 +17,7 @@
 import { create } from "zustand";
 import type { FeatureTree, Message, Role, SessionPhase as LegacyPhase, SessionSummary } from "@/lib/types";
 import { createSSEConnection, openRunEvents, type SSEEvent } from "@/lib/sse";
+import { messageActionForPhase } from "@/lib/phaseRouter";
 import {
   api,
   cancelRun as apiCancelRun,
@@ -28,6 +29,7 @@ import {
   getRun,
   getRunSnapshot,
   getSession,
+  isApiError,
   isEndpointUnavailable,
   listMessages,
   newRequestId,
@@ -72,6 +74,23 @@ const VALID_PHASES: LegacyPhase[] = ["define", "coach", "brainstorm", "interview
 const INTERRUPT_MARK = "[生成中断]";
 const RETRYABLE_ERROR_RE = /网络|服务暂不可用|timeout|timed ?out|failed to fetch|networkerror|connection|连接/i;
 const LOCAL_MESSAGE_PREFIX = "local-";
+
+/** 审计快照读取失败记录：notFound 用于区分「确认 404」与「网络/服务端错误」 */
+export interface AuditLoadError {
+  message: string;
+  notFound: boolean;
+}
+
+/**
+ * 消息分页游标（PRD:307）。
+ * `beforeSeq` 来自服务端 `next_before_seq`，为 null 表示没有更早的消息；
+ * `earliestSeq` 是本地已加载消息里的最小 seq，`earliestSeq - 1` 即「还有 N 条」。
+ */
+export interface MessagePageState {
+  hasEarlier: boolean;
+  beforeSeq: number | null;
+  earliestSeq: number | null;
+}
 const MAX_WARNINGS = 5;
 
 function isRetryableError(message: string): boolean {
@@ -208,9 +227,14 @@ interface SessionState {
   generation: number;
   sessionLoading: boolean;
   sessionView: SessionView | null;
+  /** v2 阶段原值：旧 phase 会把 auditing 与 audit_completed 混成 interview */
+  v2Phase: V2Phase | null;
   /** true = v2 端点不可用，已回退旧路由 */
   legacyMode: boolean;
   messagesBySession: Record<string, MessageView[]>;
+  /** 首屏消息分页游标：长会话刷新后仍可「加载更早」 */
+  messagePages: Record<string, MessagePageState>;
+  earlierLoading: Record<string, boolean>;
   runs: Record<string, RunState>;
   runSnapshots: Record<string, RunSnapshot>;
   audits: Record<string, AuditSnapshot>;
@@ -221,6 +245,8 @@ interface SessionState {
   canvasLoading: boolean;
   canvases: Record<string, CanvasState>;
   errors: Record<string, string | null>;
+  /** 审计快照读取失败（按 auditId 记录；404 与其它错误分开，避免把读取失败渲染成「开始审计」） */
+  auditErrors: Record<string, AuditLoadError | null>;
   stateWarnings: string[];
   lastEventSeq: Record<string, number>;
   subscribingRunId: string | null;
@@ -234,7 +260,8 @@ interface SessionState {
   sendToCoach: (content: string) => void;
   skipCoach: () => void;
   startInterview: () => void;
-  answerInterview: (answer: string) => void;
+  /** 提交审计回答；返回 false 表示未提交（调用方应保留输入） */
+  answerInterview: (answer: string) => Promise<boolean>;
   generateCanvas: () => Promise<void>;
   setPhase: (phase: LegacyPhase) => void;
   clearError: () => void;
@@ -254,13 +281,15 @@ interface SessionState {
     payload?: Record<string, unknown>,
     options?: SendCommandOptions
   ) => Promise<CommandReceipt>;
+  /** 按 before_seq 加载上一页消息；无更早消息或正在加载时直接返回 */
+  loadEarlierMessages: () => Promise<void>;
   subscribeRun: (runId: string) => void;
   unsubscribe: () => void;
   cancelRun: (runId?: string) => Promise<void>;
   retryFailedRun: (runId?: string) => Promise<void>;
   refreshCanvas: (productVersion?: number) => Promise<void>;
-  /** 拉取审计快照并写入 `audits`（审计页用；失败静默，不打断页面） */
-  hydrateAuditById: (auditId: string) => Promise<void>;
+  /** 拉取审计快照并写入 `audits`；返回 false 表示读取失败（错误同时记入 `auditErrors`） */
+  hydrateAuditById: (auditId: string) => Promise<boolean>;
   clearStateWarnings: () => void;
   reset: () => void;
 }
@@ -304,6 +333,14 @@ export const useSessionStore = create<SessionState>((set, get) => {
   let runStreamCancel: (() => void) | null = null;
   /** 每个 run 的事件去重集合（跨重连复用） */
   const seenEvents = new Map<string, Set<string>>();
+  /** 每个 run 已重连次数：EOF 重连时递传，终态 / 放弃 / 显式退订时清理 */
+  const reconnectAttempts = new Map<string, number>();
+  /**
+   * 本地乐观用户消息（`local-` 前缀）→ 所属会话与内容。
+   * 只有服务端回执里出现同内容的 human 消息时才删除对应那一条，
+   * 避免 `role.output.updated` 等流式事件把用户输入整条抹掉。
+   */
+  const pendingOptimistic = new Map<string, { sessionId: string; content: string }>();
 
   function capture(): SessionGuard {
     const state = get();
@@ -356,13 +393,71 @@ export const useSessionStore = create<SessionState>((set, get) => {
   function mergeMessages(sessionId: string, incoming: MessageView[]): void {
     const state = get();
     const existing = state.messagesBySession[sessionId] ?? [];
-    // 服务端消息回来时清掉本地乐观消息，避免同一句用户输入出现两次
-    const cleaned = existing.filter((item) => !item.id.startsWith(LOCAL_MESSAGE_PREFIX));
+    // 只清理「已被服务端回执确认」的本地乐观消息：内容与服务端 human 消息一致，
+    // 且同一内容按条数一一对应；其余 local- 消息（发送未确认 / 流式事件先到）保留。
+    const cleaned = dropConfirmedLocalMessages(existing, incoming);
     const merged = mergeMessagesById(cleaned, incoming);
     set((current) => ({
       messagesBySession: { ...current.messagesBySession, [sessionId]: merged.items },
     }));
     if (get().currentSessionId === sessionId) syncLegacyMessages(sessionId);
+  }
+
+  /** 服务端回执里出现同内容 human 消息时，删除对应的本地乐观消息（按内容计数一一匹配） */
+  function dropConfirmedLocalMessages(
+    existing: readonly MessageView[],
+    incoming: readonly MessageView[]
+  ): MessageView[] {
+    const hasLocal = existing.some((item) => item.id.startsWith(LOCAL_MESSAGE_PREFIX));
+    if (!hasLocal) return existing.slice();
+
+    const confirmed = new Map<string, number>();
+    for (const view of incoming) {
+      if (view.sender_kind !== "human" || view.id.startsWith(LOCAL_MESSAGE_PREFIX)) continue;
+      confirmed.set(view.content, (confirmed.get(view.content) ?? 0) + 1);
+    }
+
+    const kept: MessageView[] = [];
+    for (const view of existing) {
+      if (!view.id.startsWith(LOCAL_MESSAGE_PREFIX)) {
+        kept.push(view);
+        continue;
+      }
+      const count = confirmed.get(view.content) ?? 0;
+      if (count <= 0) {
+        kept.push(view);
+        continue;
+      }
+      confirmed.set(view.content, count - 1);
+      pendingOptimistic.delete(view.id);
+    }
+    return kept;
+  }
+
+  /**
+   * Run 收尾兜底：仍未收到服务端回执的本地乐观消息视为「发送未确认」。
+   * 删除占位（避免刷新后重复出现）并把内容写入 lastFailedSend，由 ChatPanel 提供「重试」。
+   */
+  function settlePendingOptimistic(sessionId: string): void {
+    const stale = [...pendingOptimistic.entries()].filter(
+      ([, item]) => item.sessionId === sessionId
+    );
+    if (stale.length === 0) return;
+    const staleIds = new Set(stale.map(([id]) => id));
+    for (const [id] of stale) pendingOptimistic.delete(id);
+    set((state) => {
+      const views = state.messagesBySession[sessionId] ?? [];
+      return {
+        messagesBySession: {
+          ...state.messagesBySession,
+          [sessionId]: views.filter((view) => !staleIds.has(view.id)),
+        },
+      };
+    });
+    if (get().currentSessionId === sessionId) syncLegacyMessages(sessionId);
+    const last = stale[stale.length - 1][1];
+    set({ lastFailedSend: { content: last.content, targetRole: "all" } });
+    setError("消息发送未确认，请重试");
   }
 
   function nextSeq(sessionId: string): number {
@@ -375,11 +470,22 @@ export const useSessionStore = create<SessionState>((set, get) => {
     );
   }
 
+  /** 已加载消息里的最小 seq（忽略缺失 seq 的本地消息） */
+  function minMessageSeq(views: readonly MessageView[]): number | null {
+    let earliest: number | null = null;
+    for (const view of views) {
+      if (typeof view.seq !== "number" || !Number.isFinite(view.seq)) continue;
+      if (earliest === null || view.seq < earliest) earliest = view.seq;
+    }
+    return earliest;
+  }
+
   function findMessage(sessionId: string, messageId: string): MessageView | undefined {
     return (get().messagesBySession[sessionId] ?? []).find((view) => view.id === messageId);
   }
 
-  function appendOptimisticUserMessage(sessionId: string, content: string): void {
+  /** 追加本地乐观用户消息，返回 localId（服务端回执确认前一直保留） */
+  function appendOptimisticUserMessage(sessionId: string, content: string): string {
     const state = get();
     const localId = `${LOCAL_MESSAGE_PREFIX}${newRequestId()}`;
     const view: MessageView = {
@@ -396,7 +502,9 @@ export const useSessionStore = create<SessionState>((set, get) => {
       created_at: new Date().toISOString(),
     };
     mergeMessages(sessionId, [view]);
+    pendingOptimistic.set(localId, { sessionId, content });
     set({ streamingContent: "", error: null });
+    return localId;
   }
 
   // ---- 产品状态 / 画布 ---------------------------------------------------- //
@@ -406,8 +514,21 @@ export const useSessionStore = create<SessionState>((set, get) => {
     const sessionId = state.currentSessionId;
     if (!sessionId) return;
     const captured: SessionGuard = { sessionId, generation: state.generation };
-    const version =
-      productVersion ?? state.productVersion ?? state.sessionView?.current_product_version;
+    // 版本 0 不是合法产品版本（服务端从 1 起），当成「未知」处理：否则会拼出
+    // product_version=0 触发后端 400，画布重试永久失败（QA 第 5 轮 P1）。
+    const pickVersion = (...candidates: Array<number | null | undefined>): number | undefined => {
+      for (const candidate of candidates) {
+        if (typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0) {
+          return candidate;
+        }
+      }
+      return undefined;
+    };
+    const version = pickVersion(
+      productVersion,
+      state.productVersion,
+      state.sessionView?.current_product_version,
+    );
 
     set((current) => ({
       canvas: {
@@ -422,10 +543,17 @@ export const useSessionStore = create<SessionState>((set, get) => {
 
     try {
       const projection = await getCanvas(sessionId, version);
-      if (!assertCurrent(captured)) return;
+      if (!assertCurrent(captured)) {
+        // 过期请求：同会话（generation 变化）时复位加载态；跨会话交给新会话自己的加载流程
+        if (get().currentSessionId === captured.sessionId) {
+          set({ canvasLoading: false, isGeneratingCanvas: false });
+        }
+        return;
+      }
       const previousVersion = get().canvas?.productVersion ?? 0;
       if (projection.product_version < previousVersion) {
         pushWarning(`丢弃旧画布版本 ${projection.product_version}（当前 ${previousVersion}）`);
+        set({ canvasLoading: false, isGeneratingCanvas: false });
         return;
       }
       const nextCanvas: CanvasState = {
@@ -441,7 +569,13 @@ export const useSessionStore = create<SessionState>((set, get) => {
         canvasLoading: false,
       }));
     } catch (error) {
-      if (!assertCurrent(captured)) return;
+      if (!assertCurrent(captured)) {
+        // 过期请求：同会话时复位加载态，避免 loading 卡死
+        if (get().currentSessionId === captured.sessionId) {
+          set({ canvasLoading: false, isGeneratingCanvas: false });
+        }
+        return;
+      }
       const message = errorMessage(error);
       set((current) => {
         const failedCanvas: CanvasState = {
@@ -476,7 +610,10 @@ export const useSessionStore = create<SessionState>((set, get) => {
 
     let canvasVersion = hints.canvasVersion ?? hints.productVersion;
     if (productState) {
-      const acceptance = acceptProductVersion(get().productVersion, productState.version);
+      // 版本门限用「本会话基线」：切会话后全局 productVersion 已被重置，
+      // 不能拿上一个会话的版本号把新会话的合法快照当旧版本丢弃。
+      const baselineVersion = get().productStates[sessionId]?.version ?? 0;
+      const acceptance = acceptProductVersion(baselineVersion, productState.version);
       if (acceptance.accepted) {
         set((state) => ({
           productState,
@@ -519,19 +656,56 @@ export const useSessionStore = create<SessionState>((set, get) => {
       const page = await listMessages(sessionId, { limit: 100 });
       if (!assertCurrent(captured)) return;
       mergeMessages(sessionId, page.items ?? []);
+      if (!assertCurrent(captured)) return;
+      set((state) => {
+        const earliest = minMessageSeq(state.messagesBySession[sessionId] ?? []);
+        const previous = state.messagePages[sessionId];
+        const nextBefore = page.next_before_seq ?? null;
+        // 刷新会重新拉最新一页：不能把已加载更早的游标推回最新页
+        const beforeSeq =
+          nextBefore === null
+            ? previous?.beforeSeq ?? null
+            : previous?.beforeSeq != null
+              ? Math.min(previous.beforeSeq, nextBefore)
+              : nextBefore;
+        return {
+          messagePages: {
+            ...state.messagePages,
+            [sessionId]: {
+              hasEarlier: beforeSeq !== null && earliest !== null && earliest > 1,
+              beforeSeq,
+              earliestSeq: earliest,
+            },
+          },
+        };
+      });
     } catch {
       // 消息补齐失败不阻塞会话加载（首屏仍可交互）
     }
   }
 
-  async function hydrateAudit(auditId: string, captured: SessionGuard): Promise<void> {
-    if (!auditId) return;
+  async function hydrateAudit(auditId: string, captured: SessionGuard): Promise<boolean> {
+    if (!auditId) return false;
     try {
       const audit = await getAudit(auditId);
-      if (!assertCurrent(captured)) return;
-      set((state) => ({ audits: { ...state.audits, [audit.id]: audit } }));
-    } catch {
-      // 审计快照按需拉取，失败不阻塞
+      if (!assertCurrent(captured)) return false;
+      set((state) => ({
+        audits: { ...state.audits, [audit.id]: audit },
+        auditErrors: { ...state.auditErrors, [auditId]: null, [audit.id]: null },
+      }));
+      return true;
+    } catch (error) {
+      if (!assertCurrent(captured)) return false;
+      set((state) => ({
+        auditErrors: {
+          ...state.auditErrors,
+          [auditId]: {
+            message: errorMessage(error),
+            notFound: isApiError(error) && error.status === 404,
+          },
+        },
+      }));
+      return false;
     }
   }
 
@@ -771,6 +945,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
   async function finalizeRun(runId: string, captured: SessionGuard): Promise<void> {
     const sessionId = captured.sessionId;
     if (!sessionId) return;
+    reconnectAttempts.delete(runId);
     set({
       isStreaming: false,
       streamingContent: "",
@@ -813,7 +988,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
           set({ lastFailedRunId: runId });
         }
       }
-      if (session) set({ sessionView: session, phase: mapV2Phase(session.phase) });
+      if (session) set({ sessionView: session, phase: mapV2Phase(session.phase), v2Phase: session.phase });
 
       const productVersion = Math.max(
         session?.current_product_version ?? 0,
@@ -831,6 +1006,9 @@ export const useSessionStore = create<SessionState>((set, get) => {
       ]);
       if (!assertCurrent(captured)) return;
 
+      // 收尾兜底：Run 已结束仍未被服务端回执确认的本地乐观消息 → 提示发送失败
+      settlePendingOptimistic(sessionId);
+
       if (session?.active_run_id && session.active_run_id !== runId) {
         get().subscribeRun(session.active_run_id);
       }
@@ -844,16 +1022,20 @@ export const useSessionStore = create<SessionState>((set, get) => {
     captured: SessionGuard,
     attempt: number
   ): Promise<void> {
-    await sleep(600 * (attempt + 1));
+    // attempt = 第几次重连（从 1 开始）：指数退避，最长 10s
+    reconnectAttempts.set(runId, attempt);
+    await sleep(Math.min(600 * 2 ** attempt, 10000));
     if (!assertCurrent(captured)) return;
     try {
       const run = await getRun(runId);
       if (!assertCurrent(captured)) return;
       if (isTerminalRunStatus(run.status)) {
+        reconnectAttempts.delete(runId);
         await finalizeRun(runId, captured);
         return;
       }
       if (attempt >= 2) {
+        reconnectAttempts.delete(runId);
         setError("事件流已断开，请刷新页面继续");
         set({ isStreaming: false, subscribingRunId: null });
         return;
@@ -861,10 +1043,16 @@ export const useSessionStore = create<SessionState>((set, get) => {
       set({ subscribingRunId: null });
       get().subscribeRun(runId);
     } catch (error) {
-      if (assertCurrent(captured)) {
+      if (!assertCurrent(captured)) return;
+      if (attempt >= 2) {
+        reconnectAttempts.delete(runId);
         setError(errorMessage(error));
-        set({ isStreaming: false });
+        set({ isStreaming: false, subscribingRunId: null });
+        return;
       }
+      // 退避期间 getRun 也失败（网络抖动）：继续下一次重连，计数继续递传
+      set({ subscribingRunId: null });
+      void reconnectRun(runId, captured, attempt + 1);
     }
   }
 
@@ -890,7 +1078,9 @@ export const useSessionStore = create<SessionState>((set, get) => {
           if (reason === "terminal") {
             void finalizeRun(runId, captured);
           } else if (reason === "eof") {
-            void reconnectRun(runId, captured, 0);
+            // 断线重连：沿用已记录的重连次数，避免每次都从第 1 次重来导致无限重连
+            const nextAttempt = (reconnectAttempts.get(runId) ?? 0) + 1;
+            void reconnectRun(runId, captured, nextAttempt);
           }
         },
       }
@@ -921,6 +1111,8 @@ export const useSessionStore = create<SessionState>((set, get) => {
     }
     if (isControlReceipt(receipt)) {
       set((current) => ({
+        // 控制回执没有可等待的 Run 时清零 streaming，否则输入框会一直处于禁用态
+        isStreaming: Boolean(receipt.related_run_id),
         sessionView: current.sessionView
           ? {
               ...current.sessionView,
@@ -931,6 +1123,9 @@ export const useSessionStore = create<SessionState>((set, get) => {
             }
           : current.sessionView,
       }));
+      // 结束/取消审计后后端会派生一个收尾 Run（生成报告）：订阅它，
+      // 完成后 finalizeRun 会重新拉会话与审计快照（无 related_run_id 时页面轮询兜底）
+      if (receipt.related_run_id) get().subscribeRun(receipt.related_run_id);
       pushWarning("结束/取消审计请求已提交");
       return;
     }
@@ -1191,6 +1386,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
     set({
       sessionView: view,
       phase: mapV2Phase(view.phase),
+      v2Phase: view.phase,
       legacyMode: false,
       sessionLoading: false,
       errors: { ...get().errors, [sessionId]: null },
@@ -1214,6 +1410,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
     set({
       legacyMode: true,
       sessionView: null,
+      v2Phase: null,
       productState: null,
       productVersion: 0,
       canvas: null,
@@ -1255,8 +1452,11 @@ export const useSessionStore = create<SessionState>((set, get) => {
     generation: 0,
     sessionLoading: false,
     sessionView: null,
+    v2Phase: null,
     legacyMode: false,
     messagesBySession: {},
+    messagePages: {},
+    earlierLoading: {},
     runs: {},
     runSnapshots: {},
     audits: {},
@@ -1267,6 +1467,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
     canvasLoading: false,
     canvases: {},
     errors: {},
+    auditErrors: {},
     stateWarnings: [],
     lastEventSeq: {},
     subscribingRunId: null,
@@ -1279,6 +1480,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
       get().unsubscribe();
       get().abortStream();
       resetStreamingBuffers();
+      pendingOptimistic.clear();
       const generation = get().generation + 1;
       const captured: SessionGuard = { sessionId: id, generation };
       set({
@@ -1297,6 +1499,15 @@ export const useSessionStore = create<SessionState>((set, get) => {
         subscribingRunId: null,
         activeRunId: null,
         legacyMode: false,
+        v2Phase: null,
+        // 会话级重置：sessionView / 画布 / 产品状态属于上一个会话，必须清空
+        // （canvases / productStates 是按 sessionId 键的缓存，保留以便切回时复用）
+        sessionView: null,
+        canvas: null,
+        canvasLoading: false,
+        isGeneratingCanvas: false,
+        productVersion: 0,
+        productState: null,
       });
 
       try {
@@ -1344,8 +1555,13 @@ export const useSessionStore = create<SessionState>((set, get) => {
         streamingMessageId: null,
       });
       const captured = capture();
-      const action: Action =
-        state.phase === "coach" || state.phase === "define" ? "clarify" : "brainstorm";
+      // 审计结束后旧 phase 仍是 interview，必须按 v2 阶段原值路由：
+      // 只有 auditing 才发 answer_audit，其余（含 audit_completed）发 brainstorm
+      const action: Action = state.v2Phase
+        ? messageActionForPhase(state.v2Phase)
+        : state.phase === "coach" || state.phase === "define"
+          ? "clarify"
+          : "brainstorm";
       const payload: Record<string, unknown> =
         action === "clarify"
           ? { content }
@@ -1366,6 +1582,16 @@ export const useSessionStore = create<SessionState>((set, get) => {
       }
       const sessionId = state.currentSessionId;
       if (!sessionId) return;
+      // 兼容旧链接（?problem=）：会话创建时后端已写入同内容的 clarify 消息并启动首个 Run
+      // （backend/api/v2/common.py:397-429），这里再发一次会撞 SESSION_BUSY。
+      const duplicated = (state.messagesBySession[sessionId] ?? []).some(
+        (view) =>
+          view.sender_kind === "human" &&
+          view.stage === "clarify" &&
+          !view.id.startsWith(LOCAL_MESSAGE_PREFIX) &&
+          view.content === content
+      );
+      if (duplicated) return;
       appendOptimisticUserMessage(sessionId, content);
       set({ isStreaming: true, error: null, streamingContent: "", streamingRole: null });
       void dispatchCommand("clarify", { content }, capture()).catch(() => undefined);
@@ -1401,43 +1627,47 @@ export const useSessionStore = create<SessionState>((set, get) => {
       ).catch(() => undefined);
     },
 
-    answerInterview: (answer: string) => {
+    answerInterview: async (answer: string): Promise<boolean> => {
       const state = get();
-      if (!state.sessionId) return;
+      if (!state.sessionId) return false;
       if (state.legacyMode) {
         startLegacyStream(
           "/api/interview/respond",
           { session_id: state.sessionId, answer },
           answer
         );
-        return;
+        return true;
       }
       const captured = capture();
-      void (async () => {
-        const sessionId = captured.sessionId;
-        if (!sessionId) return;
-        const auditId = get().sessionView?.current_audit_id ?? null;
-        let audit: AuditSnapshot | null = auditId ? get().audits[auditId] ?? null : null;
-        try {
-          if (!audit && auditId) audit = await getAudit(auditId);
-        } catch (error) {
-          if (assertCurrent(captured)) setError(errorMessage(error));
-          return;
-        }
-        if (!assertCurrent(captured)) return;
-        const activeQuestionId = audit?.active_question_id ?? null;
-        if (!audit || !activeQuestionId) {
-          setError("当前没有待回答的审计问题");
-          return;
-        }
-        appendOptimisticUserMessage(sessionId, answer);
-        set({ isStreaming: true, error: null });
+      const sessionId = captured.sessionId;
+      if (!sessionId) return false;
+      const auditId = get().sessionView?.current_audit_id ?? null;
+      let audit: AuditSnapshot | null = auditId ? get().audits[auditId] ?? null : null;
+      try {
+        if (!audit && auditId) audit = await getAudit(auditId);
+      } catch (error) {
+        if (assertCurrent(captured)) setError(errorMessage(error));
+        return false;
+      }
+      if (!assertCurrent(captured)) return false;
+      const activeQuestionId = audit?.active_question_id ?? null;
+      if (!audit || !activeQuestionId) {
+        setError("当前没有待回答的审计问题");
+        return false;
+      }
+      appendOptimisticUserMessage(sessionId, answer);
+      set({ isStreaming: true, error: null });
+      try {
         await dispatchCommand(
           "answer_audit",
           { audit_id: audit.id, question_id: activeQuestionId, answer },
           captured
-        ).catch(() => undefined);
-      })();
+        );
+        return true;
+      } catch (error) {
+        if (assertCurrent(captured)) setError(errorMessage(error));
+        return false;
+      }
     },
 
     generateCanvas: async () => {
@@ -1518,6 +1748,49 @@ export const useSessionStore = create<SessionState>((set, get) => {
       return receipt;
     },
 
+    loadEarlierMessages: async () => {
+      const state = get();
+      const sessionId = state.currentSessionId;
+      if (!sessionId) return;
+      const page = state.messagePages[sessionId];
+      if (!page?.hasEarlier || page.beforeSeq === null) return;
+      if (state.earlierLoading[sessionId]) return;
+      const captured = capture();
+      set((current) => ({
+        earlierLoading: { ...current.earlierLoading, [sessionId]: true },
+      }));
+      try {
+        const result = await listMessages(sessionId, {
+          beforeSeq: page.beforeSeq,
+          limit: 100,
+        });
+        if (!assertCurrent(captured)) return;
+        mergeMessages(sessionId, result.items ?? []);
+        if (!assertCurrent(captured)) return;
+        set((current) => {
+          const earliest = minMessageSeq(current.messagesBySession[sessionId] ?? []);
+          return {
+            messagePages: {
+              ...current.messagePages,
+              [sessionId]: {
+                hasEarlier: result.next_before_seq != null && earliest !== null && earliest > 1,
+                beforeSeq: result.next_before_seq ?? null,
+                earliestSeq: earliest,
+              },
+            },
+          };
+        });
+      } catch (error) {
+        if (assertCurrent(captured)) setError(errorMessage(error));
+      } finally {
+        if (get().currentSessionId === sessionId) {
+          set((current) => ({
+            earlierLoading: { ...current.earlierLoading, [sessionId]: false },
+          }));
+        }
+      }
+    },
+
     subscribeRun: (runId: string) => {
       if (!runId) return;
       const state = get();
@@ -1535,6 +1808,8 @@ export const useSessionStore = create<SessionState>((set, get) => {
         runStreamCancel();
         runStreamCancel = null;
       }
+      // 显式退订/切换会话后重新订阅应从第 1 次重连开始计数
+      reconnectAttempts.clear();
       set({ subscribingRunId: null });
     },
 
@@ -1577,7 +1852,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
     },
 
     hydrateAuditById: async (auditId: string) => {
-      await hydrateAudit(auditId, capture());
+      return hydrateAudit(auditId, capture());
     },
 
     clearStateWarnings: () => set({ stateWarnings: [] }),
@@ -1587,6 +1862,8 @@ export const useSessionStore = create<SessionState>((set, get) => {
       get().abortStream();
       resetStreamingBuffers();
       seenEvents.clear();
+      reconnectAttempts.clear();
+      pendingOptimistic.clear();
       lastSent = null;
       abortController = null;
       set((state) => ({
@@ -1596,6 +1873,8 @@ export const useSessionStore = create<SessionState>((set, get) => {
         phase: "define",
         messages: [],
         messagesBySession: {},
+        messagePages: {},
+        earlierLoading: {},
         canvasTree: null,
         canvas: null,
         canvasLoading: false,
@@ -1609,12 +1888,14 @@ export const useSessionStore = create<SessionState>((set, get) => {
         streamingMessageId: null,
         error: null,
         errors: {},
+        auditErrors: {},
         lastFailedSend: null,
         coachTriggeredFor: null,
         isGeneratingCanvas: false,
         sessionView: null,
         sessionLoading: false,
         legacyMode: false,
+        v2Phase: null,
         runs: {},
         runSnapshots: {},
         audits: {},

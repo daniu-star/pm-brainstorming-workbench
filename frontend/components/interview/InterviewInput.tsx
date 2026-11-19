@@ -29,15 +29,18 @@ export function InterviewInput({
 
   const handleTextSend = () => {
     if (!input.trim() || isStreaming) return;
-    answerInterview(input.trim());
-    setInput("");
+    // 提交失败（无待回答的问题 / 网络错误）时保留输入
+    void answerInterview(input.trim()).then((submitted) => {
+      if (submitted) setInput("");
+    });
   };
 
   const handleVoiceSend = useCallback(() => {
     const text = `${transcript}${interim}`.trim();
     if (!text || isStreaming) return;
-    answerInterview(text);
-    reset();
+    void answerInterview(text).then((submitted) => {
+      if (submitted) reset();
+    });
   }, [transcript, interim, isStreaming, answerInterview, reset]);
 
   return (

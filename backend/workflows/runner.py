@@ -50,6 +50,7 @@ MAX_STEP_ATTEMPTS = 2
 ACTION_TASK_KIND: dict[Action, TaskKind] = {
     Action.clarify: TaskKind.clarify,
     Action.brainstorm: TaskKind.brainstorm,
+    Action.synthesis: TaskKind.synthesis,
     Action.start_audit: TaskKind.audit_open,
     Action.answer_audit: TaskKind.audit_answer,
     Action.end_audit: TaskKind.audit_report,
@@ -89,6 +90,7 @@ WorkflowRef = tuple[str, str]
 WORKFLOWS: dict[TaskKind, WorkflowRef] = {
     TaskKind.clarify: ("workflows.coach", "run_clarify"),
     TaskKind.brainstorm: ("workflows.brainstorm", "run_brainstorm"),
+    TaskKind.synthesis: ("workflows.synthesis", "run_synthesis"),
     TaskKind.audit_open: ("workflows.audit", "run_audit_open"),
     TaskKind.audit_answer: ("workflows.audit", "run_audit_answer"),
     TaskKind.audit_report: ("workflows.audit", "run_audit_report"),
@@ -121,6 +123,15 @@ class _Reservation:
 
     input_tokens: int = 0
     output_tokens: int = 0
+
+
+def _count(value: Any) -> int:
+    """把账本里的计数安全转成非负整数（损坏/缺失一律按 0）。"""
+
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 @dataclass(slots=True)
@@ -157,7 +168,9 @@ class BudgetTracker:
     # -- 构造 -------------------------------------------------------------- #
 
     @classmethod
-    def from_budget_json(cls, budget_json: str | None) -> "BudgetTracker":
+    def from_budget_json(
+        cls, budget_json: str | None, usage_json: str | None = None
+    ) -> "BudgetTracker":
         tracker = cls()
         raw: dict[str, Any]
         try:
@@ -197,7 +210,30 @@ class BudgetTracker:
                 continue
             # 预算只能收紧不能放宽；0 表示该维度无预算（严格失败）。
             setattr(tracker, name, min(default, value))
+        tracker._restore_usage(usage_json)
         return tracker
+
+    def _restore_usage(self, usage_json: str | None) -> None:
+        """恢复上一 epoch 已结算的账本（租约接管/重试后预算不清零）。
+
+        只恢复计数，不恢复 ``exceeded``：上一 epoch 的超限由当时的
+        ``RunOutcome`` 收口，新 epoch 应重新判断是否还能继续。
+        """
+
+        if not usage_json:
+            return
+        try:
+            parsed = json.loads(usage_json)
+        except (TypeError, ValueError):
+            logger.warning("usage_json 无法解析，预算账本从零开始: %r", usage_json)
+            return
+        if not isinstance(parsed, dict):
+            return
+        self.input_tokens = _count(parsed.get("prompt_tokens"))
+        self.output_tokens = _count(parsed.get("completion_tokens"))
+        self.upstream_calls = _count(parsed.get("upstream_calls", parsed.get("calls")))
+        self.provider_calls = _count(parsed.get("provider_calls"))
+        self.estimated_calls = _count(parsed.get("estimated_calls"))
 
     # -- 查询 -------------------------------------------------------------- #
 
@@ -527,6 +563,8 @@ class StepContext:
     worker_id: str
     lease_epoch: int
     deadline_epoch: int
+    #: 重试子 Run 的调度范围（父 Run 失败步骤 + 可复用的已成功步骤），普通 Run 为 None。
+    retry_scope: dict[str, Any] | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -712,6 +750,7 @@ class _RunSnapshot:
     deadline_at: int | None
     base_product_version: int
     budget_json: str | None
+    usage_json: str | None
     session_deleted: bool
 
 
@@ -756,6 +795,7 @@ def _read_run_snapshot(run_id: str, *, worker_id: str) -> _RunSnapshot | None:
             deadline_at=int(run.deadline_at) if run.deadline_at else None,
             base_product_version=int(run.base_product_version or 1),
             budget_json=run.budget_json,
+            usage_json=run.usage_json,
             session_deleted=session_deleted,
         )
 
@@ -1038,6 +1078,38 @@ def _finish_step(
         return False
 
 
+def _persist_budget(
+    *,
+    run_id: str,
+    worker_id: str,
+    lease_epoch: int,
+    budget: BudgetTracker,
+) -> bool:
+    """把当前预算账本写入 ``runs.usage_json``（不改 Run 状态）。
+
+    只在步骤已经落库（每步至多一次）之后调用，使接管者能从上一 epoch 的
+    计数继续；写失败不阻塞执行——账本最坏退化为「从本 epoch 重新计数」，
+    终结时 ``release_run`` 仍会用最终账本覆盖 ``usage_json``。
+    """
+
+    run_repo, _ = _repositories()
+    try:
+        with _database().session_scope() as db:
+            run = run_repo.get_run(db, run_id)
+            if run is None or SM.is_terminal_run(RunStatus(run.status)):
+                return False
+            return run_repo.save_usage(
+                db,
+                run,
+                usage=budget.as_dict(),
+                worker_id=worker_id,
+                lease_epoch=lease_epoch,
+            )
+    except Exception:  # noqa: BLE001 - 账本落盘失败不应中断执行
+        logger.exception("写预算账本失败 run=%s", run_id)
+        return False
+
+
 def _start_step_attempt(
     *,
     run_id: str,
@@ -1114,7 +1186,9 @@ def execute_run(
         )
         return
 
-    budget = BudgetTracker.from_budget_json(snapshot.budget_json)
+    # 预算账本跨 epoch 连续：上一 worker 已结算的计数从 runs.usage_json 恢复，
+    # 避免租约接管/重试后 upstream_calls 清零、突破单 Run 上限。
+    budget = BudgetTracker.from_budget_json(snapshot.budget_json, snapshot.usage_json)
     client = llm_factory() if llm_factory is not None else LLMClient()
 
     stop_event = threading.Event()
@@ -1199,6 +1273,50 @@ def _start_lease_renewer(
     thread = threading.Thread(target=_loop, name=f"lease-{run_id[:8]}", daemon=True)
     thread.start()
     return thread
+
+
+def _retry_scope_for(db: Any, run: Any, run_repo: Any) -> dict[str, Any] | None:
+    """构建重试子 Run 的调度范围。
+
+    父 Run 里未成功的 ``logical_key`` 由 ``retry_run`` 复制到 ``failed_steps_json``；
+    已成功步骤的结构化产物（brainstorm 的 RoleResult）随 step 落库，这里读出后交给
+    工作流复用，避免重复调用已成功的专家。非重试 Run / 父 Run 已不可用时返回 None。
+    """
+
+    try:
+        failed_keys = [
+            str(key) for key in json.loads(getattr(run, "failed_steps_json", None) or "[]")
+        ]
+    except (TypeError, ValueError):
+        failed_keys = []
+    parent_id = getattr(run, "parent_run_id", None)
+    if not failed_keys or not parent_id:
+        return None
+    parent = run_repo.get_run(db, parent_id)
+    # 只有“同一 action 的重试子 Run”才继承步骤；brainstorm→synthesis 的后续任务不继承。
+    if parent is None or str(parent.action) != str(run.action):
+        return None
+    if RunStatus(parent.status) not in (RunStatus.failed, RunStatus.partial_succeeded):
+        return None
+
+    reused: dict[str, dict[str, Any]] = {}
+    for step in run_repo.list_steps(db, parent_id):
+        if StepStatus(step.status) is not StepStatus.succeeded:
+            continue
+        try:
+            output = json.loads(step.output_json or "{}")
+        except (TypeError, ValueError):
+            continue
+        result = output.get("result")
+        if not isinstance(result, dict):
+            continue
+        reused[str(step.logical_key)] = {
+            "step_id": step.id,
+            "role_code": output.get("role_code"),
+            "candidates": output.get("candidates") or {},
+            "result": result,
+        }
+    return {"parent_run_id": parent_id, "failed_keys": failed_keys, "reused": reused}
 
 
 def _drive_run(
@@ -1319,6 +1437,7 @@ def _drive_run(
             return
 
         # 创建/读取步骤 + 组装上下文所需的快照（同一短事务）
+        retry_scope: dict[str, Any] | None = None
         with _database().session_scope() as db:
             run = run_repo.get_run(db, run_id)
             if run is None or SM.is_terminal_run(RunStatus(run.status)):
@@ -1343,6 +1462,7 @@ def _drive_run(
                     logger.exception("读取当前消息失败 run=%s", run_id)
                     current_message = None
 
+                retry_scope = _retry_scope_for(db, run, run_repo)
                 role_code = STEP_ROLE.get(task_kind)
                 step = run_repo.ensure_step(
                     db,
@@ -1474,6 +1594,7 @@ def _drive_run(
             worker_id=worker_id,
             lease_epoch=lease_epoch,
             deadline_epoch=int(deadline_epoch),
+            retry_scope=retry_scope,
         )
         try:
             outcome = _invoke_dispatch(dispatch, ctx, workflow_timeout)
@@ -1517,6 +1638,13 @@ def _drive_run(
                 error_message=str(exc),
                 worker_id=worker_id,
                 lease_epoch=lease_epoch,
+            )
+            # 失败也要落盘：可重试失败后接管者必须看到已消耗的调用次数。
+            _persist_budget(
+                run_id=run_id,
+                worker_id=worker_id,
+                lease_epoch=lease_epoch,
+                budget=budget,
             )
             if exc.retryable and attempt_no < MAX_STEP_ATTEMPTS and not lease_lost.is_set():
                 continue  # 下一步循环重新 start_step（attempt 2）
@@ -1623,6 +1751,14 @@ def _drive_run(
             },
             worker_id=worker_id,
             lease_epoch=lease_epoch,
+        )
+
+        # 步骤成功即落盘账本：接管者据此继续累计（跨 epoch 预算）。
+        _persist_budget(
+            run_id=run_id,
+            worker_id=worker_id,
+            lease_epoch=lease_epoch,
+            budget=budget,
         )
 
         if lease_lost.is_set():

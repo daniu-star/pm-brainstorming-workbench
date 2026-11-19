@@ -57,7 +57,8 @@ export default function LandingPage() {
         method: "POST",
         body: JSON.stringify({ problem_statement: problem.trim() }),
       });
-      router.push(`/session/${session.id}?problem=${encodeURIComponent(problem.trim())}`);
+      // 初始问题由 POST /api/session 写入并启动首个 clarify Run，链接不再携带 problem
+      router.push(`/session/${session.id}`);
     } catch (err) {
       setIsCreating(false);
       setError(err instanceof Error ? err.message : "创建会话失败，请确认后端服务已启动");

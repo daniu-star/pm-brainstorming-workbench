@@ -15,7 +15,11 @@ interface NavButtonsProps {
 export function NavButtons({ currentPage, sessionId, onToggleHistory }: NavButtonsProps) {
   const router = useRouter();
   const isStreaming = useSessionStore((s) => s.isStreaming);
+  const v2Phase = useSessionStore((s) => s.v2Phase);
   const hasSession = !!sessionId;
+  // clarifying 阶段后端不允许 start_audit（state_machine.py:43），入口直接置灰；
+  // auditing 仍可进入页面查看正在生成的报告，不能一起拦掉
+  const auditBlocked = v2Phase === "clarifying";
 
   const handleNewChat = () => {
     if (isStreaming) {
@@ -57,14 +61,20 @@ export function NavButtons({ currentPage, sessionId, onToggleHistory }: NavButto
 
       {currentPage !== "interview" && (
         <button
-          onClick={() => hasSession && router.push(`/session/${sessionId}/interview`)}
-          disabled={!hasSession}
+          onClick={() => hasSession && !auditBlocked && router.push(`/session/${sessionId}/audit`)}
+          disabled={!hasSession || auditBlocked}
           className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg transition-colors duration-150 min-h-[44px] min-w-[44px] justify-center whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed text-cyan-300 hover:text-cyan-200 hover:bg-cyan-300/5 disabled:hover:bg-transparent"
-          aria-label="进入 AI 审计专业通话"
-          title={hasSession ? "进入 AI 审计专业通话" : "请先创建会话"}
+          aria-label="进入专家审计"
+          title={
+            !hasSession
+              ? "请先创建会话"
+              : auditBlocked
+                ? "请先完成澄清或跳过引导，再进入专家审计"
+                : "进入专家审计"
+          }
         >
           <VideoIcon size={16} />
-          <span className="hidden sm:inline">AI 审计通话</span>
+          <span className="hidden sm:inline">专家审计</span>
         </button>
       )}
 

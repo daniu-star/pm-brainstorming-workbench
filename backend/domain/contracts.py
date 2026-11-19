@@ -345,6 +345,8 @@ class Action(StrEnum):
     revise_brief = "revise_brief"
     add_evidence = "add_evidence"
     brainstorm = "brainstorm"
+    #: 内部动作：由 brainstorm 成功后自动排入（主持人归并），不接受用户提交。
+    synthesis = "synthesis"
     confirm_decision = "confirm_decision"
     start_audit = "start_audit"
     answer_audit = "answer_audit"

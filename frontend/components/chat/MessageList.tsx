@@ -64,6 +64,9 @@ export function MessageList() {
   const {
     messages,
     messagesBySession,
+    messagePages,
+    earlierLoading,
+    loadEarlierMessages,
     currentSessionId,
     isStreaming,
     streamingContent,
@@ -78,6 +81,12 @@ export function MessageList() {
   // v2 消息（按 session 隔离）；v2 不可用时回退旧 messages 数组
   const sessionViews = currentSessionId ? messagesBySession[currentSessionId] : undefined;
   const useV2 = Array.isArray(sessionViews) && sessionViews.length > 0;
+
+  const pageState = currentSessionId ? messagePages[currentSessionId] : undefined;
+  const hasEarlier = Boolean(useV2 && pageState?.hasEarlier);
+  const earlierCount =
+    hasEarlier && pageState?.earliestSeq ? pageState.earliestSeq - 1 : 0;
+  const loadingEarlier = Boolean(currentSessionId && earlierLoading?.[currentSessionId]);
 
   const items = useMemo<DisplayItem[]>(() => {
     if (useV2) {
@@ -145,7 +154,7 @@ export function MessageList() {
             </div>
             <h3 className="text-lg font-medium text-zinc-300 mb-1.5">准备开始脑暴</h3>
             <p className="text-sm text-zinc-500 leading-relaxed">
-              四位专家即将围绕你的产品方向展开讨论
+              点击开始讨论，四位专家将依次发言
             </p>
             <div className="mt-6 flex items-center justify-center gap-3">
               {ROLES.map((r) => (
@@ -180,6 +189,22 @@ export function MessageList() {
       aria-busy={isStreaming}
     >
       <div className="space-y-1 px-1">
+        {hasEarlier ? (
+          <div className="flex justify-center mb-2">
+            <button
+              type="button"
+              onClick={() => void loadEarlierMessages()}
+              disabled={loadingEarlier}
+              className="text-xs text-zinc-400 bg-dark-800/70 px-3 py-1.5 rounded-full border border-zinc-700/40 hover:text-zinc-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loadingEarlier
+                ? "加载中…"
+                : earlierCount > 0
+                  ? `加载更早（还有 ${earlierCount} 条）`
+                  : "加载更早"}
+            </button>
+          </div>
+        ) : null}
         <div className="flex justify-center mb-3">
           <span className="text-xs text-zinc-500 bg-dark-800/50 px-3 py-1 rounded-full border border-zinc-700/30">
             讨论开始
