@@ -23,6 +23,11 @@ import type {
   ControlReceipt,
   DeletedSession,
   Evidence,
+  LoopArtifactResponse,
+  LoopDecisionPayload,
+  LoopListPage,
+  LoopRoundView,
+  LoopSnapshot,
   MessageListPage,
   MessageView,
   ProductState,
@@ -31,6 +36,7 @@ import type {
   RunView,
   SessionListPage,
   SessionView,
+  StartLoopPayload,
 } from "./contracts.generated";
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -63,6 +69,11 @@ export const CODE_MESSAGES: Record<string, string> = {
   LEASE_LOST: "任务执行中断，请重试",
   AUDIT_CLOSED: "审计已结束",
   AUDIT_ACTIVE: "已有进行中的审计",
+  LOOP_ACTIVE: "已有进行中的闭环工作室",
+  LOOP_NOT_AWAITING_DECISION: "闭环当前不在决策阶段",
+  LOOP_ROUNDS_EXHAUSTED: "闭环轮次已用尽，只能交付或停止",
+  LOOP_CLAIMED: "该轮闭环已被其他任务领取，请稍后刷新",
+  LOOP_VERSION_CONFLICT: "闭环状态已在别处更新，请刷新后重试",
   QUESTION_ALREADY_ANSWERED: "该问题已回答",
   QUESTION_NOT_ACTIVE: "当前问题已不是最新问题",
   CONTROL_SUPERSEDED: "该控制操作已被新的操作取代",
@@ -492,4 +503,64 @@ export function getAudit(auditId: string): Promise<AuditSnapshot> {
 
 export function getControl(controlId: string): Promise<ControlReceipt> {
   return apiV2<ControlReceipt>(`/api/v2/controls/${encodeURIComponent(controlId)}`);
+}
+
+// ---- 闭环工作室 Loop Studio（契约 §6） ------------------------------------ //
+
+export interface LoopListOptions {
+  limit?: number;
+  signal?: AbortSignal;
+}
+
+export function listLoops(sessionId: string, options: LoopListOptions = {}): Promise<LoopListPage> {
+  return apiV2<LoopListPage>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/loops`, {
+    query: { limit: options.limit },
+    signal: options.signal,
+  });
+}
+
+export function getLoop(loopId: string, options: { signal?: AbortSignal } = {}): Promise<LoopSnapshot> {
+  return apiV2<LoopSnapshot>(`/api/v2/loops/${encodeURIComponent(loopId)}`, {
+    signal: options.signal,
+  });
+}
+
+export function getLoopRound(
+  loopId: string,
+  ordinal: number,
+  options: { signal?: AbortSignal } = {}
+): Promise<LoopRoundView> {
+  return apiV2<LoopRoundView>(
+    `/api/v2/loops/${encodeURIComponent(loopId)}/rounds/${encodeURIComponent(String(ordinal))}`,
+    { signal: options.signal }
+  );
+}
+
+export function getLoopArtifact(
+  loopId: string,
+  artifactId: string,
+  options: { signal?: AbortSignal } = {}
+): Promise<LoopArtifactResponse> {
+  return apiV2<LoopArtifactResponse>(
+    `/api/v2/loops/${encodeURIComponent(loopId)}/artifacts/${encodeURIComponent(artifactId)}`,
+    { signal: options.signal }
+  );
+}
+
+/** `start_loop`：创建闭环并异步启动第 1 轮；已有活跃闭环时后端返回 409 LOOP_ACTIVE。 */
+export function startLoop(
+  sessionId: string,
+  payload: StartLoopPayload,
+  options: SendCommandOptions = {}
+): Promise<CommandReceipt> {
+  return sendCommand(sessionId, "start_loop", payload, options);
+}
+
+/** `loop_decision`：iterate / ship / stop；返回 RunReceipt（含 run_id 与 loop_id）。 */
+export function decideLoop(
+  sessionId: string,
+  payload: LoopDecisionPayload,
+  options: SendCommandOptions = {}
+): Promise<CommandReceipt> {
+  return sendCommand(sessionId, "loop_decision", payload, options);
 }

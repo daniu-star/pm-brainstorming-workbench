@@ -338,6 +338,149 @@ class TargetRole(StrEnum):
     target_user = "target_user"
 
 
+# --------------------------------------------------------------------------- #
+# Loop Studio（产品内闭环：设想 → 检验 → 开发 → 测试 → 评测）
+# --------------------------------------------------------------------------- #
+
+
+class LoopStatus(StrEnum):
+    running = "running"
+    awaiting_decision = "awaiting_decision"
+    shipped = "shipped"
+    stopped = "stopped"
+    failed = "failed"
+
+
+class LoopScope(StrEnum):
+    mvp = "mvp"
+    optimize = "optimize"
+
+
+class LoopStage(StrEnum):
+    ideate = "ideate"
+    validate = "validate"
+    develop = "develop"
+    test = "test"
+    evaluate = "evaluate"
+
+
+LOOP_STAGES: tuple[LoopStage, ...] = (
+    LoopStage.ideate,
+    LoopStage.validate,
+    LoopStage.develop,
+    LoopStage.test,
+    LoopStage.evaluate,
+)
+
+
+class LoopStageStatus(StrEnum):
+    pending = "pending"
+    running = "running"
+    done = "done"
+    failed = "failed"
+    skipped = "skipped"
+
+
+class LoopRoundStatus(StrEnum):
+    running = "running"
+    done = "done"
+    failed = "failed"
+
+
+class LoopVerdict(StrEnum):
+    pending = "pending"
+    pass_ = "pass"
+    iterate = "iterate"
+    blocked = "blocked"
+
+
+class LoopDecisionKind(StrEnum):
+    iterate = "iterate"
+    ship = "ship"
+    stop = "stop"
+
+
+class LoopArtifactKind(StrEnum):
+    mvp_spec = "mvp_spec"
+    validation = "validation"
+    prototype = "prototype"
+    test_report = "test_report"
+    scorecard = "scorecard"
+
+
+class CheckResult(StrEnum):
+    unknown = "unknown"
+    pass_ = "pass"
+    fail = "fail"
+
+
+class TestCaseStatus(StrEnum):
+    untested = "untested"
+    passed = "passed"
+    failed = "failed"
+    skipped = "skipped"
+
+
+class FeaturePriority(StrEnum):
+    must = "must"
+    should = "should"
+    could = "could"
+
+
+class EffortSize(StrEnum):
+    s = "S"
+    m = "M"
+    l = "L"
+
+
+class LoopScoreKey(StrEnum):
+    functionality = "functionality"
+    feasibility = "feasibility"
+    user_value = "user_value"
+    risk = "risk"
+    delivery = "delivery"
+    testability = "testability"
+    docs = "docs"
+
+
+LOOP_SCORE_LABELS: dict[LoopScoreKey, str] = {
+    LoopScoreKey.functionality: "功能可用性",
+    LoopScoreKey.feasibility: "技术可行性",
+    LoopScoreKey.user_value: "用户价值",
+    LoopScoreKey.risk: "风险与验证",
+    LoopScoreKey.delivery: "交付完整度",
+    LoopScoreKey.testability: "可测试性",
+    LoopScoreKey.docs: "文档与交接",
+}
+
+LOOP_SCORE_MAX: dict[LoopScoreKey, int] = {
+    LoopScoreKey.functionality: 25,
+    LoopScoreKey.feasibility: 15,
+    LoopScoreKey.user_value: 20,
+    LoopScoreKey.risk: 15,
+    LoopScoreKey.delivery: 10,
+    LoopScoreKey.testability: 10,
+    LoopScoreKey.docs: 5,
+}
+
+MAX_LOOP_ROUNDS = 5
+MIN_LOOP_ROUNDS = 1
+LOOP_ROUNDS_DEFAULT = 3
+LOOP_TARGET_SCORE_DEFAULT = 85
+LOOP_TARGET_SCORE_MIN = 60
+LOOP_TARGET_SCORE_MAX = 100
+MAX_LOOP_FEATURES = 12
+MAX_LOOP_ASSUMPTIONS = 8
+MAX_LOOP_FILES = 12
+MAX_LOOP_FILE_CHARS = 6000
+MAX_LOOP_CHECKS = 12
+MAX_LOOP_CASES = 20
+MAX_LOOP_DIMENSIONS = 7
+MAX_LOOP_BLOCKERS = 8
+LOOP_STAGE_OUTPUT_TOKENS = 1500
+LOOP_FINAL_OUTPUT_TOKENS = 2200
+
+
 class Action(StrEnum):
     clarify = "clarify"
     confirm_brief = "confirm_brief"
@@ -354,6 +497,10 @@ class Action(StrEnum):
     rebuild_legacy = "rebuild_legacy"
     end_audit = "end_audit"
     cancel_audit = "cancel_audit"
+    start_loop = "start_loop"
+    loop_decision = "loop_decision"
+    #: 内部动作：一轮闭环执行（start_loop / loop_decision(iterate) 自动排入）。
+    loop_round = "loop_round"
 
 
 NORMAL_ACTIONS: frozenset[Action] = frozenset(
@@ -369,6 +516,8 @@ NORMAL_ACTIONS: frozenset[Action] = frozenset(
         Action.answer_audit,
         Action.correct_audit_assessment,
         Action.rebuild_legacy,
+        Action.start_loop,
+        Action.loop_decision,
     }
 )
 CONTROL_ACTIONS: frozenset[Action] = frozenset({Action.end_audit, Action.cancel_audit})
@@ -389,6 +538,7 @@ class EventType(StrEnum):
     role_completed = "role.completed"
     product_state_updated = "product_state.updated"
     audit_updated = "audit.updated"
+    loop_updated = "loop.updated"
     run_recovered = "run.recovered"
     run_completed = "run.completed"
     run_failed = "run.failed"
@@ -407,6 +557,7 @@ class TaskKind(StrEnum):
     audit_answer = "audit_answer"
     audit_report = "audit_report"
     rebuild_legacy = "rebuild_legacy"
+    loop_round = "loop_round"
 
 
 class ContextSection(StrEnum):
@@ -997,6 +1148,210 @@ class CancelAuditPayload(StrictModel):
     audit_id: str = Field(min_length=1, max_length=64)
 
 
+# --------------------------------------------------------------------------- #
+# Loop 模型
+# --------------------------------------------------------------------------- #
+
+
+class LoopAssumption(StrictModel):
+    id: str = Field(min_length=1, max_length=MAX_LOCAL_ID_CHARS)
+    statement: str = Field(min_length=1, max_length=600)
+    risk: str = Field(default="", max_length=600)
+    verification: str = Field(min_length=1, max_length=600)
+
+
+class MvpFeature(StrictModel):
+    id: str = Field(min_length=1, max_length=MAX_LOCAL_ID_CHARS)
+    title: str = Field(min_length=1, max_length=200)
+    description: str = Field(min_length=1, max_length=1200)
+    acceptance: str = Field(min_length=1, max_length=600)
+    priority: FeaturePriority = FeaturePriority.should
+    effort: EffortSize = EffortSize.m
+
+
+class LoopMvpSpec(StrictModel):
+    title: str = Field(min_length=1, max_length=200)
+    summary: str = Field(min_length=1, max_length=1200)
+    features: list[MvpFeature] = Field(default_factory=list, max_length=MAX_LOOP_FEATURES)
+    assumptions: list[LoopAssumption] = Field(default_factory=list, max_length=MAX_LOOP_ASSUMPTIONS)
+    not_in_scope: list[str] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="after")
+    def _features_present(self) -> "LoopMvpSpec":
+        if not self.features:
+            raise ValueError("至少需要一个 MVP 功能")
+        ids = [f.id for f in self.features]
+        if len(set(ids)) != len(ids):
+            raise ValueError("feature id 必须唯一")
+        return self
+
+
+class ValidationCheck(StrictModel):
+    id: str = Field(min_length=1, max_length=MAX_LOCAL_ID_CHARS)
+    feature_id: str | None = Field(default=None, max_length=MAX_LOCAL_ID_CHARS)
+    question: str = Field(min_length=1, max_length=600)
+    result: CheckResult = CheckResult.unknown
+    evidence_refs: list[str] = Field(default_factory=list, max_length=MAX_REFS_PER_ITEM)
+    notes: str = Field(default="", max_length=600)
+
+
+class LoopValidation(StrictModel):
+    checks: list[ValidationCheck] = Field(default_factory=list, max_length=MAX_LOOP_CHECKS)
+    summary: str = Field(default="", max_length=1200)
+    unknowns: list[str] = Field(default_factory=list, max_length=8)
+
+
+class PrototypeFile(StrictModel):
+    path: str = Field(min_length=1, max_length=200)
+    language: str = Field(default="text", max_length=32)
+    content: str = Field(min_length=1, max_length=MAX_LOOP_FILE_CHARS)
+    purpose: str = Field(default="", max_length=300)
+
+
+class PrototypeSpec(StrictModel):
+    title: str = Field(min_length=1, max_length=200)
+    summary: str = Field(min_length=1, max_length=1200)
+    entry_file: str = Field(min_length=1, max_length=200)
+    run_command: str = Field(default="", max_length=300)
+    files: list[PrototypeFile] = Field(default_factory=list, max_length=MAX_LOOP_FILES)
+    limitations: str = Field(default="", max_length=600)
+    requires_human_build: bool = True
+
+
+class LoopTestCase(StrictModel):
+    id: str = Field(min_length=1, max_length=MAX_LOCAL_ID_CHARS)
+    feature_id: str | None = Field(default=None, max_length=MAX_LOCAL_ID_CHARS)
+    title: str = Field(min_length=1, max_length=200)
+    steps: list[str] = Field(default_factory=list, max_length=6)
+    expected: str = Field(min_length=1, max_length=600)
+    status: TestCaseStatus = TestCaseStatus.untested
+    evidence: str = Field(default="", max_length=600)
+
+
+class LoopTestReport(StrictModel):
+    total: int = Field(default=0, ge=0, le=MAX_LOOP_CASES)
+    passed: int = Field(default=0, ge=0)
+    failed: int = Field(default=0, ge=0)
+    skipped: int = Field(default=0, ge=0)
+    simulated: bool = True
+    cases: list[LoopTestCase] = Field(default_factory=list, max_length=MAX_LOOP_CASES)
+    notes: str = Field(default="", max_length=1200)
+
+    @model_validator(mode="after")
+    def _counts_match(self) -> "LoopTestReport":
+        counted = len(self.cases)
+        if counted and self.total != counted:
+            self.total = counted
+        return self
+
+
+class LoopScoreDimension(StrictModel):
+    key: LoopScoreKey
+    score: int = Field(ge=0, le=100)
+    max: int = Field(ge=1, le=100)
+    reason: str = Field(default="", max_length=600)
+
+
+class LoopScoreCard(StrictModel):
+    total: int = Field(ge=0, le=100)
+    dimensions: list[LoopScoreDimension] = Field(default_factory=list, max_length=MAX_LOOP_DIMENSIONS)
+    verdict: LoopVerdict = LoopVerdict.pending
+    blockers: list[str] = Field(default_factory=list, max_length=MAX_LOOP_BLOCKERS)
+    highlights: list[str] = Field(default_factory=list, max_length=8)
+    next_actions: list[str] = Field(default_factory=list, max_length=6)
+    generated_by: str = Field(default="model", pattern="^(model|harness)$")
+    hard_capped: bool = False
+
+
+class LoopStageView(StrictModel):
+    stage: LoopStage
+    status: LoopStageStatus = LoopStageStatus.pending
+    summary: str = ""
+    error_code: str | None = None
+    updated_at: str = ""
+
+
+class LoopArtifactView(StrictModel):
+    id: str
+    kind: LoopArtifactKind
+    title: str
+    size_bytes: int = 0
+    created_at: str = ""
+
+
+class LoopRoundView(StrictModel):
+    id: str
+    ordinal: int = Field(ge=1)
+    status: LoopRoundStatus = LoopRoundStatus.running
+    score: int | None = None
+    verdict: LoopVerdict = LoopVerdict.pending
+    stages: list[LoopStageView] = Field(default_factory=list)
+    artifacts: list[LoopArtifactView] = Field(default_factory=list)
+    started_at: str = ""
+    finished_at: str | None = None
+
+
+class LoopSnapshot(StrictModel):
+    loop_id: str
+    session_id: str
+    owner_email: str = ""
+    status: LoopStatus = LoopStatus.running
+    scope: LoopScope = LoopScope.mvp
+    current_round: int = 1
+    max_rounds: int = LOOP_ROUNDS_DEFAULT
+    target_score: int = LOOP_TARGET_SCORE_DEFAULT
+    loop_version: int = 1
+    focus: str = ""
+    rounds: list[LoopRoundView] = Field(default_factory=list)
+    mvp_spec: LoopMvpSpec | None = None
+    validation: LoopValidation | None = None
+    prototype: PrototypeSpec | None = None
+    test_report: LoopTestReport | None = None
+    scorecard: LoopScoreCard | None = None
+    latest_run_id: str | None = None
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class LoopUpdatedPayload(StrictModel):
+    """``loop.updated`` 事件负载：足够前端就地刷新，不替代 GET /loops/{id}。"""
+
+    loop_id: str
+    status: LoopStatus = LoopStatus.running
+    current_round: int = 1
+    loop_version: int = 1
+    stage: LoopStage | None = None
+    stage_status: LoopStageStatus | None = None
+    round_status: LoopRoundStatus | None = None
+    score: int | None = None
+    verdict: LoopVerdict | None = None
+    artifact_ids: list[str] = Field(default_factory=list, max_length=8)
+
+
+class LoopAck(StrictModel):
+    loop_id: str
+    status: LoopStatus
+    loop_version: int
+    current_round: int
+    run_id: str | None = None
+    reused: bool = False
+
+
+class StartLoopPayload(StrictModel):
+    scope: LoopScope = LoopScope.mvp
+    max_rounds: int = Field(default=LOOP_ROUNDS_DEFAULT, ge=MIN_LOOP_ROUNDS, le=MAX_LOOP_ROUNDS)
+    target_score: int = Field(default=LOOP_TARGET_SCORE_DEFAULT, ge=LOOP_TARGET_SCORE_MIN, le=LOOP_TARGET_SCORE_MAX)
+    focus: str = Field(default="", max_length=2000)
+    expected_product_version: int | None = Field(default=None, ge=1)
+
+
+class LoopDecisionPayload(StrictModel):
+    loop_id: str = Field(min_length=1, max_length=64)
+    expected_loop_version: int = Field(ge=1)
+    decision: LoopDecisionKind
+    note: str = Field(default="", max_length=2000)
+
+
 PAYLOAD_MODELS: dict[Action, type[StrictModel]] = {
     Action.clarify: ClarifyPayload,
     Action.confirm_brief: ConfirmBriefPayload,
@@ -1011,6 +1366,8 @@ PAYLOAD_MODELS: dict[Action, type[StrictModel]] = {
     Action.rebuild_legacy: RebuildLegacyPayload,
     Action.end_audit: EndAuditPayload,
     Action.cancel_audit: CancelAuditPayload,
+    Action.start_loop: StartLoopPayload,
+    Action.loop_decision: LoopDecisionPayload,
 }
 
 
@@ -1060,6 +1417,7 @@ class RunReceipt(StrictModel):
     events_url: str
     reused: bool = False
     audit_id: str | None = None
+    loop_id: str | None = None
 
 
 class ControlReceipt(StrictModel):
@@ -1097,6 +1455,8 @@ class RunSnapshot(StrictModel):
     product_version: int = 1
     canvas: CanvasProjection | None = None
     audit: AuditSnapshot | None = None
+    loop: LoopSnapshot | None = None
+    loop_id: str | None = None
     snapshot_event_seq: int = 0
     latest_event_seq: int = 0
 
@@ -1138,6 +1498,7 @@ class SessionView(StrictModel):
     active_run_id: str | None = None
     problem_statement: str = ""
     brief_status: BriefStatus = BriefStatus.draft
+    current_loop_id: str | None = None
     created_at: str = ""
     updated_at: str = ""
     deleted_at: str | None = None

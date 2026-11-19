@@ -1,12 +1,12 @@
 # V4.0 发布就绪清单（WP-10）
 
 - 分支：`feat/prd-v4-m1`；对应 PRD：`docs/superpowers/specs/2026-11-18-pm-brainstorm-agent-architecture-prd-v4.md`
-- 验收记录：`docs/v4-acceptance-report.md`（512 后端用例 / 123 前端用例 / 跨进程 4 / 真 Worker E2E 30 项 / 迁移演练；QA Loop 记录见 docs/qa-loop-runs/README.md）
+- 验收记录：`docs/v4-acceptance-report.md`（577 后端用例 / 150 前端用例 / 跨进程 4 / 真 Worker E2E 30 项 + Loop 闭环 29 项 / 迁移演练；QA Loop 记录见 docs/qa-loop-runs/README.md）
 
 ## 1. 发布前必须通过的命令
 
 ```bash
-# 后端（512 用例）
+# 后端（577 用例，含 Loop Studio 65 项）
 cd backend && ../.venv/Scripts/python.exe -m unittest discover -s tests
 
 # 前端类型检查 + 逻辑用例 + 生产构建 + 冒烟 e2e
@@ -58,6 +58,9 @@ CI 配置见 `.github/workflows/ci.yml`（backend：安装依赖 → 全量测�
 - M3 之后仍未实现的动作（如 `rebuild_legacy` 缺工作流）会以 `failed(FEATURE_NOT_READY)` 明确失败，并保留 step 记录，不产生假成功。
 - 删除会话为软删（30 天幂等记录同生命周期）；正文清理作业尚未提供。
 - 同步命令（确认定义/跳过/修订/加证据/确认决策/更正评估）各产生一条 `succeeded` Run，用于幂等回执，属预期行为。
+- **`next build` 与 `next dev` 共用 `frontend/.next`**：开发服务器运行时执行生产构建会破坏其路由缓存（动态路由全 500）。验证构建前先 `stop.bat`，构建后 `start.bat` 重新拉起。
+- Loop Studio（v5）的「测试执行」是模拟执行：产物 `simulated=true` 且必须注明「未实际执行」，否则确定性校验记 P0 阻塞并把总分压到 70；真实沙箱执行尚未实现。
+- Loop Studio 原型产物是文件内容 + 启动命令，不在服务端构建；`requires_human_build=true` 时由用户自行落地。
 
 ## 6. 本机验证的临时产物约定
 

@@ -198,6 +198,10 @@ def message_count(db, session_id: str) -> int:
 
 
 def session_view(db, session) -> SessionView:
+    """会话视图：附带最新闭环 id，供前端一次性渲染入口状态。"""
+
+    loop_repo = repo("loop_repo")
+    latest_loop = loop_repo.latest_loop_for_session(db, session.id)
     return SessionView(
         id=session.id,
         owner_email=session.owner_email,
@@ -212,6 +216,7 @@ def session_view(db, session) -> SessionView:
         updated_at=session.updated_at,
         deleted_at=session.deleted_at,
         message_count=message_count(db, session.id),
+        current_loop_id=latest_loop.id if latest_loop is not None else None,
     )
 
 

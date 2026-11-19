@@ -24,6 +24,7 @@ import {
   errorMessage,
   getAudit,
   getCanvas,
+  getLoop,
   getMessage as apiGetMessage,
   getProductState,
   getRun,
@@ -43,6 +44,9 @@ import type {
   CanvasProjection,
   CommandReceipt,
   ControlReceipt,
+  LoopDecisionKind,
+  LoopDecisionPayload,
+  LoopSnapshot,
   MessageStage,
   MessageView,
   ProductState,
@@ -54,9 +58,16 @@ import type {
   SessionPhase as V2Phase,
   SessionView,
   StartAuditRecovery,
+  StartLoopPayload,
   TargetRole,
 } from "@/lib/contracts.generated";
 import { isTerminalRunStatus } from "@/lib/contracts.generated";
+import {
+  mergeLoopUpdate,
+  normalizeDecisionNote,
+  normalizeLoopSnapshot,
+  validateStartForm,
+} from "@/lib/loopView";
 import {
   acceptProductVersion,
   isGuardCurrent,
@@ -199,6 +210,28 @@ export interface SendCommandOptions {
   expectedProductVersion?: number | null;
 }
 
+/** 闭环快照读取失败记录：notFound 用于区分「确认 404」与「网络/服务端错误」 */
+export interface LoopLoadError {
+  message: string;
+  notFound: boolean;
+}
+
+/** `startLoop` 的入参（页面表单 → store，store 负责补 expected_product_version） */
+export interface StartLoopInput {
+  scope?: "mvp" | "optimize";
+  maxRounds?: number;
+  targetScore?: number;
+  focus?: string;
+}
+
+/** `decideLoop` 的入参；expectedLoopVersion 必须来自当前快照，防并发覆盖 */
+export interface DecideLoopInput {
+  loopId: string;
+  expectedLoopVersion: number;
+  decision: LoopDecisionKind;
+  note?: string;
+}
+
 interface SessionState {
   // ---- 旧字段（组件契约，勿改） ----
   sessionId: string | null;
@@ -253,6 +286,12 @@ interface SessionState {
   activeRunId: string | null;
   lastFailedRunId: string | null;
   streamingMessageId: string | null;
+  /** 闭环快照缓存（按 loop_id 键，切回旧闭环可复用） */
+  loops: Record<string, LoopSnapshot>;
+  /** 当前正在看的闭环；来自 sessionView.current_loop_id 或 start_loop 回执 */
+  loopId: string | null;
+  loopLoading: boolean;
+  loopErrors: Record<string, LoopLoadError | null>;
 
   // ---- 旧 action ----
   loadSession: (id: string) => Promise<void>;
@@ -290,6 +329,14 @@ interface SessionState {
   refreshCanvas: (productVersion?: number) => Promise<void>;
   /** 拉取审计快照并写入 `audits`；返回 false 表示读取失败（错误同时记入 `auditErrors`） */
   hydrateAuditById: (auditId: string) => Promise<boolean>;
+  /** 写入一份已归一化的闭环快照（例如 run snapshot 里自带的 loop） */
+  hydrateLoop: (snapshot: LoopSnapshot) => void;
+  /** 拉取闭环快照并写入 `loops`；返回 false 表示读取失败（错误记入 `loopErrors`） */
+  hydrateLoopById: (loopId: string) => Promise<boolean>;
+  /** 启动闭环（start_loop）；expected_product_version 取当前产品版本 */
+  startLoop: (input?: StartLoopInput) => Promise<CommandReceipt>;
+  /** 提交闭环决策（loop_decision）；返回的 RunReceipt 会被正常订阅 */
+  decideLoop: (input: DecideLoopInput) => Promise<CommandReceipt>;
   clearStateWarnings: () => void;
   reset: () => void;
 }
@@ -709,6 +756,39 @@ export const useSessionStore = create<SessionState>((set, get) => {
     }
   }
 
+  async function fetchLoop(loopId: string, captured: SessionGuard): Promise<boolean> {
+    if (!loopId) return false;
+    try {
+      const snapshot = normalizeLoopSnapshot(await getLoop(loopId));
+      if (!assertCurrent(captured)) return false;
+      if (!snapshot) {
+        set((state) => ({
+          loopLoading: false,
+          loopErrors: {
+            ...state.loopErrors,
+            [loopId]: { message: "闭环数据解析失败，请稍后重试", notFound: false },
+          },
+        }));
+        return false;
+      }
+      get().hydrateLoop(snapshot);
+      return true;
+    } catch (error) {
+      if (!assertCurrent(captured)) return false;
+      set((state) => ({
+        loopLoading: false,
+        loopErrors: {
+          ...state.loopErrors,
+          [loopId]: {
+            message: errorMessage(error),
+            notFound: isApiError(error) && error.status === 404,
+          },
+        },
+      }));
+      return false;
+    }
+  }
+
   async function refreshMessage(messageId: string, sessionId: string): Promise<void> {
     try {
       const view = await apiGetMessage(messageId);
@@ -863,6 +943,20 @@ export const useSessionStore = create<SessionState>((set, get) => {
         }
         break;
       }
+      case "loop.updated": {
+        // 事件 payload 是局部更新且可能不完整：只有 loop_id 与当前闭环一致才合并，
+        // 随后用 GET /loops/{id} 兜底拉全量快照（避免把 artifacts/rounds 弄丢）。
+        const loopId = typeof payload.loop_id === "string" ? payload.loop_id : "";
+        const currentLoopId = get().loopId ?? get().sessionView?.current_loop_id ?? null;
+        if (!loopId || loopId !== currentLoopId) break;
+        const existing = get().loops[loopId];
+        if (existing) {
+          const merged = mergeLoopUpdate(existing, payload);
+          set((state) => ({ loops: { ...state.loops, [loopId]: merged } }));
+        }
+        void get().hydrateLoopById(loopId);
+        break;
+      }
       case "run.recovered": {
         const rawVersion = Number(payload.product_version ?? 0);
         if (rawVersion > 0 && acceptProductVersion(get().productVersion, rawVersion).accepted) {
@@ -1008,6 +1102,17 @@ export const useSessionStore = create<SessionState>((set, get) => {
 
       // 收尾兜底：Run 已结束仍未被服务端回执确认的本地乐观消息 → 提示发送失败
       settlePendingOptimistic(sessionId);
+
+      // 闭环轮次结束后刷新工作室快照：优先用 run snapshot 里自带的 loop（省一次请求），
+      // 否则按 run.loop_id / session.current_loop_id 兜底拉取（契约 §6）。
+      const loopId = snapshot?.loop_id ?? session?.current_loop_id ?? get().loopId ?? null;
+      if (snapshot?.loop) {
+        const hydratedLoop = normalizeLoopSnapshot(snapshot.loop);
+        if (hydratedLoop) get().hydrateLoop(hydratedLoop);
+      } else if (loopId) {
+        await get().hydrateLoopById(loopId);
+      }
+      if (!assertCurrent(captured)) return;
 
       if (session?.active_run_id && session.active_run_id !== runId) {
         get().subscribeRun(session.active_run_id);
@@ -1166,7 +1271,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
 
   async function dispatchCommand(
     action: Action,
-    payload: Record<string, unknown>,
+    payload: object,
     captured: SessionGuard,
     options: SendCommandOptions = {}
   ): Promise<CommandReceipt> {
@@ -1399,6 +1504,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
     });
     if (!assertCurrent(captured)) return;
     if (view.current_audit_id) void hydrateAudit(view.current_audit_id, captured);
+    if (view.current_loop_id) void get().hydrateLoopById(view.current_loop_id);
     if (view.active_run_id) get().subscribeRun(view.active_run_id);
   }
 
@@ -1474,6 +1580,10 @@ export const useSessionStore = create<SessionState>((set, get) => {
     activeRunId: null,
     lastFailedRunId: null,
     streamingMessageId: null,
+    loops: {},
+    loopId: null,
+    loopLoading: false,
+    loopErrors: {},
 
     // ---- 旧 action ----
     loadSession: async (id: string) => {
@@ -1508,6 +1618,10 @@ export const useSessionStore = create<SessionState>((set, get) => {
         isGeneratingCanvas: false,
         productVersion: 0,
         productState: null,
+        // 闭环是会话级视图：切会话时清空当前闭环指针与加载态（loops 缓存按 loop_id 保留）
+        loopId: null,
+        loopLoading: false,
+        loopErrors: {},
       });
 
       try {
@@ -1855,6 +1969,73 @@ export const useSessionStore = create<SessionState>((set, get) => {
       return hydrateAudit(auditId, capture());
     },
 
+    hydrateLoop: (snapshot: LoopSnapshot) => {
+      if (!snapshot || !snapshot.loop_id) return;
+      set((state) => {
+        const sessionId = state.currentSessionId;
+        const belongsToCurrent = !sessionId || !snapshot.session_id || snapshot.session_id === sessionId;
+        return {
+          loops: { ...state.loops, [snapshot.loop_id]: snapshot },
+          loopId: belongsToCurrent ? snapshot.loop_id : state.loopId,
+          loopLoading: false,
+          loopErrors: { ...state.loopErrors, [snapshot.loop_id]: null },
+        };
+      });
+    },
+
+    hydrateLoopById: async (loopId: string) => {
+      if (!loopId) return false;
+      const existing = get().loops[loopId];
+      set({ loopLoading: !existing });
+      return fetchLoop(loopId, capture());
+    },
+
+    startLoop: async (input: StartLoopInput = {}) => {
+      const captured = capture();
+      if (!captured.sessionId) throw new Error("会话尚未加载");
+      const state = get();
+      const form = validateStartForm({
+        scope: input.scope,
+        maxRounds: input.maxRounds,
+        targetScore: input.targetScore,
+        focus: input.focus,
+      });
+      // 契约 §4：expected_product_version 必须是当前产品版本，不能用 0/undefined，
+      // 否则后端会按「乐观锁基线 0」直接 VERSION_CONFLICT。
+      const productVersion =
+        state.productVersion || state.sessionView?.current_product_version || 1;
+      const payload: StartLoopPayload = {
+        scope: form.scope,
+        max_rounds: form.max_rounds,
+        target_score: form.target_score,
+        focus: form.focus,
+        expected_product_version: productVersion,
+      };
+      set({ isStreaming: true, error: null });
+      const receipt = await dispatchCommand("start_loop", payload, captured);
+      if (isRunReceipt(receipt) && receipt.loop_id) {
+        await get().hydrateLoopById(receipt.loop_id);
+      }
+      return receipt;
+    },
+
+    decideLoop: async (input: DecideLoopInput) => {
+      const captured = capture();
+      if (!captured.sessionId) throw new Error("会话尚未加载");
+      const payload: LoopDecisionPayload = {
+        loop_id: input.loopId,
+        expected_loop_version: Math.max(1, Math.round(input.expectedLoopVersion)),
+        decision: input.decision,
+        note: normalizeDecisionNote(input.note),
+      };
+      set({ isStreaming: true, error: null });
+      const receipt = await dispatchCommand("loop_decision", payload, captured);
+      // ship/stop 的 Run 可能同步结束、iterate 会立刻推进轮次：回执后先刷新一次快照，
+      // 之后 Run 收尾时 finalizeRun 还会再刷一次（幂等）。
+      await get().hydrateLoopById(input.loopId);
+      return receipt;
+    },
+
     clearStateWarnings: () => set({ stateWarnings: [] }),
 
     reset: () => {
@@ -1899,6 +2080,10 @@ export const useSessionStore = create<SessionState>((set, get) => {
         runs: {},
         runSnapshots: {},
         audits: {},
+        loops: {},
+        loopId: null,
+        loopLoading: false,
+        loopErrors: {},
         lastEventSeq: {},
         subscribingRunId: null,
         activeRunId: null,

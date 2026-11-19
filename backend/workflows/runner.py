@@ -56,6 +56,8 @@ ACTION_TASK_KIND: dict[Action, TaskKind] = {
     Action.end_audit: TaskKind.audit_report,
     Action.cancel_audit: TaskKind.audit_report,
     Action.rebuild_legacy: TaskKind.rebuild_legacy,
+    Action.start_loop: TaskKind.loop_round,
+    Action.loop_decision: TaskKind.loop_round,
 }
 
 #: 任务类型 → 幂等 logical_key（steps 表唯一键）。
@@ -68,6 +70,7 @@ LOGICAL_KEYS: dict[TaskKind, str] = {
     TaskKind.audit_answer: "audit.assess",
     TaskKind.audit_report: "audit.report",
     TaskKind.rebuild_legacy: "legacy.rebuild",
+    TaskKind.loop_round: "loop.round",
 }
 
 #: 任务类型 → 步骤角色（消息 role_code / 预算归属）。
@@ -80,6 +83,7 @@ STEP_ROLE: dict[TaskKind, RoleCode] = {
     TaskKind.audit_answer: RoleCode.coach,
     TaskKind.audit_report: RoleCode.coach,
     TaskKind.rebuild_legacy: RoleCode.coach,
+    TaskKind.loop_round: RoleCode.coach,
 }
 
 #: 工作流的惰性描述：``(模块名, 函数名)``。调用时才 import，
@@ -94,6 +98,7 @@ WORKFLOWS: dict[TaskKind, WorkflowRef] = {
     TaskKind.audit_open: ("workflows.audit", "run_audit_open"),
     TaskKind.audit_answer: ("workflows.audit", "run_audit_answer"),
     TaskKind.audit_report: ("workflows.audit", "run_audit_report"),
+    TaskKind.loop_round: ("workflows.loop", "run_loop_round"),
 }
 
 #: 可注入的工作流分发表（优先级高于 :data:`WORKFLOWS`）；测试可整体替换。
@@ -182,6 +187,9 @@ class BudgetTracker:
 
         overrides: dict[str, Any] = {}
         for key, value in raw.items():
+            if str(key).startswith("loop_"):
+                # 闭环参数（loop_id / 轮次 / 阶段预算）由工作流自取，不是预算覆盖项。
+                continue
             normalized = _BUDGET_ALIASES.get(str(key))
             if normalized is None:
                 tracker.warnings.append(f"UNKNOWN_BUDGET_KEY:{key}")

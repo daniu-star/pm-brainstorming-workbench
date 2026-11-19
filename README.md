@@ -214,3 +214,5 @@ cd frontend && npm run test:e2e                                             # �
 - QA Loop 方法学与首次运行结果：`docs/qa-loop-engineering.md`
 - QA Loop 逐轮归档（5 轮分数/发现/修复）：`docs/qa-loop-runs/README.md`
 - 可复用闭环脚本：`scripts/qa-loop.workflow.js`
+- Loop Studio（v5，闭环工作台：设想→检验→开发→测试→评测）：`docs/v5-loop-studio.md`
+- Loop Studio 接口与文件归属：`docs/loop-studio-interfaces.md`

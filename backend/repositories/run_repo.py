@@ -75,6 +75,7 @@ def create_run(
     audit_id: str | None = None,
     base_audit_version: int | None = None,
     question_id: str | None = None,
+    loop_id: str | None = None,
     run_id: str | None = None,
 ) -> RunRow:
     """建 queued Run，并在同一事务写 ``run.queued`` 事件（seq=1）。"""
@@ -100,6 +101,7 @@ def create_run(
         audit_id=audit_id,
         base_audit_version=base_audit_version,
         question_id=question_id,
+        loop_id=loop_id,
         created_at=now_iso,
     )
     db.add(run)

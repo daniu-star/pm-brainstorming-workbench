@@ -46,6 +46,10 @@ ACTION_PHASES: dict[Action, frozenset[SessionPhase]] = {
     Action.rebuild_legacy: frozenset({SessionPhase.brainstorming, SessionPhase.audit_completed}),
     Action.end_audit: frozenset({SessionPhase.auditing}),
     Action.cancel_audit: frozenset({SessionPhase.auditing}),
+    # Loop Studio：闭环在共创阶段内运行，审计中不允许开启；闭环跑完可继续决策。
+    Action.start_loop: frozenset({SessionPhase.brainstorming, SessionPhase.audit_completed}),
+    Action.loop_decision: frozenset({SessionPhase.brainstorming, SessionPhase.audit_completed}),
+    Action.loop_round: frozenset({SessionPhase.brainstorming, SessionPhase.audit_completed}),
 }
 
 #: 控制意图不受 SESSION_BUSY 约束（PRD FR-07）

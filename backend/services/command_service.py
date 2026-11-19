@@ -58,7 +58,7 @@ from domain.contracts import (
     utc_now_iso,
 )
 from domain.errors import AppError, ErrorCode
-from repositories import audit_repo, run_repo, session_repo
+from repositories import audit_repo, loop_repo, run_repo, session_repo
 from repositories.database import (
     AuditRow,
     ControlIntentRow,
@@ -89,6 +89,8 @@ ASYNC_ACTIONS: frozenset[Action] = frozenset(
         Action.start_audit,
         Action.answer_audit,
         Action.rebuild_legacy,
+        Action.start_loop,
+        Action.loop_decision,
     }
 )
 
@@ -101,6 +103,8 @@ ACTION_TASK_KIND: dict[Action, C.TaskKind] = {
     Action.rebuild_legacy: C.TaskKind.rebuild_legacy,
     Action.end_audit: C.TaskKind.audit_report,
     Action.cancel_audit: C.TaskKind.audit_report,
+    Action.start_loop: C.TaskKind.loop_round,
+    Action.loop_decision: C.TaskKind.loop_round,
 }
 
 
@@ -197,9 +201,13 @@ def _count_messages(db, session_id: str) -> int:
 
 
 def session_to_view(db, session: SessionRow) -> SessionView:
-    """查询层复用的会话视图（message_count 为消息总数）。"""
+    """查询层复用的会话视图（message_count 为消息总数、当前闭环 id）。"""
 
-    return _session_view(session, _count_messages(db, session.id))
+    view = _session_view(session, _count_messages(db, session.id))
+    loop = loop_repo.latest_loop_for_session(db, session.id)
+    if loop is not None:
+        view.current_loop_id = loop.id
+    return view
 
 
 def run_to_view(run: RunRow) -> RunView:
@@ -226,7 +234,13 @@ def run_to_view(run: RunRow) -> RunView:
     )
 
 
-def _receipt(run: RunRow, session: SessionRow, *, reused: bool = False) -> RunReceipt:
+def _receipt(
+    run: RunRow,
+    session: SessionRow,
+    *,
+    reused: bool = False,
+    loop_id: str | None = None,
+) -> RunReceipt:
     return RunReceipt(
         run_id=run.id,
         session_id=run.session_id,
@@ -237,6 +251,7 @@ def _receipt(run: RunRow, session: SessionRow, *, reused: bool = False) -> RunRe
         events_url=_events_url(run.id),
         reused=reused,
         audit_id=run.audit_id,
+        loop_id=loop_id if loop_id is not None else getattr(run, "loop_id", None),
     )
 
 
@@ -577,7 +592,25 @@ def submit_command(
     _ensure_no_active_run(db, session)
     _ensure_queue_budget(db, owner_email)
 
-    if command.action in SYNC_ACTIONS:
+    if command.action is Action.start_loop:
+        receipt = _submit_loop_start(
+            db,
+            session=session,
+            parsed=parsed,
+            owner_email=owner_email,
+            now_iso=now_iso,
+            now_epoch=now_epoch,
+        )
+    elif command.action is Action.loop_decision:
+        receipt = _submit_loop_decision(
+            db,
+            session=session,
+            parsed=parsed,
+            owner_email=owner_email,
+            now_iso=now_iso,
+            now_epoch=now_epoch,
+        )
+    elif command.action in SYNC_ACTIONS:
         receipt = _submit_sync(
             db,
             session=session,
@@ -613,6 +646,235 @@ def submit_command(
 # --------------------------------------------------------------------------- #
 # 异步命令：建 Run 占位
 # --------------------------------------------------------------------------- #
+
+
+# --------------------------------------------------------------------------- #
+# Loop Studio 命令（start_loop / loop_decision）与一轮闭环的 Run 排期
+# --------------------------------------------------------------------------- #
+
+
+def _loop_budget(loop) -> dict[str, Any]:
+    """把闭环参数写进 Run 预算，Worker 重放时无需进程内状态即可恢复。"""
+
+    budget = default_budget()
+    budget.update(
+        {
+            "loop_id": loop.id,
+            "loop_round": int(loop.current_round or 1),
+            "loop_scope": loop.scope,
+            "loop_max_rounds": int(loop.max_rounds or C.LOOP_ROUNDS_DEFAULT),
+            "loop_target_score": int(loop.target_score or C.LOOP_TARGET_SCORE_DEFAULT),
+            "loop_focus": loop.focus or "",
+            "loop_stage_output_tokens": C.LOOP_STAGE_OUTPUT_TOKENS,
+            "loop_final_output_tokens": C.LOOP_FINAL_OUTPUT_TOKENS,
+        }
+    )
+    return budget
+
+
+def _loop_event(loop) -> dict[str, Any]:
+    payload = C.LoopUpdatedPayload(
+        loop_id=loop.id,
+        status=C.LoopStatus(loop.status),
+        current_round=int(loop.current_round or 1),
+        loop_version=int(loop.loop_version or 1),
+    )
+    return {"type": EventType.loop_updated, "payload": payload.model_dump(mode="json")}
+
+
+def _start_loop_round_run(
+    db,
+    *,
+    session: SessionRow,
+    parsed: C.ParsedCommand,
+    owner_email: str,
+    loop,
+    ordinal: int,
+    now_iso: str,
+    now_epoch: int,
+) -> RunReceipt:
+    run_budget = _loop_budget(loop)
+    run_budget["loop_round"] = int(ordinal)
+    run = run_repo.create_run(
+        db,
+        session_id=session.id,
+        owner_email=owner_email,
+        request_id=parsed.request_id,
+        action=parsed.action.value,
+        input_hash=parsed.input_hash,
+        base_session_version=session.session_version,
+        base_product_version=session.current_product_version,
+        budget=run_budget,
+        now_iso=now_iso,
+        deadline_at=now_epoch + C.RUN_TIMEOUT_SECONDS,
+        queue_deadline_at=now_epoch + C.QUEUE_WAIT_LIMIT_SECONDS,
+        loop_id=loop.id,
+        run_id=new_id(),
+    )
+    loop_repo.ensure_round(db, loop_id=loop.id, ordinal=ordinal, run_id=run.id, now_iso=now_iso)
+    loop_repo.touch_loop(
+        db,
+        loop,
+        status=C.LoopStatus.running,
+        current_round=int(ordinal),
+        latest_run_id=run.id,
+        loop_version=int(loop.loop_version or 1) + 1,
+        now_iso=now_iso,
+    )
+    session_repo.touch_session(db, session, now_iso=now_iso, active_run_id=run.id)
+    session_repo.bump_session_version(db, session)
+    logger.info("Loop 轮次已入队 loop=%s round=%s run=%s", loop.id, ordinal, run.id)
+    return _receipt(run, session, loop_id=loop.id)
+
+
+def _submit_loop_start(
+    db,
+    *,
+    session: SessionRow,
+    parsed: C.ParsedCommand,
+    owner_email: str,
+    now_iso: str,
+    now_epoch: int,
+) -> RunReceipt:
+    payload: dict[str, Any] = parsed.payload
+    expected = payload.get("expected_product_version")
+    if expected is not None and expected != session.current_product_version:
+        raise AppError(
+            ErrorCode.VERSION_CONFLICT,
+            "产品状态版本已变化，请刷新后再启动闭环",
+            details={"expected_product_version": expected, "current": session.current_product_version},
+        )
+    active = loop_repo.active_loop_for_session(db, session.id)
+    if active is not None:
+        raise AppError(
+            ErrorCode.LOOP_ACTIVE,
+            "已有进行中的闭环，请先完成或停止它",
+            details={"loop_id": active.id, "status": active.status},
+        )
+    loop = loop_repo.create_loop(
+        db,
+        session_id=session.id,
+        owner_email=owner_email,
+        scope=payload.get("scope") or C.LoopScope.mvp,
+        max_rounds=int(payload.get("max_rounds") or C.LOOP_ROUNDS_DEFAULT),
+        target_score=int(payload.get("target_score") or C.LOOP_TARGET_SCORE_DEFAULT),
+        focus=payload.get("focus") or "",
+        now_iso=now_iso,
+    )
+    return _start_loop_round_run(
+        db,
+        session=session,
+        parsed=parsed,
+        owner_email=owner_email,
+        loop=loop,
+        ordinal=1,
+        now_iso=now_iso,
+        now_epoch=now_epoch,
+    )
+
+
+def _submit_loop_decision(
+    db,
+    *,
+    session: SessionRow,
+    parsed: C.ParsedCommand,
+    owner_email: str,
+    now_iso: str,
+    now_epoch: int,
+) -> RunReceipt:
+    payload: dict[str, Any] = parsed.payload
+    loop = loop_repo.require_loop(db, loop_id=payload["loop_id"], owner_email=owner_email)
+    if loop.session_id != session.id:
+        raise AppError(ErrorCode.FORBIDDEN, "闭环不属于该会话")
+    if C.LoopStatus(loop.status) is not C.LoopStatus.awaiting_decision:
+        raise AppError(
+            ErrorCode.LOOP_NOT_AWAITING_DECISION,
+            "该闭环当前不在决策阶段",
+            details={"loop_id": loop.id, "status": loop.status},
+        )
+    if int(payload["expected_loop_version"]) != int(loop.loop_version):
+        raise AppError(
+            ErrorCode.LOOP_VERSION_CONFLICT,
+            "闭环状态已变化，请刷新后再决策",
+            details={"expected_loop_version": payload["expected_loop_version"], "current": int(loop.loop_version)},
+        )
+
+    decision = C.LoopDecisionKind(payload["decision"])
+
+    if decision is C.LoopDecisionKind.iterate:
+        next_round = int(loop.current_round or 1) + 1
+        if next_round > int(loop.max_rounds or C.LOOP_ROUNDS_DEFAULT):
+            raise AppError(
+                ErrorCode.LOOP_ROUNDS_EXHAUSTED,
+                "闭环轮次已用尽，只能交付或停止",
+                details={"current_round": int(loop.current_round or 1), "max_rounds": int(loop.max_rounds)},
+            )
+        return _start_loop_round_run(
+            db,
+            session=session,
+            parsed=parsed,
+            owner_email=owner_email,
+            loop=loop,
+            ordinal=next_round,
+            now_iso=now_iso,
+            now_epoch=now_epoch,
+        )
+
+    # ship / stop：不调用模型，同一事务收口。
+    target_status = C.LoopStatus.shipped if decision is C.LoopDecisionKind.ship else C.LoopStatus.stopped
+    note = payload.get("note") or ""
+    run = run_repo.create_run(
+        db,
+        session_id=session.id,
+        owner_email=owner_email,
+        request_id=parsed.request_id,
+        action=parsed.action.value,
+        input_hash=parsed.input_hash,
+        base_session_version=session.session_version,
+        base_product_version=session.current_product_version,
+        budget=_loop_budget(loop),
+        now_iso=now_iso,
+        deadline_at=now_epoch + C.RUN_TIMEOUT_SECONDS,
+        queue_deadline_at=now_epoch + C.QUEUE_WAIT_LIMIT_SECONDS,
+        loop_id=loop.id,
+        run_id=new_id(),
+    )
+    session_repo.touch_session(db, session, now_iso=now_iso, active_run_id=run.id)
+
+    text = "闭环已标记为可交付，产物已归档。" if decision is C.LoopDecisionKind.ship else "闭环已停止，已保留现有产物。"
+    messages = [
+        OutgoingMessage(
+            content=text,
+            sender_kind=SenderKind.system,
+            role_code=None,
+            stage=MessageStage.brainstorm,
+        )
+    ]
+
+    def _apply(db_) -> None:
+        row = loop_repo.get_loop(db_, loop.id)
+        if row is None:  # pragma: no cover - 同事务内必然存在
+            return
+        loop_repo.close_loop(
+            db_,
+            row,
+            status=target_status,
+            decision=decision,
+            note=note,
+            now_iso=now_iso,
+        )
+
+    outcome = RunOutcome(
+        status=RunStatus.succeeded,
+        product_state=None,
+        messages=messages,
+        events=[_loop_event(loop)],
+        session_phase=None,
+        brief_status=None,
+        apply=_apply,
+    )
+    _commit_outcome(db, run=run, session=session, outcome=outcome, now_iso=now_iso, lease_required=False)
+    return _receipt(run, session, loop_id=loop.id)
 
 
 def _submit_async(

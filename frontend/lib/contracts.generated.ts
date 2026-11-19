@@ -145,6 +145,8 @@ export const ACTIONS = [
   "rebuild_legacy",
   "end_audit",
   "cancel_audit",
+  "start_loop",
+  "loop_decision",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 /** backend: NORMAL_ACTIONS（返回 RunReceipt 202） */
@@ -160,6 +162,8 @@ export const NORMAL_ACTIONS: readonly Action[] = [
   "answer_audit",
   "correct_audit_assessment",
   "rebuild_legacy",
+  "start_loop",
+  "loop_decision",
 ];
 /** backend: CONTROL_ACTIONS（返回 ControlReceipt 202） */
 export const CONTROL_ACTIONS: readonly Action[] = ["end_audit", "cancel_audit"];
@@ -175,6 +179,7 @@ export const EVENT_TYPES = [
   "role.completed",
   "product_state.updated",
   "audit.updated",
+  "loop.updated",
   "run.recovered",
   "run.completed",
   "run.failed",
@@ -192,6 +197,7 @@ export const TASK_KINDS = [
   "audit_answer",
   "audit_report",
   "rebuild_legacy",
+  "loop_round",
 ] as const;
 export type TaskKind = (typeof TASK_KINDS)[number];
 
@@ -499,6 +505,280 @@ export interface AuditSnapshot {
 }
 
 // --------------------------------------------------------------------------- //
+// 闭环工作室 Loop Studio（契约 §2 / §4 / §6 / §7）
+// --------------------------------------------------------------------------- //
+
+export const LOOP_STATUSES = ["running", "awaiting_decision", "shipped", "stopped", "failed"] as const;
+export type LoopStatus = (typeof LOOP_STATUSES)[number];
+
+export const LOOP_SCOPES = ["mvp", "optimize"] as const;
+export type LoopScope = (typeof LOOP_SCOPES)[number];
+
+/** 五阶段顺序即后端 LOOP_STAGES 顺序，前端时间线不得重排。 */
+export const LOOP_STAGES = ["ideate", "validate", "develop", "test", "evaluate"] as const;
+export type LoopStage = (typeof LOOP_STAGES)[number];
+
+export const LOOP_STAGE_STATUSES = ["pending", "running", "done", "failed", "skipped"] as const;
+export type LoopStageStatus = (typeof LOOP_STAGE_STATUSES)[number];
+
+export const LOOP_ROUND_STATUSES = ["running", "done", "failed"] as const;
+export type LoopRoundStatus = (typeof LOOP_ROUND_STATUSES)[number];
+
+/** 注意：后端 Python 侧写作 pass_，线上字面量仍是 "pass"。 */
+export const LOOP_VERDICTS = ["pending", "pass", "iterate", "blocked"] as const;
+export type LoopVerdict = (typeof LOOP_VERDICTS)[number];
+
+export const LOOP_DECISION_KINDS = ["iterate", "ship", "stop"] as const;
+export type LoopDecisionKind = (typeof LOOP_DECISION_KINDS)[number];
+
+export const LOOP_ARTIFACT_KINDS = [
+  "mvp_spec",
+  "validation",
+  "prototype",
+  "test_report",
+  "scorecard",
+] as const;
+export type LoopArtifactKind = (typeof LOOP_ARTIFACT_KINDS)[number];
+
+export const CHECK_RESULTS = ["unknown", "pass", "fail"] as const;
+export type CheckResult = (typeof CHECK_RESULTS)[number];
+
+export const TEST_CASE_STATUSES = ["untested", "passed", "failed", "skipped"] as const;
+export type TestCaseStatus = (typeof TEST_CASE_STATUSES)[number];
+
+export const FEATURE_PRIORITIES = ["must", "should", "could"] as const;
+export type FeaturePriority = (typeof FEATURE_PRIORITIES)[number];
+
+export const EFFORT_SIZES = ["S", "M", "L"] as const;
+export type EffortSize = (typeof EFFORT_SIZES)[number];
+
+export const LOOP_SCORE_KEYS = [
+  "functionality",
+  "feasibility",
+  "user_value",
+  "risk",
+  "delivery",
+  "testability",
+  "docs",
+] as const;
+export type LoopScoreKey = (typeof LOOP_SCORE_KEYS)[number];
+
+/** 七维满分（后端 LOOP_SCORE_LABELS 的 max），合计 100。 */
+export const LOOP_SCORE_MAX: Record<LoopScoreKey, number> = {
+  functionality: 25,
+  feasibility: 15,
+  user_value: 20,
+  risk: 15,
+  delivery: 10,
+  testability: 10,
+  docs: 5,
+};
+
+export const MIN_LOOP_ROUNDS = 1;
+export const MAX_LOOP_ROUNDS = 5;
+export const LOOP_ROUNDS_DEFAULT = 3;
+export const LOOP_TARGET_SCORE_MIN = 60;
+export const LOOP_TARGET_SCORE_MAX = 100;
+export const LOOP_TARGET_SCORE_DEFAULT = 85;
+export const MAX_LOOP_FOCUS_CHARS = 2000;
+export const MAX_LOOP_DECISION_NOTE_CHARS = 2000;
+
+export interface LoopAssumption {
+  id: string;
+  statement: string;
+  risk: string;
+  verification: string;
+}
+
+export interface MvpFeature {
+  id: string;
+  title: string;
+  description: string;
+  acceptance: string;
+  priority: FeaturePriority;
+  effort: EffortSize;
+}
+
+export interface LoopMvpSpec {
+  title: string;
+  summary: string;
+  features: MvpFeature[];
+  assumptions: LoopAssumption[];
+  not_in_scope: string[];
+}
+
+export interface ValidationCheck {
+  id: string;
+  feature_id: string | null;
+  question: string;
+  result: CheckResult;
+  evidence_refs: string[];
+  notes: string;
+}
+
+export interface LoopValidation {
+  checks: ValidationCheck[];
+  summary: string;
+  unknowns: string[];
+}
+
+export interface PrototypeFile {
+  path: string;
+  language: string;
+  content: string;
+  purpose: string;
+}
+
+export interface PrototypeSpec {
+  title: string;
+  summary: string;
+  entry_file: string;
+  run_command: string;
+  files: PrototypeFile[];
+  limitations: string;
+  requires_human_build: boolean;
+}
+
+export interface LoopTestCase {
+  id: string;
+  feature_id: string | null;
+  title: string;
+  steps: string[];
+  expected: string;
+  status: TestCaseStatus;
+  evidence: string;
+}
+
+export interface LoopTestReport {
+  /** 后端校验器会把 total 对齐 cases 长度，前端以 cases.length 为准展示。 */
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  simulated: boolean;
+  cases: LoopTestCase[];
+  notes: string;
+}
+
+export interface LoopScoreDimension {
+  key: LoopScoreKey;
+  score: number;
+  max: number;
+  reason: string;
+}
+
+export interface LoopScoreCard {
+  total: number;
+  dimensions: LoopScoreDimension[];
+  verdict: LoopVerdict;
+  blockers: string[];
+  highlights: string[];
+  next_actions: string[];
+  generated_by: "model" | "harness";
+  hard_capped: boolean;
+}
+
+export interface LoopStageView {
+  stage: LoopStage;
+  status: LoopStageStatus;
+  summary: string;
+  error_code: string | null;
+  updated_at: string;
+}
+
+export interface LoopArtifactView {
+  id: string;
+  kind: LoopArtifactKind;
+  title: string;
+  size_bytes: number;
+  created_at: string;
+}
+
+export interface LoopRoundView {
+  id: string;
+  ordinal: number;
+  status: LoopRoundStatus;
+  score: number | null;
+  verdict: LoopVerdict;
+  stages: LoopStageView[];
+  artifacts: LoopArtifactView[];
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface LoopSnapshot {
+  loop_id: string;
+  session_id: string;
+  owner_email: string;
+  status: LoopStatus;
+  scope: LoopScope;
+  current_round: number;
+  max_rounds: number;
+  target_score: number;
+  loop_version: number;
+  focus: string;
+  rounds: LoopRoundView[];
+  mvp_spec: LoopMvpSpec | null;
+  validation: LoopValidation | null;
+  prototype: PrototypeSpec | null;
+  test_report: LoopTestReport | null;
+  scorecard: LoopScoreCard | null;
+  latest_run_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** `loop.updated` 事件 payload：局部更新，字段可能不完整，前端不得直接当快照用。 */
+export interface LoopUpdatedPayload {
+  loop_id: string;
+  status: LoopStatus;
+  current_round: number;
+  loop_version: number;
+  stage: LoopStage | null;
+  stage_status: LoopStageStatus | null;
+  round_status: LoopRoundStatus | null;
+  score: number | null;
+  verdict: LoopVerdict | null;
+  artifact_ids: string[];
+}
+
+/** `start_loop` / `loop_decision` 的 202 回执（后端 LoopAck，命令层仍返回 RunReceipt）。 */
+export interface LoopAck {
+  loop_id: string;
+  status: LoopStatus;
+  loop_version: number;
+  current_round: number;
+  run_id: string | null;
+  reused: boolean;
+}
+
+export interface StartLoopPayload {
+  scope: LoopScope;
+  max_rounds: number;
+  target_score: number;
+  focus: string;
+  expected_product_version: number;
+}
+
+export interface LoopDecisionPayload {
+  loop_id: string;
+  expected_loop_version: number;
+  decision: LoopDecisionKind;
+  note: string;
+}
+
+/** `GET /api/v2/loops/{loop_id}/artifacts/{artifact_id}` */
+export interface LoopArtifactResponse {
+  artifact: LoopArtifactView;
+  payload: Record<string, unknown>;
+}
+
+export interface LoopListPage {
+  items: LoopSnapshot[];
+  next_cursor: string | null;
+}
+
+// --------------------------------------------------------------------------- //
 // 命令与回执（FR-03 / §7.2）
 // --------------------------------------------------------------------------- //
 
@@ -598,6 +878,8 @@ export type CommandPayloadMap = {
   rebuild_legacy: { expected_product_version?: number | null };
   end_audit: EndAuditPayload;
   cancel_audit: CancelAuditPayload;
+  start_loop: StartLoopPayload;
+  loop_decision: LoopDecisionPayload;
 };
 
 export interface RunReceipt {
@@ -610,6 +892,8 @@ export interface RunReceipt {
   events_url: string;
   reused: boolean;
   audit_id: string | null;
+  /** 闭环轮次 Run 才有值；普通命令为 null。 */
+  loop_id: string | null;
 }
 
 export interface ControlReceipt {
@@ -649,6 +933,9 @@ export interface RunSnapshot {
   product_version: number;
   canvas: CanvasProjection | null;
   audit: AuditSnapshot | null;
+  /** run.loop_id 存在时后端同事务填快照，前端据此刷新 Loop 工作室。 */
+  loop: LoopSnapshot | null;
+  loop_id: string | null;
   snapshot_event_seq: number;
   latest_event_seq: number;
 }
@@ -682,6 +969,7 @@ export interface SessionView {
   active_run_id: string | null;
   problem_statement: string;
   brief_status: BriefStatus;
+  current_loop_id: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;

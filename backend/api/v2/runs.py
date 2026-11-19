@@ -115,6 +115,15 @@ def get_run_snapshot(run_id: str, request: Request):
             audit_row = audit_repo.get_audit(db, session.current_audit_id)
             if audit_row is not None:
                 audit = audit_repo.audit_to_snapshot(db, audit_row)
+        # Loop Studio：同一事务内把本轮闭环快照一并带回（run.loop_id 为空时不填充）。
+        loop = None
+        if run.loop_id:
+            loop_repo = common.repo("loop_repo")
+            loop_row = loop_repo.get_loop(db, run.loop_id)
+            if loop_row is not None:
+                if loop_row.owner_email != owner_email:
+                    raise AppError(ErrorCode.FORBIDDEN, "无权访问该闭环")
+                loop = loop_repo.loop_to_snapshot(db, loop_row)
         snapshot = C.RunSnapshot(
             run_id=run.id,
             session_id=run.session_id,
@@ -129,6 +138,8 @@ def get_run_snapshot(run_id: str, request: Request):
             product_version=product_state.version,
             canvas=canvas,
             audit=audit,
+            loop=loop,
+            loop_id=run.loop_id,
             snapshot_event_seq=latest_event_seq,
             latest_event_seq=latest_event_seq,
         )

@@ -203,6 +203,7 @@ class RunRow(Base):
     retry_audit_version = Column(Integer, nullable=True)
     #: 重试子 Run 只调度这些 logical_key（retry_run 从父 Run 的失败/未完成步骤复制）。
     failed_steps_json = Column(Text, nullable=False, default="[]", server_default="[]")
+    loop_id = Column(String(64), nullable=True)
     question_id = Column(String(64), nullable=True)
     continuation_token = Column(String(64), nullable=True)
     error_code = Column(String(64), nullable=True)
@@ -219,6 +220,7 @@ class RunRow(Base):
         Index("ix_runs_owner_status", "owner_email", "status"),
         Index("ix_runs_parent", "parent_run_id"),
         Index("ix_runs_audit", "audit_id"),
+        Index("ix_runs_loop", "loop_id"),
     )
 
 
@@ -474,6 +476,106 @@ class LegacyArtifactRow(Base):
     __table_args__ = (Index("ix_legacy_artifacts_session", "session_id"),)
 
 
+class LoopRow(Base):
+    """Loop Studio 闭环实例（设想→检验→开发→测试→评测）。"""
+
+    __tablename__ = "loops"
+
+    id = Column(String(64), primary_key=True)
+    session_id = Column(String(64), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
+    owner_email = Column(String(320), nullable=False)
+    scope = Column(String(16), nullable=False, default="mvp")
+    status = Column(String(32), nullable=False, default="running")
+    current_round = Column(Integer, nullable=False, default=1, server_default="1")
+    max_rounds = Column(Integer, nullable=False, default=3, server_default="3")
+    target_score = Column(Integer, nullable=False, default=85, server_default="85")
+    loop_version = Column(Integer, nullable=False, default=1, server_default="1")
+    focus = Column(Text, nullable=False, default="", server_default="")
+    latest_run_id = Column(String(64), nullable=True)
+    decision = Column(String(16), nullable=True)
+    decision_note = Column(Text, nullable=True)
+    created_at = Column(String(32), nullable=False)
+    updated_at = Column(String(32), nullable=False)
+    closed_at = Column(String(32), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            _in("status", "'running','awaiting_decision','shipped','stopped','failed'"),
+            name="ck_loops_status",
+        ),
+        Index("ix_loops_session", "session_id"),
+        Index("ix_loops_owner", "owner_email"),
+    )
+
+
+class LoopRoundRow(Base):
+    __tablename__ = "loop_rounds"
+
+    id = Column(String(64), primary_key=True)
+    loop_id = Column(String(64), ForeignKey("loops.id", ondelete="CASCADE"), nullable=False)
+    ordinal = Column(Integer, nullable=False)
+    run_id = Column(String(64), nullable=True)
+    status = Column(String(32), nullable=False, default="running")
+    score = Column(Integer, nullable=True)
+    verdict = Column(String(16), nullable=False, default="pending")
+    started_at = Column(String(32), nullable=False)
+    finished_at = Column(String(32), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("loop_id", "ordinal", name="uq_loop_rounds_ordinal"),
+        CheckConstraint(_in("status", "'running','done','failed'"), name="ck_loop_rounds_status"),
+        Index("ix_loop_rounds_loop", "loop_id"),
+    )
+
+
+class LoopStageResultRow(Base):
+    __tablename__ = "loop_stage_results"
+
+    id = Column(String(64), primary_key=True)
+    loop_id = Column(String(64), ForeignKey("loops.id", ondelete="CASCADE"), nullable=False)
+    round_ordinal = Column(Integer, nullable=False)
+    stage = Column(String(16), nullable=False)
+    status = Column(String(16), nullable=False, default="pending")
+    summary = Column(Text, nullable=False, default="", server_default="")
+    payload_json = Column(Text, nullable=False, default="{}", server_default="{}")
+    error_code = Column(String(64), nullable=True)
+    created_at = Column(String(32), nullable=False)
+    updated_at = Column(String(32), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("loop_id", "round_ordinal", "stage", name="uq_loop_stage_results_key"),
+        CheckConstraint(
+            _in("stage", "'ideate','validate','develop','test','evaluate'"),
+            name="ck_loop_stage_results_stage",
+        ),
+        CheckConstraint(
+            _in("status", "'pending','running','done','failed','skipped'"),
+            name="ck_loop_stage_results_status",
+        ),
+        Index("ix_loop_stage_results_loop", "loop_id", "round_ordinal"),
+    )
+
+
+class LoopArtifactRow(Base):
+    __tablename__ = "loop_artifacts"
+
+    id = Column(String(64), primary_key=True)
+    loop_id = Column(String(64), ForeignKey("loops.id", ondelete="CASCADE"), nullable=False)
+    round_ordinal = Column(Integer, nullable=False)
+    kind = Column(String(16), nullable=False)
+    title = Column(String(300), nullable=False)
+    payload_json = Column(Text, nullable=False, default="{}")
+    created_at = Column(String(32), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            _in("kind", "'mvp_spec','validation','prototype','test_report','scorecard'"),
+            name="ck_loop_artifacts_kind",
+        ),
+        Index("ix_loop_artifacts_loop", "loop_id", "round_ordinal"),
+    )
+
+
 ALL_TABLES = (
     SessionRow,
     MessageRow,
@@ -493,6 +595,10 @@ ALL_TABLES = (
     RateLimitRow,
     MigrationRecordRow,
     LegacyArtifactRow,
+    LoopRow,
+    LoopRoundRow,
+    LoopStageResultRow,
+    LoopArtifactRow,
 )
 
 
@@ -595,6 +701,8 @@ def _additive_schema_upgrade(engine: Engine) -> None:
             conn.exec_driver_sql(
                 "ALTER TABLE runs ADD COLUMN failed_steps_json TEXT NOT NULL DEFAULT '[]'"
             )
+        if "loop_id" not in columns:
+            conn.exec_driver_sql("ALTER TABLE runs ADD COLUMN loop_id VARCHAR(64)")
 
 
 def dispose_engine() -> None:
@@ -638,6 +746,10 @@ __all__ = [
     "EvidenceRow",
     "IdempotencyRow",
     "LegacyArtifactRow",
+    "LoopArtifactRow",
+    "LoopRow",
+    "LoopRoundRow",
+    "LoopStageResultRow",
     "MessageRow",
     "MigrationRecordRow",
     "ProductStateRow",

@@ -232,7 +232,7 @@ class ParseCommandTests(unittest.TestCase):
 
     def test_control_actions_are_disjoint_from_normal(self):
         self.assertEqual(C.NORMAL_ACTIONS & C.CONTROL_ACTIONS, frozenset())
-        self.assertEqual(len(C.NORMAL_ACTIONS), 11)
+        self.assertEqual(len(C.NORMAL_ACTIONS), 13)
         self.assertEqual(len(C.CONTROL_ACTIONS), 2)
 
 
@@ -305,8 +305,8 @@ class EnumCoverageTests(unittest.TestCase):
         self.assertEqual(C.AUDIT_QUESTION_TARGET, 12)
         self.assertEqual(C.AUDIT_QUESTION_HARD_LIMIT, 18)
 
-    def test_event_types_eleven(self):
-        self.assertEqual(len(list(EventType)), 11)
+    def test_event_types_twelve(self):
+        self.assertEqual(len(list(EventType)), 12)
         self.assertEqual(
             {e.value for e in C.TERMINAL_EVENT_TYPES},
             {"run.completed", "run.failed", "run.cancelled"},

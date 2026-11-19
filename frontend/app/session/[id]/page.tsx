@@ -11,6 +11,7 @@ import { BriefCard } from "@/components/brief/BriefCard";
 import { HistoryDrawer } from "@/components/HistoryDrawer";
 import { ROLES } from "@/lib/types";
 import { BrainIcon } from "@/components/icons";
+import { shouldShowLoopEntry } from "@/lib/loopView";
 
 type MobileTab = "canvas" | "chat";
 
@@ -138,6 +139,30 @@ function WorkbenchContent() {
               className="ml-auto inline-flex min-h-[32px] items-center rounded-lg border border-brand-500/40 bg-brand-600/15 px-3 text-[11px] font-medium text-brand-300 transition-colors hover:bg-brand-600/25"
             >
               {auditing ? "继续审计" : v2Phase === "audit_completed" ? "查看审计报告" : "进入审计"}
+            </Link>
+          </div>
+        );
+      })()}
+
+      {/* Loop 工作室入口：brainstorming / audit_completed 且非 legacy（契约 §7） */}
+      {(() => {
+        if (!sessionView) return null;
+        if (!shouldShowLoopEntry({ v2Phase: sessionView.phase, legacyMode })) return null;
+        const targetId = (params?.id as string) ?? sessionId;
+        if (!targetId) return null;
+        const audited = sessionView.phase === "audit_completed";
+        return (
+          <div className="flex shrink-0 items-center gap-3 border-b border-zinc-800/50 bg-dark-800/40 px-4 py-1.5">
+            <span className="text-[11px] text-zinc-500">
+              {audited
+                ? "审计已完成，可进入多轮闭环打磨方案"
+                : "进入闭环工作室，五阶段打磨最小可用方案"}
+            </span>
+            <Link
+              href={`/session/${targetId}/loop`}
+              className="ml-auto inline-flex min-h-[32px] items-center rounded-lg border border-brand-500/40 bg-brand-600/15 px-3 text-[11px] font-medium text-brand-300 transition-colors hover:bg-brand-600/25"
+            >
+              进入 Loop 工作室
             </Link>
           </div>
         );

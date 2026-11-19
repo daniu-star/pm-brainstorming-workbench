@@ -3,7 +3,17 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from api.v2 import audits, canvas, commands, controls, evidence, messages, runs, sessions
+from api.v2 import (
+    audits,
+    canvas,
+    commands,
+    controls,
+    evidence,
+    loops,
+    messages,
+    runs,
+    sessions,
+)
 
 router = APIRouter(prefix="/api/v2")
 router.include_router(sessions.router)
@@ -14,5 +24,6 @@ router.include_router(runs.router)
 router.include_router(canvas.router)
 router.include_router(audits.router)
 router.include_router(controls.router)
+router.include_router(loops.router)
 
 __all__ = ["router"]
