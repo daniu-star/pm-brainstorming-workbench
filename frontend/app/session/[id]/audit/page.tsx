@@ -619,7 +619,12 @@ function AuditPageContent() {
     setActionErrorCode(null);
     if (lastFailedRunId) {
       try {
-        await retryFailedRun(lastFailedRunId);
+        const ok = await retryFailedRun(lastFailedRunId);
+        if (!ok) {
+          // store 已把真实错误写进 error/toast；这里不能提示成功（FE-DX-01）
+          setActionError("重试未成功，请查看错误提示后重试。");
+          return;
+        }
         setActionNotice("已重新排队重试该任务");
       } catch (error) {
         setActionErrorCode(isApiError(error) ? error.code : null);
@@ -645,7 +650,8 @@ function AuditPageContent() {
         const recoverRunId = receipt.latest_run_id ?? receipt.current_run_id ?? null;
         await hydrateAuditById(receipt.audit_id);
         if (recoverRunId) {
-          await retryFailedRun(recoverRunId);
+          const ok = await retryFailedRun(recoverRunId);
+          if (!ok) setActionError("重试未成功，请查看错误提示后重试。");
           return;
         }
       } else if (receipt.audit_id) {
@@ -680,7 +686,8 @@ function AuditPageContent() {
     setActionError(null);
     setActionErrorCode(null);
     if (lastFailedRunId) {
-      await retryFailedRun(lastFailedRunId);
+      const ok = await retryFailedRun(lastFailedRunId);
+      if (!ok) setActionError("重试生成报告未成功，请查看错误提示后重试。");
       return;
     }
     await handleRetryContinuation();
@@ -694,7 +701,9 @@ function AuditPageContent() {
       resolveClosingRetryTarget(lastFailedRunId) === "retry_failed_run" &&
       lastFailedRunId
     ) {
-      void retryFailedRun(lastFailedRunId);
+      void retryFailedRun(lastFailedRunId).then((ok) => {
+        if (!ok) setActionError("重试生成报告未成功，请查看错误提示后重试。");
+      });
       return;
     }
     void handleRefresh();
@@ -747,7 +756,11 @@ function AuditPageContent() {
       return;
     }
     try {
-      await retryFailedRun(lastFailedRunId);
+      const ok = await retryFailedRun(lastFailedRunId);
+      if (!ok) {
+        setActionError("重试该步骤未成功，请查看错误提示后重试。");
+        return;
+      }
       setActionNotice("已重新排队重试该步骤");
     } catch (error) {
       setActionErrorCode(isApiError(error) ? error.code : null);

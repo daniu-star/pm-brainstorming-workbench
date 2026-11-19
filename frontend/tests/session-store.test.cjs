@@ -1009,6 +1009,154 @@ test("v2 会话读取 200 非 JSON 时不静默降级 legacy，报可重试错�
   }
 });
 
+
+// --------------------------------------------------------------------------- //
+// 第 5 轮回归：loop_version 单调 / 失败必须可见 / 新闭环指针立即切换
+// --------------------------------------------------------------------------- //
+
+function loopSnapshot(overrides = {}) {
+  return {
+    loop_id: "lp1",
+    session_id: "s1",
+    scope: "mvp",
+    status: "awaiting_decision",
+    current_round: 1,
+    max_rounds: 3,
+    target_score: 85,
+    loop_version: 2,
+    focus: "预算协同主流程",
+    latest_run_id: "run_9",
+    decision: null,
+    decision_note: null,
+    created_at: new Date(0).toISOString(),
+    updated_at: new Date(0).toISOString(),
+    closed_at: null,
+    rounds: [],
+    mvp_spec: null,
+    validation: null,
+    prototype: null,
+    test_report: null,
+    scorecard: null,
+    ...overrides,
+  };
+}
+
+test("hydrateLoop 丢弃更旧的 loop_version（不覆盖快照、不移动 loopId）", () => {
+  prime();
+  useSessionStore.setState({ loopId: "lp1", loops: {}, stateWarnings: [] });
+  const store = useSessionStore.getState();
+
+  store.hydrateLoop(loopSnapshot({ status: "awaiting_decision", loop_version: 3 }));
+  const afterFresh = useSessionStore.getState();
+  assert.equal(afterFresh.loops.lp1.loop_version, 3);
+  assert.equal(afterFresh.loopId, "lp1");
+
+  // 迟到的旧响应：如果被接受，决策条会退回 running 并锁死所有决策键
+  store.hydrateLoop(loopSnapshot({ status: "running", loop_version: 2 }));
+  const afterStale = useSessionStore.getState();
+  assert.equal(afterStale.loops.lp1.loop_version, 3, "旧 loop_version 不得覆盖快照");
+  assert.equal(afterStale.loops.lp1.status, "awaiting_decision");
+  assert.ok(
+    afterStale.stateWarnings.some((warning) => /loop_version=2/.test(warning)),
+    "必须留下可见 warning，便于排查乱序响应",
+  );
+
+  // 非法版本（<1）同样拒绝
+  store.hydrateLoop(loopSnapshot({ loop_version: 0 }));
+  assert.equal(useSessionStore.getState().loops.lp1.loop_version, 3);
+});
+
+test("retryFailedRun 失败返回 false 且写错误（调用方不能提示成功）", async () => {
+  prime({ lastFailedRunId: "run_bad" });
+  global.fetch = async () => ({
+    ok: false,
+    status: 500,
+    json: async () => ({ error: { code: "INTERNAL", message: "重试失败（测试桩）" } }),
+    text: async () => JSON.stringify({ error: { code: "INTERNAL", message: "重试失败（测试桩）" } }),
+    headers: { get: () => "application/json" },
+  });
+
+  try {
+    const ok = await useSessionStore.getState().retryFailedRun("run_bad");
+    assert.equal(ok, false, "重试失败必须返回 false，页面据此展示失败而不是成功提示");
+    assert.notEqual(useSessionStore.getState().error, null);
+  } finally {
+    global.fetch = realFetch;
+  }
+});
+
+test("cancelRun 失败返回 false（中止入口不能提示已中止）", async () => {
+  prime({ activeRunId: "run_live" });
+  global.fetch = async () => ({
+    ok: false,
+    status: 409,
+    json: async () => ({ error: { code: "SESSION_BUSY", message: "会话正忙（测试桩）" } }),
+    text: async () => JSON.stringify({ error: { code: "SESSION_BUSY", message: "会话忙" } }),
+    headers: { get: () => "application/json" },
+  });
+
+  try {
+    const ok = await useSessionStore.getState().cancelRun("run_live");
+    assert.equal(ok, false);
+    assert.notEqual(useSessionStore.getState().error, null);
+  } finally {
+    global.fetch = realFetch;
+  }
+});
+
+test("startLoop 收到回执后立即把 current_loop_id 指向新闭环", async () => {
+  prime({ sessionView: { ...SESSION_VIEW, phase: "brainstorming", current_loop_id: null } });
+  const requested = [];
+  global.fetch = async (url, init = {}) => {
+    const href = String(url);
+    requested.push(`${init.method ?? "GET"} ${href}`);
+    const body = init.body ? JSON.parse(init.body) : null;
+    if (href.includes("/commands")) {
+      assert.equal(body.action, "start_loop");
+      return {
+        ok: true,
+        status: 202,
+        json: async () => ({
+          run_id: "run_loop1",
+          session_id: "s1",
+          status: "queued",
+          action: "start_loop",
+          session_version: 4,
+          loop_id: "lp1",
+        }),
+        text: async () => "{}",
+        headers: { get: () => "application/json" },
+      };
+    }
+    if (href.includes("/api/v2/loops/lp1")) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => loopSnapshot({ status: "running", loop_version: 1 }),
+        text: async () => "{}",
+        headers: { get: () => "application/json" },
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+      text: async () => "{}",
+      headers: { get: () => "application/json" },
+    };
+  };
+
+  try {
+    await useSessionStore.getState().startLoop({ scope: "mvp", maxRounds: 3, targetScore: 85 });
+    const state = useSessionStore.getState();
+    assert.equal(state.sessionView?.current_loop_id, "lp1", "首轮开始前页面必须认新闭环为当前闭环");
+    assert.equal(state.loopId, "lp1");
+    assert.ok(requested.some((entry) => entry.includes("/api/v2/loops/lp1")));
+  } finally {
+    global.fetch = realFetch;
+  }
+});
+
 test.after(() => {
   if (realFetch) global.fetch = realFetch;
   else delete global.fetch;

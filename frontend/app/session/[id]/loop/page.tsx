@@ -1484,7 +1484,12 @@ function LoopPageContent() {
     setActionError(null);
     setNotice(null);
     try {
-      await cancelRun(runId);
+      // cancelRun 返回 false 表示请求失败（store 已写 error）：不能提示成功（FE-DX-01）
+      const ok = await cancelRun(runId);
+      if (!ok) {
+        setActionError("中止请求未成功，请查看错误提示后重试");
+        return;
+      }
       setNotice("已请求中止本轮，正在刷新状态…");
       await hydrateLoopById(currentLoop.loop_id);
     } finally {
@@ -1502,11 +1507,13 @@ function LoopPageContent() {
     setActionError(null);
     setNotice(null);
     try {
-      await retryFailedRun(currentLoop.latest_run_id);
+      const ok = await retryFailedRun(currentLoop.latest_run_id);
+      if (!ok) {
+        setActionError("重试本轮失败，请查看错误提示后重试");
+        return;
+      }
       setNotice("已重新提交本轮，正在刷新状态…");
       await hydrateLoopById(currentLoop.loop_id);
-    } catch (error) {
-      setActionError(isApiError(error) ? loopErrorText(error.code, error.message) : "重试本轮失败，请稍后重试");
     } finally {
       setRetryBusy(false);
     }

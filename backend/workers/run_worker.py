@@ -9,7 +9,8 @@
     python -m workers.run_worker --worker-id w-1
 
 每轮顺序：``recover_expired_leases`` → ``requeue_interrupted`` →
-``expire_queued_runs`` → 检查运行中数量 → ``claim_next_run`` → ``execute_run``。
+``expire_queued_runs`` → ``reconcile_control_intents``（审计结束/取消的回执）→
+检查运行中数量 → ``claim_next_run`` → ``execute_run``。
 收到 SIGINT 后停止领取新任务，等待当前 Run 执行完再退出。
 """
 from __future__ import annotations
@@ -40,6 +41,12 @@ def _database():
     from repositories import database
 
     return database
+
+
+def _command_service():
+    from services import command_service
+
+    return command_service
 
 
 def default_worker_id() -> str:
@@ -122,6 +129,7 @@ class RunWorker:
     def tick(self) -> bool:
         """执行一轮维护 + 至多领取/执行一个 Run；返回是否执行了 Run。"""
         run_repo = _repositories()
+        command_service = _command_service()
         claimed: tuple[str, int] | None = None
         recovered: list[str] = []
         interrupted: list[str] = []
@@ -135,6 +143,13 @@ class RunWorker:
             recovered = list(run_repo.recover_expired_leases(db, now_epoch=now_epoch, now_iso=now_iso))
             interrupted = list(run_repo.requeue_interrupted(db))
             expired = list(run_repo.expire_queued_runs(db, now_epoch=now_epoch, now_iso=now_iso))
+            # 控制意图只登记、不回执（PRD FR-07）：在活跃 Run 上提交 end_audit / cancel_audit 时
+            # 命令层只写 control 行，保留旧 Run 正常收尾；必须由 Worker 每轮扫描、在旧 Run 终结后
+            # 建唯一 closing Run（结束）或复位会话阶段（取消）。缺少这一步时结束审计会永久停在
+            # closing，取消审计会让会话卡在 auditing 且 start/end/cancel 三动作全被拒。
+            controls = list(
+                command_service.reconcile_control_intents(db, now_iso=now_iso, now_epoch=now_epoch)
+            )
             running = int(run_repo.count_running_runs(db))
 
             # 本机串行执行：本地活跃数（0 或 1）+ 全局运行数双重门禁。
@@ -151,11 +166,12 @@ class RunWorker:
 
         logger.info(
             "event=worker.tick worker=%s recovered=%d interrupted=%d expired=%d "
-            "running=%d claimed=%s",
+            "controls=%d running=%d claimed=%s",
             self.worker_id,
             len(recovered),
             len(interrupted),
             len(expired),
+            len(controls),
             running,
             claimed[0] if claimed else "-",
         )
@@ -165,6 +181,8 @@ class RunWorker:
             logger.info("event=worker.requeued ids=%s", ",".join(interrupted))
         if expired:
             logger.info("event=worker.expired ids=%s", ",".join(expired))
+        if controls:
+            logger.info("event=worker.controls ids=%s", ",".join(controls))
 
         if claimed is None:
             return False

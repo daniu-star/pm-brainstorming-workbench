@@ -1,12 +1,12 @@
 # V4.0 发布就绪清单（WP-10）
 
 - 分支：`feat/prd-v4-m1`；对应 PRD：`docs/superpowers/specs/2026-11-18-pm-brainstorm-agent-architecture-prd-v4.md`
-- 验收记录：`docs/v4-acceptance-report.md`（577 后端用例 / 150 前端用例 / 跨进程 4 / 真 Worker E2E 30 项 + Loop 闭环 29 项 / 迁移演练；QA Loop 记录见 docs/qa-loop-runs/README.md）
+- 验收记录：`docs/v4-acceptance-report.md`（626 后端用例 / 227 前端用例 / 跨进程 4 / 真 Worker E2E 30 项 + Loop 闭环 29 项 / 迁移演练；QA Loop 记录见 docs/qa-loop-runs/README.md，多角色 Loop 记录见 docs/loop-runs/README.md）
 
 ## 1. 发布前必须通过的命令
 
 ```bash
-# 后端（577 用例，含 Loop Studio 65 项）
+# 后端（626 用例，含 Loop Studio 65 项）
 cd backend && ../.venv/Scripts/python.exe -m unittest discover -s tests
 
 # 前端类型检查 + 逻辑用例 + 生产构建 + 冒烟 e2e
@@ -62,6 +62,9 @@ CI 配置见 `.github/workflows/ci.yml`（backend：安装依赖 → 全量测�
 - Loop Studio（v5）的「测试执行」是模拟执行：产物 `simulated=true` 且必须注明「未实际执行」，否则确定性校验记 P0 阻塞并把总分压到 70；真实沙箱执行尚未实现。
 - Loop Studio 原型产物是文件内容 + 启动命令，不在服务端构建；`requires_human_build=true` 时由用户自行落地。
 - **模型鉴权失败会以 `LLM_AUTH_ERROR` 明确失败**（401/403，不可重试），错误信息直接提示更新 `backend/.env` 的 `LLM_API_KEY` 并重启服务；排查用 `.venv/Scripts/python.exe scripts/check_llm.py`。
+- **控制意图由 Worker 每轮扫描**：`end_audit`/`cancel_audit` 在活跃 Run 上只登记意图（`control_intents`，状态 `accepted`），由 `RunWorker.tick()` 每轮调用 `command_service.reconcile_control_intents` 在旧 Run 终结后建唯一 closing Run（或完成取消）。停掉 Worker 时结束/取消审计会停在 `scheduled`，属预期。
+- **闭环兜底终结会收口**：`workflows.runner._force_terminal` 与排队超时路径会调 `command_service.settle_loop_for_run_failure`，把 `loop/loop_round` 置 `failed` 并写 `loop.updated`；只收口 `loop.latest_run_id` 指向的 Run，迟到兜底不会误关已推进的闭环。
+- **前端 `retryFailedRun` / `cancelRun` 返回 `boolean`**：失败时返回 false 并写 `error`/toast，页面据此展示失败而不是「已重新排队」。
 - 旧 SQLite 库缺新列时由 `repositories/database.py::_additive_schema_upgrade()` 在启动时自动补列（当前覆盖 `runs.failed_steps_json`、`runs.loop_id`、`steps.created_at`）。缺列曾导致「发消息一律失败（INTERNAL / no such column: steps.created_at）」，已在 `backend/tests/test_schema_upgrade.py` 固化回归。
 
 ## 6. 本机验证的临时产物约定

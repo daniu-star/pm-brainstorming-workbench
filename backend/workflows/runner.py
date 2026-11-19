@@ -961,6 +961,13 @@ def _force_terminal(
                     },
                     now_iso=now_iso,
                 )
+            # 闭环收口（SRV-03）：兜底路径绕过了 apply_outcome，必须显式结算闭环，
+            # 否则 loops/loop_rounds 永久停在 running，start_loop 撞 LOOP_ACTIVE。
+            from services.command_service import settle_loop_for_run_failure
+
+            settle_loop_for_run_failure(
+                db, run_id=run_id, now_iso=now_iso, note=error_message or None
+            )
             if run.session_id:
                 values: dict[str, Any] = {}
                 session = db.get(SessionRow, run.session_id)

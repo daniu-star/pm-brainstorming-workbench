@@ -68,8 +68,11 @@ export function ChatPanel() {
     if (!failedBrainstormRunId || isStreaming) return;
     setDiscussionRequested(true);
     try {
-      await retryFailedRun(failedBrainstormRunId);
-      clearError();
+      // retryFailedRun 失败时返回 false（store 已写 error）：保留错误条与按钮，
+      // 不能 clearError 把刚写入的失败原因抹掉（FE-DX-01 / CHAT-02）。
+      const ok = await retryFailedRun(failedBrainstormRunId);
+      if (ok) clearError();
+      else setDiscussionRequested(false);
     } catch {
       // 失败原因由 store 写回 error / runs，错误条保留可再次重试
       setDiscussionRequested(false);

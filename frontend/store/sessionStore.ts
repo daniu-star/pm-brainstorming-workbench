@@ -69,6 +69,7 @@ import {
   validateStartForm,
 } from "@/lib/loopView";
 import {
+  acceptLoopVersion,
   acceptProductVersion,
   isGuardCurrent,
   mergeMessagesById,
@@ -343,8 +344,8 @@ interface SessionState {
    * 不会重新挂载工作台，需要由目标页显式调用本方法续订。
    */
   resumeRunSubscription: () => void;
-  cancelRun: (runId?: string) => Promise<void>;
-  retryFailedRun: (runId?: string) => Promise<void>;
+  cancelRun: (runId?: string) => Promise<boolean>;
+  retryFailedRun: (runId?: string) => Promise<boolean>;
   /**
    * 重取画布投影。返回 true 表示确实应用了新投影；失败/丢弃旧版本返回 false，
    * 便于调用方只在成功时提示「已刷新」（PROD-06）。
@@ -2079,34 +2080,41 @@ export const useSessionStore = create<SessionState>((set, get) => {
     cancelRun: async (runId?: string) => {
       const state = get();
       const targetId = runId ?? state.activeRunId ?? state.sessionView?.active_run_id ?? null;
-      if (!targetId) return;
+      if (!targetId) return false;
       try {
         const run = await apiCancelRun(targetId);
-        if (get().currentSessionId !== run.session_id) return;
+        if (get().currentSessionId !== run.session_id) return false;
         updateRunState(run.id, {
           status: run.status,
           action: run.action,
           errorCode: run.error_code,
           errorMessage: run.error_message,
         });
+        return true;
       } catch (error) {
+        // 调用方（loop/audit 页）必须能区分「已提交」与「失败」：
+        // 只 toast 不返回结果会让页面把 409/500 当成功提示（FE-DX-01）。
+        setError(errorMessage(error));
         toast.error(errorMessage(error));
+        return false;
       }
     },
 
     retryFailedRun: async (runId?: string) => {
       const state = get();
       const targetId = runId ?? state.lastFailedRunId ?? state.activeRunId ?? null;
-      if (!targetId) return;
+      if (!targetId) return false;
       try {
         const receipt = await apiRetryFailed(targetId, {
           expectedSessionVersion: state.sessionView?.session_version ?? null,
         });
-        if (get().currentSessionId !== receipt.session_id) return;
+        if (get().currentSessionId !== receipt.session_id) return false;
         applyReceipt(receipt);
+        return true;
       } catch (error) {
         setError(errorMessage(error));
         toast.error(errorMessage(error));
+        return false;
       }
     },
 
@@ -2123,6 +2131,18 @@ export const useSessionStore = create<SessionState>((set, get) => {
       set((state) => {
         const sessionId = state.currentSessionId;
         const belongsToCurrent = !sessionId || !snapshot.session_id || snapshot.session_id === sessionId;
+        const previous = state.loops[snapshot.loop_id];
+        // loop_version 单调（FE-AUDIT-01）：一轮闭环内有多条 loop.updated、finalizeRun、
+        // 决策后刷新并发写回，旧响应后到会把 awaiting_decision 改回 running 并锁死决策键。
+        const acceptance = acceptLoopVersion(previous?.loop_version ?? 0, snapshot.loop_version);
+        if (!acceptance.accepted) {
+          return {
+            loopLoading: false,
+            stateWarnings: acceptance.warning
+              ? [...state.stateWarnings, acceptance.warning].slice(-MAX_WARNINGS)
+              : state.stateWarnings,
+          };
+        }
         return {
           loops: { ...state.loops, [snapshot.loop_id]: snapshot },
           loopId: belongsToCurrent ? snapshot.loop_id : state.loopId,
@@ -2163,6 +2183,12 @@ export const useSessionStore = create<SessionState>((set, get) => {
       set({ isStreaming: true, error: null });
       const receipt = await dispatchCommand("start_loop", payload, captured);
       if (isRunReceipt(receipt) && receipt.loop_id) {
+        // 立刻把 current_loop_id 指到新闭环：否则页面在首轮 Run 结束前会按
+        // sessionView.current_loop_id 判定「当前闭环」失败，退化成「历史闭环 · 只读」，
+        // 决策/中止入口全部消失（loop-state-sync）。
+        set((prev) =>
+          prev.sessionView ? { sessionView: { ...prev.sessionView, current_loop_id: receipt.loop_id! } } : {},
+        );
         await get().hydrateLoopById(receipt.loop_id);
       }
       return receipt;

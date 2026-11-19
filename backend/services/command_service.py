@@ -1924,6 +1924,23 @@ def reconcile_control_intents(db, *, now_iso: str | None = None, now_epoch: int 
                 continue
             if related is not None:
                 continue
+        # 控制意图可能先于「审计置 closing」落库（命令层崩溃/扫描器补跑）：这里补一次
+        # 状态推进，否则 closing Run 会在 audit 仍 active 时被 Worker 领走，
+        # 审计状态机与报告生成都缺少前置条件（AC-36）。
+        if C.AuditStatus(audit.status) in (
+            C.AuditStatus.created,
+            C.AuditStatus.opening,
+            C.AuditStatus.active,
+        ):
+            audit = audit_repo.update_audit(
+                db,
+                audit,
+                now_iso=now_iso,
+                status=C.AuditStatus.closing,
+                end_reason=C.EndReason.completed,
+                close_requested=1,
+                closing_control_id=control.id,
+            )
         closing = _create_closing_run(
             db,
             session=session,
@@ -2233,13 +2250,15 @@ def apply_outcome(
 # --------------------------------------------------------------------------- #
 
 
-def _abort_loop_for_run(db, *, run: RunRow, now_iso: str) -> bool:
-    """用户中止本轮时同步收口闭环（AUD-01）。
+def _settle_loop_for_run(db, *, run: RunRow, now_iso: str, note: str) -> bool:
+    """把「本 Run 正在执行的那一轮」收口为 failed 并关闭闭环。
 
-    只终结「本 Run 正在执行的那一轮」：``loop.latest_run_id`` 必须指向该 Run，
-    避免取消历史 Run 时误伤已经推进到下一轮的闭环。闭环置 failed 后
-    ``active_loop_for_session`` 不再命中，前端 ``finished`` 分支才会出现
+    只终结本轮：``loop.latest_run_id`` 必须指向该 Run，避免污染已经推进到下一轮的闭环。
+    闭环置 failed 后 ``active_loop_for_session`` 不再命中，前端 ``finished`` 分支才会出现
     「开启新闭环」。
+
+    三条 Run 终结路径（用户中止、提交失败兜底、排队超时）都必须经过这里，否则闭环会永久
+    停在 running：``start_loop`` 撞 LOOP_ACTIVE、``loop_decision`` 撞 LOOP_NOT_AWAITING_DECISION。
     """
 
     loop_id = getattr(run, "loop_id", None)
@@ -2265,7 +2284,7 @@ def _abort_loop_for_run(db, *, run: RunRow, now_iso: str) -> bool:
         db,
         loop,
         status=C.LoopStatus.failed,
-        note="本轮已被用户中止",
+        note=note,
         now_iso=now_iso,
     )
     event = _loop_event(loop)
@@ -2278,6 +2297,30 @@ def _abort_loop_for_run(db, *, run: RunRow, now_iso: str) -> bool:
         now_iso=now_iso,
     )
     return True
+
+
+def _abort_loop_for_run(db, *, run: RunRow, now_iso: str) -> bool:
+    """用户中止本轮时同步收口闭环（AUD-01）。"""
+
+    return _settle_loop_for_run(db, run=run, now_iso=now_iso, note="本轮已被用户中止")
+
+
+def settle_loop_for_run_failure(db, *, run_id: str, now_iso: str, note: str | None = None) -> bool:
+    """兜底终结路径的闭环收口（提交失败 / 排队超时）。
+
+    ``workflows.runner._force_terminal`` 与 ``run_repo._settle_expired_run`` 无法走
+    ``_commit_outcome``，必须显式调用本函数，否则闭环会停在 running。
+    """
+
+    run = run_repo.get_run(db, run_id)
+    if run is None:
+        return False
+    return _settle_loop_for_run(
+        db,
+        run=run,
+        now_iso=now_iso,
+        note=note or "任务提交失败，闭环已终止",
+    )
 
 
 def cancel_run(db, *, owner_email: str, run_id: str, now_iso: str | None = None) -> RunView:

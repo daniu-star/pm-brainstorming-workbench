@@ -226,6 +226,7 @@ cd frontend && npm run test:e2e                                             # �
 - 可复用闭环脚本：`scripts/qa-loop.workflow.js`
 - Loop Studio（v5，闭环工作台：设想→检验→开发→测试→评测）：`docs/v5-loop-studio.md`
 - Loop Studio 接口与文件归属：`docs/loop-studio-interfaces.md`
-- 多角色 Loop Engineering 运行记录（7 角色 / 8 维评分 / 逐轮发现）：`docs/loop-runs/product-loop-2026-11-19.md`
+- 多角色 Loop Engineering 运行索引（5 轮分数 / 硬上限 / 复跑方式）：`docs/loop-runs/README.md`
+- 多角色 Loop Engineering 逐轮运行记录（7 角色 / 8 维评分 / 逐轮发现与修复）：`docs/loop-runs/product-loop-2026-11-19.md`
 - 可复用 Loop 技能包（可开源）：`skills/loop-engineering-product/SKILL.md`
 - 模型连通性自检：`python scripts/check_llm.py`

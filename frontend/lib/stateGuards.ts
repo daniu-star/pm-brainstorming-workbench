@@ -124,6 +124,36 @@ export function acceptProductVersion(current: number, incoming: number): Version
   return { accepted: true, version: normalizedIncoming, stale: false, warning: null };
 }
 
+/**
+ * `loop_version` 单调：闭环快照由多个来源并发写回（每条 `loop.updated` 事件、
+ * `finalizeRun` 复拉、决策后主动刷新），响应乱序时旧快照会把 status 从
+ * `awaiting_decision` 改回 `running`，导致决策三键全部禁用（「当前轮仍在执行」），
+ * 甚至把 currentLoop 指针改回上一个历史闭环。语义与 `acceptProductVersion` 一致：
+ * 版本回退一律丢弃并给出 warning，指针只在被接受时移动。
+ */
+export function acceptLoopVersion(current: number, incoming: number): VersionAcceptance {
+  const normalizedCurrent = Number.isFinite(current) && current > 0 ? Math.floor(current) : 0;
+  const normalizedIncoming = Number.isFinite(incoming) ? Math.floor(incoming) : 0;
+
+  if (normalizedIncoming < 1) {
+    return {
+      accepted: false,
+      version: normalizedCurrent,
+      stale: true,
+      warning: `忽略非法 loop_version=${incoming}`,
+    };
+  }
+  if (normalizedCurrent > 0 && normalizedIncoming < normalizedCurrent) {
+    return {
+      accepted: false,
+      version: normalizedCurrent,
+      stale: true,
+      warning: `丢弃旧版本 loop_version=${normalizedIncoming}（当前 ${normalizedCurrent}）`,
+    };
+  }
+  return { accepted: true, version: normalizedIncoming, stale: false, warning: null };
+}
+
 /** 是否需要为新的 product_version 重新拉取画布。 */
 export function shouldRefetchCanvas(
   currentCanvasVersion: number | null | undefined,
