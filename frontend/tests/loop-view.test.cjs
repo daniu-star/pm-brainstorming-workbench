@@ -247,6 +247,8 @@ test("loopErrorText 覆盖闭环错误码，未知码回退后端 message", () =
   assert.ok(view.loopErrorText("LOOP_ROUNDS_EXHAUSTED").includes("只能交付或停止"));
   assert.ok(view.loopErrorText("LOOP_ACTIVE").includes("已有进行中的闭环"));
   assert.equal(view.loopErrorText("NOT_FOUND"), "闭环不存在或已删除");
+  // DX-02：请求超时要有独立中文文案，不能只显示通用「操作失败」
+  assert.equal(view.loopErrorText("TIMEOUT"), "请求超时，请稍后重试");
   assert.equal(view.loopErrorText("SOMETHING_ELSE", "后端原话"), "后端原话");
   assert.equal(view.loopErrorText(null), "操作失败，请稍后重试");
 });
@@ -420,8 +422,11 @@ test("resolveLoopEntryState 覆盖加载/门槛/启动表单/闭环主体四种�
     loopLoading: false,
     loopError: null,
   });
-  assert.equal(loading.showGate, true);
-  assert.ok(loading.gateText.includes("正在加载会话"));
+  // AUD-06：会话加载中先渲染「加载中」，不能闪「暂不可用」（gate 只用于阶段不满足）。
+  assert.equal(loading.showLoading, true);
+  assert.equal(loading.showGate, false);
+  assert.equal(loading.showStartPanel, false);
+  assert.equal(loading.showLoop, false);
 
   const legacy = view.resolveLoopEntryState({
     sessionLoading: false,
@@ -481,7 +486,18 @@ test("shouldShowLoopEntry 只在 brainstorming / audit_completed 且非 legacy �
 // --------------------------------------------------------------------------- //
 
 test("formatTimestamp / formatBytes / testReportStats 有稳定兜底", () => {
-  assert.equal(view.formatTimestamp("2026-01-02T03:04:05Z"), "2026-01-02 03:04");
+  // AUD-05：按浏览器本地时区格式化，而不是把 UTC ISO 串截断后当本地时间展示。
+  const instant = new Date("2026-01-02T03:04:05Z");
+  const localText = new Intl.DateTimeFormat("zh-CN", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    hour12: false,
+  }).format(instant);
+  const shown = view.formatTimestamp("2026-01-02T03:04:05Z");
+  assert.equal(shown, localText);
+  assert.ok(!shown.includes("T") && !shown.includes("Z"), "不应残留 ISO 的 T/Z 标记");
+  assert.notEqual(shown, "2026-01-02 03:04");
+  assert.equal(view.formatTimestamp("not-a-date"), "not-a-date");
   assert.equal(view.formatTimestamp(""), "—");
   assert.equal(view.formatTimestamp(null), "—");
   assert.equal(view.formatBytes(0), "0 B");

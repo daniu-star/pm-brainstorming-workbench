@@ -357,6 +357,47 @@ test("store.decideLoop 发送 loop_id / expected_loop_version / decision / note"
   }
 });
 
+test("store.cancelRun 走 POST /runs/{id}/cancel，并把回执状态写回 runs", async () => {
+  prime({
+    activeRunId: "r1",
+    runs: {
+      r1: {
+        runId: "r1",
+        sessionId: "s1",
+        status: "running",
+        action: "start_loop",
+        lastEventSeq: 7,
+        errorCode: null,
+        errorMessage: null,
+      },
+    },
+  });
+  const calls = installFetch(() => ({
+    status: 202,
+    body: {
+      id: "r1",
+      session_id: "s1",
+      action: "start_loop",
+      status: "cancel_requested",
+      error_code: null,
+      error_message: null,
+    },
+  }));
+  try {
+    await useSessionStore.getState().cancelRun("r1");
+    const call = calls.find((item) => item.url.includes("/runs/r1/cancel"));
+    assert.ok(call, "必须调用取消 Run 的接口");
+    assert.equal(call.method, "POST");
+    assert.equal(typeof call.body.request_id, "string");
+    // 回执写入 run 状态，页面据此显示「已请求中止」而不是继续等 SSE
+    const state = useSessionStore.getState();
+    assert.equal(state.runs.r1.status, "cancel_requested");
+    assert.equal(state.runs.r1.lastEventSeq, 7);
+  } finally {
+    restoreFetch();
+  }
+});
+
 // --------------------------------------------------------------------------- //
 // 3. 失败路径：404 回到启动表单 / 409 版本冲突抛回页面
 // --------------------------------------------------------------------------- //

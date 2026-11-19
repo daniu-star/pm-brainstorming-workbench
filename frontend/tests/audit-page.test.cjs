@@ -335,6 +335,8 @@ test("auditErrorText 覆盖后端审计相关错误码的中文文案", () => {
   assert.equal(view.auditErrorText("RATE_LIMITED"), "操作过于频繁，请稍后再试");
   assert.equal(view.auditErrorText("INPUT_TOO_LONG"), "回答过长（最多 8000 字）");
   assert.equal(view.auditErrorText("NETWORK_ERROR"), "网络连接失败，请检查网络后重试");
+  // DX-02：超时与网络失败区分开，页面错误条能显示具体原因
+  assert.equal(view.auditErrorText("TIMEOUT"), "请求超时，请稍后重试");
 });
 
 test("auditErrorText 对未知错误码回退到后端 message，再回退通用文案", () => {

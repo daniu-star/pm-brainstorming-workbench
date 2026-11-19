@@ -28,6 +28,9 @@ OWNER = "loop-owner@example.com"
 class LoopCommandTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        # 测试结束会清理 .tmp_tests；从干净工作区重跑时必须能自建该目录，
+        # 否则模块加载即 FileNotFoundError（与 test_loop_runner 保持一致）。
+        os.makedirs(".tmp_tests", exist_ok=True)
         cls._tmpdir = tempfile.mkdtemp(prefix="loop_cmd_", dir=os.path.abspath(".tmp_tests"))
         cls._db_url = "sqlite+pysqlite:///" + os.path.join(cls._tmpdir, "loop.db").replace("\\", "/")
         database.configure(cls._db_url, force=True)
@@ -168,10 +171,20 @@ class LoopCommandTests(unittest.TestCase):
             self.assertEqual(session.active_run_id, receipt.run_id)
 
     def test_start_loop_twice_returns_loop_active(self):
+        """存在未关闭闭环（含 awaiting_decision）时不能再开新闭环。
+
+        这里显式把 loop 推进到 awaiting_decision（一轮结束后的真实形态），
+        不再依赖「取消 Run 后 loop 仍是 running」这一缺陷语义；取消路径的
+        回归见 test_cancel_run_releases_loop_and_allows_restart（AUD-01）。
+        """
         sid = self._new_session()
         self._advance_to_brainstorming(sid)
         first = self._start_loop(sid)
         self._release_active(first.run_id)
+        with session_scope() as db:
+            loop = loop_repo.get_loop(db, first.loop_id)
+            assert loop is not None
+            loop_repo.touch_loop(db, loop, status=LoopStatus.awaiting_decision, now_iso=NOW_ISO)
         with self.assertRaises(AppError) as ctx:
             self._start_loop(sid)
         self.assertEqual(ctx.exception.code, ErrorCode.LOOP_ACTIVE)
@@ -250,6 +263,12 @@ class LoopCommandTests(unittest.TestCase):
         self.assertEqual(loop.decision_note, "先交付主流程")
         self.assertEqual(loop.loop_version, version + 1)
         with session_scope() as db:
+            snapshot = loop_repo.loop_to_snapshot(db, loop_repo.get_loop(db, receipt.loop_id))
+        self.assertEqual(snapshot.decision, LoopDecisionKind.ship)
+        self.assertEqual(snapshot.decision_note, "先交付主流程")
+        self.assertEqual(snapshot.status, LoopStatus.shipped)
+        self.assertIsNotNone(snapshot.closed_at)
+        with session_scope() as db:
             events = run_repo.events_after(db, run_id=decision.run_id)
             types = [event.type for event in events]
             self.assertEqual(types[0], C.EventType.run_queued.value)
@@ -304,6 +323,49 @@ class LoopCommandTests(unittest.TestCase):
         with session_scope() as db:
             run = run_repo.get_run(db, next_receipt.run_id)
             self.assertEqual(json.loads(run.budget_json)["loop_round"], 2)
+
+    def test_iterate_note_is_carried_into_next_round(self):
+        """AUD-03 回归：iterate 时填写的改进备注必须进入下一轮 Run 的预算与 prompt。
+
+        修复前 iterate 分支不读 payload["note"]，备注被静默丢弃，下一轮 prompt
+        看不到用户要求。
+        """
+        sid = self._new_session()
+        self._advance_to_brainstorming(sid)
+        receipt = self._start_loop(sid, max_rounds=3)
+        self._release_active(receipt.run_id)
+        with session_scope() as db:
+            loop = loop_repo.get_loop(db, receipt.loop_id)
+            assert loop is not None
+            loop_repo.touch_loop(db, loop, status=LoopStatus.awaiting_decision, current_round=1)
+            version = int(loop.loop_version)
+        note = "补齐登录态用例后再交付"
+        next_receipt = self._submit(
+            sid,
+            Action.loop_decision,
+            {
+                "loop_id": receipt.loop_id,
+                "expected_loop_version": version,
+                "decision": "iterate",
+                "note": note,
+            },
+        )
+        with session_scope() as db:
+            run = run_repo.get_run(db, next_receipt.run_id)
+            budget = json.loads(run.budget_json)
+        self.assertEqual(budget.get("loop_decision_note"), note)
+
+        from core.loop_prompts import build_stage_messages
+
+        class _Ctx:
+            pass
+
+        ctx = _Ctx()
+        ctx.budget = budget
+        ctx.product_state = None
+        ctx.evidence = None
+        messages = build_stage_messages(ctx, stage=C.LoopStage.ideate, prior={})
+        self.assertIn(note, messages[1].content)
 
     def test_iterate_beyond_max_rounds_is_rejected(self):
         sid = self._new_session()
@@ -384,6 +446,109 @@ class LoopCommandTests(unittest.TestCase):
         with session_scope() as db:
             view = command_service.session_to_view(db, session_repo.require_session(db, sid, owner_email=OWNER))
         self.assertEqual(view.current_loop_id, receipt.loop_id)
+
+    # ------------------------------------------------------------------ AUD-01
+
+    def test_cancel_run_releases_loop_and_allows_restart(self):
+        """P0 回归（AUD-01）：中止本轮必须收口闭环，用户能重新开启闭环。
+
+        修复前：cancel_run 只终结 Run，不写 loop 行；loop 仍是 running，
+        active_loop_for_session 命中，再 start_loop 返回 LOOP_ACTIVE——页面
+        「中止本轮」后既不能决策也不能开新闭环，只能改库恢复。
+
+        现在 cancel_run 会收口 loop，因此断言：loop 离开 running、closed_at 落库、
+        active_loop_for_session 为 None、新 start_loop 成功。
+        """
+        sid = self._new_session()
+        self._advance_to_brainstorming(sid)
+        first = self._start_loop(sid)
+        self._release_active(first.run_id)
+
+        loop = self._loop_row(first.loop_id)
+        self.assertNotEqual(loop.status, LoopStatus.running.value)
+        self.assertIsNotNone(loop.closed_at, "闭环收口必须写 closed_at，前端据此进入 finished 分支")
+
+        with session_scope() as db:
+            self.assertIsNone(loop_repo.active_loop_for_session(db, sid))
+
+        second = self._start_loop(sid)
+        self.assertNotEqual(second.loop_id, first.loop_id)
+
+    def test_deadline_failure_without_apply_closes_loop(self):
+        """P0 兜底（AUD-01）：没有 apply 的失败终结也必须收口闭环。
+
+        runner 的 deadline / 内部异常走 ``_finalize_failure``，其 outcome 不带
+        apply；若只依赖 loop workflow 的 apply，闭环会永久停在 running。
+        """
+        sid = self._new_session()
+        self._advance_to_brainstorming(sid)
+        receipt = self._start_loop(sid)
+        with session_scope() as db:
+            run = run_repo.get_run(db, receipt.run_id)
+            assert run is not None
+            run.status = RunStatus.running.value
+            run.started_at = NOW_ISO
+            db.flush()
+            session = session_repo.require_session(db, sid, owner_email=OWNER)
+            command_service._commit_outcome(
+                db,
+                run=run,
+                session=session,
+                outcome=command_service.RunOutcome(
+                    status=RunStatus.failed,
+                    error_code=ErrorCode.RUN_DEADLINE_EXCEEDED,
+                    error_message="运行超时",
+                ),
+                now_iso=NOW_ISO,
+                lease_required=False,
+            )
+
+        loop = self._loop_row(receipt.loop_id)
+        self.assertEqual(loop.status, LoopStatus.failed.value)
+        self.assertIsNotNone(loop.closed_at)
+        with session_scope() as db:
+            self.assertIsNone(loop_repo.active_loop_for_session(db, sid))
+
+    def test_cancel_requested_run_emits_run_cancelled_event(self):
+        """P0 回归（AUD-01）：running → cancel_requested 的事件必须是 run_cancelled。
+
+        修复前 cancel_run 的 running 分支误用 EventType.audit_updated，SSE 订阅方
+        与审计视图会把「取消 Run」当成审计更新。
+        """
+        sid = self._new_session()
+        self._advance_to_brainstorming(sid)
+        receipt = self._start_loop(sid)
+        with session_scope() as db:
+            run = run_repo.get_run(db, receipt.run_id)
+            assert run is not None
+            run.status = RunStatus.running.value
+            run.started_at = NOW_ISO
+            db.flush()
+            view = command_service.cancel_run(
+                db, owner_email=OWNER, run_id=receipt.run_id, now_iso=NOW_ISO
+            )
+        self.assertEqual(view.status, RunStatus.cancel_requested.value)
+        # Worker 收尾时不得再追加第二个 run_cancelled（cancel_run 已写过一次）。
+        with session_scope() as db:
+            run = run_repo.get_run(db, receipt.run_id)
+            assert run is not None
+            session = session_repo.require_session(db, sid, owner_email=OWNER)
+            command_service._commit_outcome(
+                db,
+                run=run,
+                session=session,
+                outcome=command_service.RunOutcome(
+                    status=RunStatus.cancelled,
+                    error_message="收到取消请求，任务已终止",
+                ),
+                now_iso=NOW_ISO,
+                lease_required=False,
+            )
+        with session_scope() as db:
+            types = [event.type for event in run_repo.events_after(db, receipt.run_id)]
+        self.assertEqual(types.count(C.EventType.run_cancelled.value), 1)
+        self.assertIn(C.EventType.run_cancelled.value, types)
+        self.assertNotIn(C.EventType.audit_updated.value, types)
 
 
 if __name__ == "__main__":

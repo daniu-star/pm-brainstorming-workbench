@@ -13,7 +13,7 @@
  *  - isEndpointUnavailable 判定（404 回落 legacy 的判定依据）
  */
 
-const { test, beforeEach, afterEach } = require("node:test");
+const { test, beforeEach, afterEach, mock } = require("node:test");
 const assert = require("node:assert/strict");
 
 const api = require("../node_modules/.cache/test-build/lib/api.js");
@@ -37,6 +37,7 @@ const {
   deleteSession,
   runEventsUrl,
   CODE_MESSAGES,
+  REQUEST_TIMEOUT_MS,
 } = api;
 
 const realFetch = globalThis.fetch;
@@ -375,4 +376,55 @@ test("apiV2 显式 headers 可覆盖默认值", async () => {
   installFetch(() => jsonResponse(200, { id: "s1" }));
   await apiV2("/api/v2/sessions/s1", { headers: { "X-Trace": "abc" } });
   assert.equal(calls[0].init.headers["X-Trace"], "abc");
+});
+
+test("apiV2 超时：无响应请求在 15s 后抛 TIMEOUT，按钮不会永久停在提交中", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  globalThis.fetch = (_url, init) =>
+    new Promise((_resolve, reject) => {
+      init.signal.addEventListener("abort", () => {
+        const error = new Error("The operation was aborted");
+        error.name = "AbortError";
+        reject(error);
+      });
+    });
+
+  try {
+    const pending = apiV2("/api/v2/sessions/s1/commands", {
+      method: "POST",
+      body: { action: "start_loop" },
+    });
+    mock.timers.tick(REQUEST_TIMEOUT_MS);
+    await assert.rejects(pending, (error) => {
+      assert.ok(error instanceof ApiError);
+      assert.equal(error.code, "TIMEOUT");
+      assert.equal(error.message, CODE_MESSAGES.TIMEOUT);
+      assert.equal(error.status, 0);
+      assert.equal(error.retryable, true);
+      return true;
+    });
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("apiV2 调用方主动取消仍抛 AbortError（不被误判为超时）", async () => {
+  installFetch(
+    ({ init }) =>
+      new Promise((_resolve, reject) => {
+        init.signal.addEventListener("abort", () => {
+          const error = new Error("The operation was aborted");
+          error.name = "AbortError";
+          reject(error);
+        });
+      }),
+  );
+
+  const controller = new AbortController();
+  const pending = apiV2("/api/v2/sessions/s1", { signal: controller.signal });
+  controller.abort();
+  await assert.rejects(pending, (error) => {
+    assert.equal(error.name, "AbortError");
+    return true;
+  });
 });

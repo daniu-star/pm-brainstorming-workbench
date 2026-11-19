@@ -38,6 +38,7 @@ const WORKFLOW = [
   { index: "02", title: "多角色推演", body: "四位 AI 专家从技术、体验、商业与真实用户视角进行交叉质询。" },
   { index: "03", title: "结构化沉淀", body: "把对话实时转化为功能、风险、洞察与待验证假设。" },
   { index: "04", title: "专业审计", body: "进入 AI 审计专业通话，在六个维度上压力测试产品方案。" },
+  { index: "05", title: "闭环打磨", body: "五阶段闭环推进到可验证产物，多轮评分迭代后再交付。" },
 ];
 
 export default function LandingPage() {
@@ -259,7 +260,7 @@ export default function LandingPage() {
             </Link>
           </div>
 
-          <div className="mt-10 grid gap-px overflow-hidden rounded-xl border border-white/10 bg-white/10 md:grid-cols-4">
+          <div className="mt-10 grid gap-px overflow-hidden rounded-xl border border-white/10 bg-white/10 md:grid-cols-5">
             {WORKFLOW.map((item) => (
               <article key={item.index} className="group bg-dark-800 p-6 transition-colors duration-150 hover:bg-dark-700">
                 <span className="font-mono text-xs text-cyan-200/50 tabular-nums">{item.index}</span>

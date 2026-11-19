@@ -16,6 +16,7 @@ import unittest
 from domain import state_machine as SM
 from domain.contracts import (
     Action,
+    Assessment,
     AuditStatus,
     BriefStatus,
     CommandRequest,
@@ -337,6 +338,43 @@ class SyncCommandTests(CommandTestCase):
         self.assertEqual(ctx.exception.code, ErrorCode.INVALID_REQUEST)
         self.assertIn("target_users", ctx.exception.details["missing_fields"])
 
+    def test_confirm_brief_rejects_cleared_required_field_override(self):
+        """AUD-02：编辑态把必填字段清空后确认必须 4xx，且不落库。"""
+
+        session_id = self.make_session()
+        version = self.fill_required_brief(session_id)
+        with session_scope() as db:
+            state = session_repo.get_product_state(db, session_id)
+            before_brief_status = state.brief.status
+            self.assertTrue(state.brief.known("success_criteria"))
+
+        with self.assertRaises(AppError) as ctx:
+            self.submit(
+                session_id,
+                Action.confirm_brief,
+                {
+                    "expected_product_version": version,
+                    "fields": {"success_criteria": ""},
+                },
+            )
+        self.assertEqual(ctx.exception.code, ErrorCode.INVALID_REQUEST)
+        self.assertEqual(
+            ctx.exception.details["missing_fields"], ["success_criteria"]
+        )
+
+        # 状态不落库：仍停在 clarifying，产品状态版本与字段值都不变。
+        with session_scope() as db:
+            session = session_repo.require_session(db, session_id, owner_email=OWNER)
+            self.assertEqual(session.phase, SessionPhase.clarifying.value)
+            self.assertEqual(session.brief_status, BriefStatus.draft.value)
+            state = session_repo.get_product_state(db, session_id)
+            self.assertEqual(state.version, version)
+            self.assertEqual(state.brief.status, before_brief_status)
+            self.assertEqual(
+                state.brief.success_criteria.value,
+                "写周报时间从 40 分钟降到 5 分钟",
+            )
+
     def test_confirm_brief_advances_to_brainstorming(self):
         session_id = self.make_session()
         version = self.fill_required_brief(session_id)
@@ -367,6 +405,33 @@ class SyncCommandTests(CommandTestCase):
             state = session_repo.get_product_state(db, session_id)
             self.assertEqual(state.brief.status, BriefStatus.skipped)
             self.assertTrue(state.brief.skipped)
+
+    def test_revise_brief_is_allowed_after_skip(self):
+        """AUD-02：跳过澄清后仍可修订简报字段。
+
+        前端 BriefCard 目前在 skipped 状态封死了字段展示与「保存修订」；本用例
+        锁定后端契约（revise_brief 在 brainstorming 可用），前端放开只读展示时
+        不需要再改后端。
+        """
+        session_id = self.make_session()
+        self.submit(session_id, Action.skip_clarification, {"reason": "先按假设推进"})
+        with session_scope() as db:
+            state = session_repo.get_product_state(db, session_id)
+            version = state.version
+
+        receipt = self.submit(
+            session_id,
+            Action.revise_brief,
+            {
+                "expected_product_version": version,
+                "fields": {"core_problem": {"value": "手工汇总周报耗时 40 分钟", "status": "proposed"}},
+            },
+        )
+        self.assertEqual(receipt.status, RunStatus.succeeded.value)
+        with session_scope() as db:
+            new_state = session_repo.get_product_state(db, session_id)
+            self.assertEqual(new_state.brief.core_problem.value, "手工汇总周报耗时 40 分钟")
+            self.assertGreater(new_state.version, version)
 
     def test_confirm_decision_marks_needs_review_on_revise(self):
         session_id, _version = self.confirmed_session()
@@ -720,6 +785,84 @@ class ControlIntentTests(CommandTestCase):
                 {"audit_id": audit_id, "question_id": "q" * 32, "answer": "有证据"},
             )
         self.assertEqual(ctx.exception.code, ErrorCode.NOT_FOUND)
+
+    def test_correct_assessment_rebuilds_report_with_human_flag(self):
+        """AC-40：人工更正后从结构化记录重建报告、置 human_revised 并追加 human 修订。"""
+        session_id, audit_id = self._auditing_session()
+        report = {
+            "audit_id": audit_id,
+            "product_version": 1,
+            "audit_version": 1,
+            "end_reason": "completed",
+            "question_count": 1,
+            "dimension_states": [
+                {"key": "problem_validity", "assessment": "gap", "rationale": "证据不足"}
+            ],
+            "supported_points": [],
+            "unresolved_gaps": ["问题有效性：证据不足"],
+            "recommended_experiments": ["访谈 5 位目标用户"],
+            "limitations": "模型只看到一轮回答",
+            "human_revised": False,
+            "generated_by": "model",
+        }
+        with session_scope() as db:
+            audit = audit_repo.get_audit(db, audit_id)
+            audit_repo.add_question(
+                db,
+                audit,
+                ordinal=1,
+                dimension="problem_validity",
+                issue_refs=[],
+                question_text="目标用户是否真的有这个痛点？",
+                now_iso=NOW_ISO,
+            )
+            audit_repo.update_audit(
+                db,
+                audit,
+                now_iso=NOW_ISO,
+                status=AuditStatus.completed,
+                question_count=1,
+                dimension_states=report["dimension_states"],
+                report=report,
+            )
+            audit_repo.save_report_revision(
+                db, audit_id=audit_id, audit_version=1, report=report, now_iso=NOW_ISO
+            )
+
+        receipt = self.submit(
+            session_id,
+            Action.correct_audit_assessment,
+            {
+                "audit_id": audit_id,
+                "expected_audit_version": 1,
+                "dimension": "problem_validity",
+                "assessment": "supported",
+                "rationale": "用户提供了 5 份访谈记录",
+                "evidence_refs": ["ev-interview"],
+            },
+        )
+        self.assertEqual(receipt.status, RunStatus.succeeded)
+
+        with session_scope() as db:
+            snapshot = audit_repo.audit_to_snapshot(db, audit_repo.get_audit(db, audit_id))
+            revisions = audit_repo.list_report_revisions(db, audit_id)
+        self.assertEqual(snapshot.audit_version, 2)
+        assert snapshot.report is not None
+        self.assertTrue(snapshot.report.human_revised)
+        self.assertEqual(snapshot.report.audit_version, 2)
+        current = next(
+            state for state in snapshot.report.dimension_states if state.key == "problem_validity"
+        )
+        self.assertEqual(current.assessment, Assessment.supported)
+        self.assertEqual(current.rationale, "用户提供了 5 份访谈记录")
+        self.assertEqual(current.evidence_refs, ["ev-interview"])
+        self.assertTrue(
+            any("用户提供了 5 份访谈记录" in item for item in snapshot.report.supported_points)
+        )
+        self.assertEqual(snapshot.report.recommended_experiments, ["访谈 5 位目标用户"])
+        latest = max(revisions, key=lambda row: int(row.audit_version))
+        self.assertEqual(latest.audit_version, 2)
+        self.assertEqual(latest.generated_by, "human")
 
 
 if __name__ == "__main__":

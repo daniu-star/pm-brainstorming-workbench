@@ -929,6 +929,7 @@ const LOOP_ERROR_TEXT: Record<string, string> = {
   NOT_FOUND: "闭环不存在或已删除",
   FORBIDDEN: "没有权限查看该闭环",
   NETWORK_ERROR: "网络连接失败，请检查网络后重试",
+  TIMEOUT: "请求超时，请稍后重试",
 };
 
 export function loopErrorText(code: string | null | undefined, message?: string | null): string {
@@ -989,11 +990,16 @@ export function formatBytes(size: number | null | undefined): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** 时间戳展示：截到分钟，避免把 ISO 原文整串塞进页面。 */
+/** 时间戳展示：按用户本地时区格式化到分钟，避免把 UTC ISO 原文当本地时间。 */
 export function formatTimestamp(value: string | null | undefined): string {
   if (!value) return "—";
-  const normalized = value.replace("T", " ");
-  return normalized.length >= 16 ? normalized.slice(0, 16) : normalized;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("zh-CN", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    hour12: false,
+  }).format(date);
 }
 
 // --------------------------------------------------------------------------- //
@@ -1104,12 +1110,15 @@ export function resolveLoopEntryState(input: LoopEntryInput): LoopEntryState {
     return { ...loading, showLoading: false, showLoop: true };
   }
   if (input.loopLoading) return loading;
+  // 会话尚未加载时 phase 一定是 null，不能据此判定「阶段不允许」；
+  // 否则首屏会先闪一块「暂不可用」，文案却还是「正在加载会话…」。
+  if (input.sessionLoading) return loading;
   if (!canStartLoopPhase(input.sessionPhase ?? null)) {
     return {
       ...loading,
       showLoading: false,
       showGate: true,
-      gateText: input.sessionLoading ? "正在加载会话…" : "需要先完成头脑风暴或审计，才能开启闭环工作室",
+      gateText: "需要先完成头脑风暴或审计，才能开启闭环工作室",
     };
   }
   if (input.loopError) {

@@ -1222,11 +1222,12 @@ async def run_loop_round(ctx: Any) -> RunOutcome:
     scorecard: LoopScoreCard = stage_runs[LoopStage.evaluate].parsed
     score = int(scorecard.total)
     verdict = scorecard.verdict
-    exhausted = params.ordinal >= params.max_rounds
-    if verdict == LoopVerdict.pass_ or exhausted:
-        loop_status = LoopStatus.awaiting_decision
-    else:
-        loop_status = LoopStatus.running
+    # 一轮结束（pass / iterate / blocked，也含轮次耗尽）一律进入 awaiting_decision：
+    # 是否续轮必须由用户 loop_decision 决定，工作流绝不自动排下一轮。
+    # 旧实现只在 pass 或轮次耗尽时置 awaiting_decision，iterate/blocked 留在
+    # running；而 running 下 loop_decision 会被拒绝、start_loop 又报 LOOP_ACTIVE，
+    # 闭环会永久死锁（AUD-01）。running 仅表示「本轮正在执行」。
+    loop_status = LoopStatus.awaiting_decision
 
     events: list[dict[str, Any]] = []
     for stage in list(LoopStage):

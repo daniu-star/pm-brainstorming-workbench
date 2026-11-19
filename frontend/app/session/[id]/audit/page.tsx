@@ -400,6 +400,8 @@ function AuditPageContent() {
   const [submitting, setSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+  // 「回答已提交」只对提交时的问题有效：审计推进到下一题后自动不再展示。
+  const [answeredQuestionId, setAnsweredQuestionId] = useState<string | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
   // 已提交结束/取消请求但没有可订阅的收尾 Run：靠轮询等后端把审计推进到终态
   const [closeRequested, setCloseRequested] = useState(false);
@@ -438,6 +440,13 @@ function AuditPageContent() {
     [auditId, audits]
   );
   const auditError = auditId ? auditErrors[auditId] ?? null : null;
+  const activeQuestion = audit ? pickCurrentQuestion(audit) : null;
+  const visibleActionNotice =
+    actionNotice === "回答已提交" &&
+    answeredQuestionId !== null &&
+    answeredQuestionId !== (activeQuestion?.id ?? null)
+      ? null
+      : actionNotice;
 
   const sessionVersion = sessionView?.session_version ?? null;
   const expectedProductVersion = productVersion || sessionView?.current_product_version || 1;
@@ -501,7 +510,10 @@ function AuditPageContent() {
           { audit_id: audit.id, question_id: question.id, answer },
           { expectedSessionVersion: sessionVersion }
         );
+        setAnsweredQuestionId(question.id);
         setActionNotice("回答已提交");
+        // 不依赖 SSE：主动回读快照，保证问题卡立即前进（断线/延迟时也能用）。
+        await hydrateAuditById(audit.id);
       } catch (error) {
         setActionError(
           isApiError(error)
@@ -512,7 +524,7 @@ function AuditPageContent() {
         setSubmitting(false);
       }
     },
-    [audit, sendCommand, sessionVersion]
+    [audit, sendCommand, sessionVersion, hydrateAuditById]
   );
 
   const handleControl = useCallback(
@@ -650,6 +662,14 @@ function AuditPageContent() {
           <ShieldIcon className="h-4 w-4 text-brand-300" />
           <h1 className="text-sm font-semibold text-zinc-100">专家审计</h1>
         </div>
+        {v2Phase === "audit_completed" && sessionIdParam ? (
+          <Link
+            href={`/session/${sessionIdParam}/loop`}
+            className="min-h-[36px] rounded-lg border border-brand-500/40 bg-brand-600/15 px-2.5 text-[11px] font-medium text-brand-300 hover:bg-brand-600/25"
+          >
+            进入 Loop 工作室 →
+          </Link>
+        ) : null}
         {audit ? (
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <Chip text={audit.statusLabel} className={AUDIT_STATUS_CLASSES[audit.status]} />
@@ -670,9 +690,9 @@ function AuditPageContent() {
       </header>
 
       <main className="mx-auto w-full max-w-3xl space-y-3 px-4 py-4">
-        {actionNotice ? (
+        {visibleActionNotice ? (
           <div className="rounded-xl border border-emerald-700/40 bg-emerald-900/20 px-3 py-2 text-xs text-emerald-300">
-            {actionNotice}
+            {visibleActionNotice}
           </div>
         ) : null}
         {actionError ? (

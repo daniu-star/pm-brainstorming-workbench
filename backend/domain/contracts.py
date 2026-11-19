@@ -1309,6 +1309,9 @@ class LoopSnapshot(StrictModel):
     test_report: LoopTestReport | None = None
     scorecard: LoopScoreCard | None = None
     latest_run_id: str | None = None
+    decision: LoopDecisionKind | None = None
+    decision_note: str = ""
+    closed_at: str | None = None
     created_at: str = ""
     updated_at: str = ""
 

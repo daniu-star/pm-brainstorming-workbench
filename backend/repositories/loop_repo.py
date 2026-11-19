@@ -494,6 +494,9 @@ def loop_to_snapshot(db, row: LoopRow, *, include_rounds: bool = True) -> C.Loop
         loop_version=int(row.loop_version or 1),
         focus=row.focus or "",
         latest_run_id=row.latest_run_id,
+        decision=C.LoopDecisionKind(row.decision) if row.decision else None,
+        decision_note=row.decision_note or "",
+        closed_at=row.closed_at,
         created_at=row.created_at or "",
         updated_at=row.updated_at or "",
     )

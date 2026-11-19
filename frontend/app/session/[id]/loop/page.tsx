@@ -267,6 +267,11 @@ function StageTimeline({ round }: { round: LoopRoundView | null }) {
             {stage.summary ? (
               <p className="mt-0.5 line-clamp-2 text-[10px] leading-relaxed text-zinc-500">{stage.summary}</p>
             ) : null}
+            {stage.errorCode ? (
+              <p className="mt-0.5 break-all text-[10px] leading-relaxed text-red-400/80">
+                {`错误码：${stage.errorCode}`}
+              </p>
+            ) : null}
           </li>
         ))}
       </ol>
@@ -769,15 +774,19 @@ function StartLoopBar({
 function DecisionBar({
   snapshot,
   busy,
+  abortBusy,
   note,
   onNoteChange,
   onDecide,
+  onAbort,
 }: {
   snapshot: LoopSnapshot;
   busy: LoopDecisionKind | null;
+  abortBusy: boolean;
   note: string;
   onNoteChange: (value: string) => void;
   onDecide: (decision: LoopDecisionKind) => void;
+  onAbort: () => void;
 }) {
   const availability = decisionAvailability(snapshot);
   const iterateReason = availability.iterate.reason;
@@ -833,17 +842,35 @@ function DecisionBar({
           ) : null}
         </>
       ) : (
-        <p className="text-[11px] leading-relaxed text-zinc-400">
-          {snapshot.status === "running"
-            ? `第 ${snapshot.current_round} 轮正在执行，阶段完成后会自动进入等待决策。`
-            : snapshot.status === "shipped"
-              ? "闭环已交付：规格、检验、原型、测试与评分卡均已归档。"
-              : snapshot.status === "stopped"
-                ? "闭环已停止：本轮产物保留，可重新开启新闭环。"
-                : snapshot.status === "failed"
-                  ? "闭环执行失败：请查看阶段时间线里的失败阶段，或重新开启闭环。"
-                  : "闭环当前没有待决策动作。"}
-        </p>
+        <>
+          <p className="text-[11px] leading-relaxed text-zinc-400">
+            {snapshot.status === "running"
+              ? `第 ${snapshot.current_round} 轮正在执行；如果长时间没有进展，可以中止本轮后重新开启闭环。`
+              : snapshot.status === "shipped"
+                ? "闭环已交付：规格、检验、原型、测试与评分卡均已归档。"
+                : snapshot.status === "stopped"
+                  ? "闭环已停止：本轮产物保留，可重新开启新闭环。"
+                  : snapshot.status === "failed"
+                    ? "闭环执行失败：请查看阶段时间线里的失败阶段，或重新开启闭环。"
+                    : "闭环当前没有待决策动作。"}
+          </p>
+          {snapshot.status === "running" ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className={BTN_DANGER}
+                disabled={busy !== null || abortBusy || !snapshot.latest_run_id}
+                title={snapshot.latest_run_id ? undefined : "当前没有可中止的运行"}
+                onClick={onAbort}
+              >
+                {abortBusy ? "中止中…" : "中止本轮"}
+              </button>
+              <span className="text-[10px] text-zinc-500">
+                只中止当前运行，已生成的部分产物会保留。
+              </span>
+            </div>
+          ) : null}
+        </>
       )}
     </Section>
   );
@@ -873,6 +900,7 @@ function LoopPageContent() {
   const hydrateLoopById = useSessionStore((state) => state.hydrateLoopById);
   const startLoop = useSessionStore((state) => state.startLoop);
   const decideLoopAction = useSessionStore((state) => state.decideLoop);
+  const cancelRun = useSessionStore((state) => state.cancelRun);
   const loops = useSessionStore((state) => state.loops);
   const loopId = useSessionStore((state) => state.loopId);
   const loopLoading = useSessionStore((state) => state.loopLoading);
@@ -881,6 +909,7 @@ function LoopPageContent() {
 
   const [startBusy, setStartBusy] = useState(false);
   const [decideBusy, setDecideBusy] = useState<LoopDecisionKind | null>(null);
+  const [abortBusy, setAbortBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -1018,6 +1047,26 @@ function LoopPageContent() {
     ? currentLoop.status === "shipped" || currentLoop.status === "stopped" || currentLoop.status === "failed"
     : false;
 
+  const handleAbort = useCallback(async () => {
+    if (!currentLoop) return;
+    const runId = currentLoop.latest_run_id;
+    if (!runId) {
+      setActionError("当前没有可中止的运行");
+      return;
+    }
+    if (typeof window !== "undefined" && !window.confirm("确定中止本轮？已生成的部分产物会保留。")) return;
+    setAbortBusy(true);
+    setActionError(null);
+    setNotice(null);
+    try {
+      await cancelRun(runId);
+      setNotice("已请求中止本轮，正在刷新状态…");
+      await hydrateLoopById(currentLoop.loop_id);
+    } finally {
+      setAbortBusy(false);
+    }
+  }, [currentLoop, cancelRun, hydrateLoopById]);
+
   return (
     <div className="min-h-screen bg-dark-900 bg-mesh">
       <header className="sticky top-0 z-10 flex min-h-[52px] items-center gap-3 border-b border-zinc-800/50 bg-dark-900/80 px-4 backdrop-blur">
@@ -1109,9 +1158,11 @@ function LoopPageContent() {
             <DecisionBar
               snapshot={currentLoop}
               busy={decideBusy}
+              abortBusy={abortBusy}
               note={decisionNote}
               onNoteChange={setDecisionNote}
               onDecide={(decision) => void handleDecide(decision)}
+              onAbort={() => void handleAbort()}
             />
             {finished ? (
               <Section title="开启新闭环" extra={<Badge text="可选" />}>

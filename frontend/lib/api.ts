@@ -81,6 +81,7 @@ export const CODE_MESSAGES: Record<string, string> = {
   INVALID_EVENT_CURSOR: "事件游标无效，正在重新同步",
   FEATURE_NOT_READY: "该功能尚未开放",
   INTERNAL: "服务内部错误，请稍后重试",
+  TIMEOUT: "请求超时，请稍后重试",
 };
 
 export class ApiError extends Error {
@@ -303,6 +304,41 @@ export interface V2RequestOptions {
 
 const WRITE_METHODS = new Set(["POST", "PATCH", "DELETE", "PUT"]);
 
+/** 单次 HTTP 请求的默认超时；避免后端/网关挂起时按钮永久停在「提交中」。 */
+export const REQUEST_TIMEOUT_MS = 15_000;
+
+interface RequestGuard {
+  signal: AbortSignal;
+  didTimeout: () => boolean;
+  dispose: () => void;
+}
+
+/** 把调用方 signal 与超时合并成一个 controller，并记录超时是否已触发。 */
+function guardRequest(callerSignal: AbortSignal | undefined, timeoutMs: number): RequestGuard {
+  const controller = new AbortController();
+  let timedOut = false;
+
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  const onCallerAbort = () => controller.abort();
+  if (callerSignal) {
+    if (callerSignal.aborted) controller.abort();
+    else callerSignal.addEventListener("abort", onCallerAbort, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    didTimeout: () => timedOut,
+    dispose: () => {
+      clearTimeout(timer);
+      callerSignal?.removeEventListener("abort", onCallerAbort);
+    },
+  };
+}
+
 export async function apiV2<T>(path: string, options: V2RequestOptions = {}): Promise<T> {
   const method = options.method ?? "GET";
   const isWrite = WRITE_METHODS.has(method);
@@ -312,6 +348,7 @@ export async function apiV2<T>(path: string, options: V2RequestOptions = {}): Pr
   if (options.body !== undefined) headers["Content-Type"] = "application/json";
   if (isWrite && requestId) headers["Idempotency-Key"] = requestId;
 
+  const guard = guardRequest(options.signal, REQUEST_TIMEOUT_MS);
   let res: Response;
   try {
     res = await fetch(`${API_BASE}${path}${buildQuery(options.query)}`, {
@@ -319,13 +356,18 @@ export async function apiV2<T>(path: string, options: V2RequestOptions = {}): Pr
       credentials: "include",
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
-      signal: options.signal,
+      signal: guard.signal,
       cache: "no-store",
     });
   } catch (error) {
+    if (guard.didTimeout()) {
+      throw new ApiError("TIMEOUT", CODE_MESSAGES.TIMEOUT, 0, true, null, requestId ?? null, null);
+    }
     if (isApiError(error)) throw error;
     if (error instanceof Error && error.name === "AbortError") throw error;
     throw new ApiError("NETWORK_ERROR", "网络连接失败，请检查网络后重试", 0, true, null, requestId ?? null, null);
+  } finally {
+    guard.dispose();
   }
 
   if (!res.ok) {

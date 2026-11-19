@@ -7,6 +7,8 @@
  * （本机 npm registry 不可达，不能安装 RTL 渲染组件，项目惯例是抽 lib 纯函数）。
  */
 
+import type { BriefFieldName, ProductBrief } from "./contracts.generated";
+
 export type BriefEdits = Record<string, string>;
 
 /** 服务端版本更新、本地仍有草稿时的提示文案 */
@@ -36,4 +38,23 @@ export function decideBriefDraftOnServerVersion(
     return { keepEdits: true, notice: BRIEF_STALE_NOTICE };
   }
   return { keepEdits: false, notice: null };
+}
+
+/**
+ * 必填字段缺失判定：本地编辑优先于服务端值。
+ *
+ * 背景：确认简报时 payload.fields 会用 edits 覆盖服务端值，但按钮此前只看服务端
+ * brief 的必填状态。用户在编辑态清空必填项后仍能点「确认简报」，把空值提交上去。
+ * 这里把「覆盖后的有效值」抽成纯函数，编辑态与提交前都用同一份判断。
+ */
+export function missingRequiredBriefFields(
+  brief: ProductBrief | null | undefined,
+  edits: BriefEdits | null | undefined,
+  required: readonly BriefFieldName[]
+): BriefFieldName[] {
+  return required.filter((field) => {
+    const edited = edits?.[field];
+    const value = typeof edited === "string" ? edited : brief?.[field]?.value;
+    return typeof value !== "string" || value.trim().length === 0;
+  });
 }

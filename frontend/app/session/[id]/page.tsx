@@ -25,6 +25,8 @@ function WorkbenchContent() {
     isHistoryOpen,
     toggleHistory,
     sessionView,
+    sessionLoading,
+    error,
     legacyMode,
   } = useSessionStore();
   const [loading, setLoading] = useState(true);
@@ -92,15 +94,30 @@ function WorkbenchContent() {
     );
   }
 
-  if (loadError) {
+  if (!sessionView && !loading && !sessionLoading && (loadError || error)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-dark-900 bg-mesh bg-grid">
         <div className="text-center max-w-md">
           <div className="text-red-400 text-lg font-semibold mb-2">加载失败</div>
-          <div className="text-zinc-400 text-sm mb-4">{loadError}</div>
-          <a href="/" className="text-brand-300 hover:text-brand-400 text-sm underline">
-            返回首页
-          </a>
+          <div className="text-zinc-400 text-sm mb-4">{loadError ?? error}</div>
+          <div className="flex items-center justify-center gap-4">
+            <button
+              type="button"
+              onClick={() => {
+                const id = params?.id as string;
+                if (!id) return;
+                setLoading(true);
+                setLoadError(null);
+                void loadSession(id).finally(() => setLoading(false));
+              }}
+              className="text-brand-300 hover:text-brand-400 text-sm underline"
+            >
+              重试
+            </button>
+            <a href="/" className="text-zinc-400 hover:text-zinc-300 text-sm underline">
+              返回首页
+            </a>
+          </div>
         </div>
       </div>
     );

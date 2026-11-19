@@ -740,7 +740,10 @@ class LoopWorkflowSuccessTests(LoopWorkflowTestCase):
         # 五个阶段都执行了，validate 之后仍继续
         self.assertEqual(llm.purposes(), STAGE_PURPOSES)
         self.assertEqual(len(outcome.events), 6)
-        self.assert_stage_events(outcome, expected_loop_status=LoopStatus.running)
+        # 未达标（iterate）也必须进入决策态，否则闭环会永久停留在 running。
+        self.assert_stage_events(
+            outcome, expected_loop_status=LoopStatus.awaiting_decision
+        )
 
         # validate 阶段事件标记 failed，其余为 done
         events = [
@@ -775,7 +778,7 @@ class LoopWorkflowSuccessTests(LoopWorkflowTestCase):
         self.assertEqual(validate_step[0].status, StepStatus.failed.value)
 
         loop = self._loop_row()
-        self.assertEqual(loop.status, LoopStatus.running.value)
+        self.assertEqual(loop.status, LoopStatus.awaiting_decision.value)
         self.assertEqual(loop.loop_version, 3)
         round_row = self._round_row()
         self.assertEqual(round_row.status, LoopRoundStatus.done.value)
@@ -802,7 +805,9 @@ class LoopWorkflowSuccessTests(LoopWorkflowTestCase):
 
         self.assertEqual(outcome.status, RunStatus.succeeded)
         self.assertEqual(len(outcome.product_state.unresolved_issues), 2)
-        self.assert_stage_events(outcome, expected_loop_status=LoopStatus.running)
+        self.assert_stage_events(
+            outcome, expected_loop_status=LoopStatus.awaiting_decision
+        )
         evaluate_event = outcome.events[-2]["payload"]
         self.assertEqual(evaluate_event["score"], 70)
         self.assertEqual(evaluate_event["verdict"], LoopVerdict.iterate.value)
@@ -850,6 +855,85 @@ class LoopWorkflowSuccessTests(LoopWorkflowTestCase):
         ]
         payload = json.loads(scorecards[0].payload_json)
         self.assertIn("轮次已用尽，请决定交付或停止", payload["next_actions"])
+
+    async def test_nonpass_round_awaits_decision_and_iterate_queues_round_two(
+        self,
+    ) -> None:
+        """回归 AUD-01：评分未达标但轮次未耗尽时闭环必须可决策、可续轮。
+
+        修复前该轮结束后 ``loop.status=running``，``loop_decision`` 返回
+        ``LOOP_NOT_AWAITING_DECISION``、``start_loop`` 又返回 ``LOOP_ACTIVE``，
+        用户没有任何出口（闭环永久死锁）。
+        """
+
+        self._prepare_round(max_rounds=3)
+        llm = FakeLLM(_script(scorecard=_scorecard_payload(scores=_LOW_SCORES)))
+        ctx = self.make_ctx(llm=llm)
+        outcome = await loop_workflow.run_loop_round(ctx)
+
+        self.assertEqual(outcome.status, RunStatus.succeeded)
+        self.assert_stage_events(
+            outcome, expected_loop_status=LoopStatus.awaiting_decision
+        )
+        self.assertEqual(outcome.events[-2]["payload"]["score"], 40)
+        self.assertEqual(
+            outcome.events[-2]["payload"]["verdict"], LoopVerdict.iterate.value
+        )
+
+        self.commit_outcome(outcome)
+        loop = self._loop_row()
+        self.assertEqual(loop.status, LoopStatus.awaiting_decision.value)
+        self.assertEqual(int(loop.current_round), 1)
+        self.assertEqual(loop.loop_version, 3)
+
+        # 决策必须被接受，并真排出第 2 轮（不含模型调用，只建 Run/round）。
+        receipt = self._submit(
+            Action.loop_decision,
+            {
+                "loop_id": self.loop_id,
+                "expected_loop_version": int(loop.loop_version),
+                "decision": "iterate",
+                "note": "补齐阻塞项后再跑一轮",
+            },
+        )
+        self.assertEqual(receipt.loop_id, self.loop_id)
+        self.assertNotEqual(receipt.run_id, self.run_id)
+        with session_scope() as db:
+            row = loop_repo.get_loop(db, self.loop_id)
+            self.assertEqual(row.status, LoopStatus.running.value)
+            self.assertEqual(int(row.current_round), 2)
+            self.assertEqual(str(row.latest_run_id), receipt.run_id)
+            round2 = loop_repo.get_round(db, loop_id=self.loop_id, ordinal=2)
+            self.assertIsNotNone(round2)
+            self.assertEqual(str(round2.run_id), receipt.run_id)
+
+    async def test_blocked_verdict_also_awaits_decision(self) -> None:
+        """回归 AUD-01：3 条 blocker（verdict=blocked）同样不能停在 running。"""
+
+        self._prepare_round(max_rounds=3)
+        scorecard = _scorecard_payload(blockers=["假设未验证", "缺少原型", "无测试报告"])
+        llm = FakeLLM(_script(scorecard=scorecard))
+        ctx = self.make_ctx(llm=llm)
+        outcome = await loop_workflow.run_loop_round(ctx)
+
+        self.assertEqual(outcome.events[-2]["payload"]["verdict"], LoopVerdict.blocked.value)
+        self.assert_stage_events(
+            outcome, expected_loop_status=LoopStatus.awaiting_decision
+        )
+
+        self.commit_outcome(outcome)
+        loop = self._loop_row()
+        self.assertEqual(loop.status, LoopStatus.awaiting_decision.value)
+
+        receipt = self._submit(
+            Action.loop_decision,
+            {
+                "loop_id": self.loop_id,
+                "expected_loop_version": int(loop.loop_version),
+                "decision": "iterate",
+            },
+        )
+        self.assertNotEqual(receipt.run_id, self.run_id)
 
 
 class LoopWorkflowFailureTests(LoopWorkflowTestCase):

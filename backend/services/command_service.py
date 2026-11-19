@@ -653,7 +653,7 @@ def submit_command(
 # --------------------------------------------------------------------------- #
 
 
-def _loop_budget(loop) -> dict[str, Any]:
+def _loop_budget(loop, *, decision_note: str = "") -> dict[str, Any]:
     """把闭环参数写进 Run 预算，Worker 重放时无需进程内状态即可恢复。"""
 
     budget = default_budget()
@@ -665,6 +665,7 @@ def _loop_budget(loop) -> dict[str, Any]:
             "loop_max_rounds": int(loop.max_rounds or C.LOOP_ROUNDS_DEFAULT),
             "loop_target_score": int(loop.target_score or C.LOOP_TARGET_SCORE_DEFAULT),
             "loop_focus": loop.focus or "",
+            "loop_decision_note": (decision_note or "").strip(),
             "loop_stage_output_tokens": C.LOOP_STAGE_OUTPUT_TOKENS,
             "loop_final_output_tokens": C.LOOP_FINAL_OUTPUT_TOKENS,
         }
@@ -692,8 +693,9 @@ def _start_loop_round_run(
     ordinal: int,
     now_iso: str,
     now_epoch: int,
+    note: str = "",
 ) -> RunReceipt:
-    run_budget = _loop_budget(loop)
+    run_budget = _loop_budget(loop, decision_note=note)
     run_budget["loop_round"] = int(ordinal)
     run = run_repo.create_run(
         db,
@@ -809,6 +811,7 @@ def _submit_loop_decision(
                 "闭环轮次已用尽，只能交付或停止",
                 details={"current_round": int(loop.current_round or 1), "max_rounds": int(loop.max_rounds)},
             )
+        note = str(payload.get("note") or "").strip()
         return _start_loop_round_run(
             db,
             session=session,
@@ -818,6 +821,7 @@ def _submit_loop_decision(
             ordinal=next_round,
             now_iso=now_iso,
             now_epoch=now_epoch,
+            note=note,
         )
 
     # ship / stop：不调用模型，同一事务收口。
@@ -1266,6 +1270,15 @@ def _apply_confirm_brief(
         field_obj = getattr(brief, name)
         if field_obj.status != BriefFieldStatus.unknown:
             setattr(brief, name, field_obj.model_copy(update={"status": BriefFieldStatus.confirmed}))
+    # 复检必须基于应用 overrides 之后的值：编辑态允许把必填字段清空，
+    # 若不在此兜底，空值会被标成 confirmed 并落到产品状态里（AUD-02）。
+    missing = brief.required_missing()
+    if missing:
+        raise AppError(
+            ErrorCode.INVALID_REQUEST,
+            "仍有关键字段未确认，无法确认产品定义",
+            details={"missing_fields": missing},
+        )
     brief = brief.model_copy(update={"status": BriefStatus.confirmed, "skipped": False})
     new_state = _bump_state(state, brief=brief)
     session_repo.touch_session(db, session, now_iso=now_iso, brief_status=BriefStatus.confirmed)
@@ -1419,6 +1432,7 @@ def _apply_assessment_correction(
         target_audit = audit_repo.get_audit(inner_db, audit.id)
         if target_audit is None:  # pragma: no cover - 同事务内不应消失
             return
+        new_version = int(target_audit.audit_version) + 1
         if question is not None:
             fresh = audit_repo.get_question(inner_db, audit.id, question.id)
             if fresh is not None:
@@ -1430,10 +1444,31 @@ def _apply_assessment_correction(
                     evidence_refs=parsed.payload.get("evidence_refs") or [],
                     now_iso=now_iso,
                 )
+
+        # AC-40：人工更正后必须从结构化记录重建维度状态与报告，而不是只留修订记录。
+        from workflows import audit as audit_workflow
+
+        rows = audit_repo.questions_for_audit(inner_db, audit.id)
+        states = audit_workflow.build_dimension_states(rows)
+        dimension = parsed.payload.get("dimension")
+        if dimension:
+            states = [
+                state.model_copy(
+                    update={
+                        "assessment": assessment,
+                        "rationale": str(parsed.payload["rationale"])[:2000],
+                        "evidence_refs": list(parsed.payload.get("evidence_refs") or []),
+                    }
+                )
+                if state.key == str(dimension)
+                else state
+                for state in states
+            ]
+
         audit_repo.add_assessment_revision(
             inner_db,
             audit_id=audit.id,
-            audit_version=target_audit.audit_version + 1,
+            audit_version=new_version,
             dimension=parsed.payload.get("dimension"),
             question_id=question_id,
             before=before,
@@ -1444,12 +1479,70 @@ def _apply_assessment_correction(
             rationale=parsed.payload["rationale"],
             now_iso=now_iso,
         )
-        audit_repo.update_audit(
-            inner_db,
-            target_audit,
-            now_iso=now_iso,
-            audit_version=target_audit.audit_version + 1,
-        )
+
+        report_json = None
+        if target_audit.report_json:
+            try:
+                current_report = C.AuditReport.model_validate(
+                    json.loads(target_audit.report_json)
+                )
+            except (ValueError, TypeError):  # pragma: no cover - 历史脏数据
+                current_report = None
+            if current_report is not None:
+                supported: list[str] = []
+                gaps: list[str] = []
+                for state in states:
+                    label = C.AUDIT_DIMENSION_LABELS.get(state.key, state.key)
+                    if state.assessment is Assessment.supported:
+                        supported.append(f"{label}：{state.rationale.strip() or '（未记录具体理由）'}")
+                    elif state.assessment in (
+                        Assessment.gap,
+                        Assessment.needs_clarification,
+                    ):
+                        gaps.append(f"{label}：{state.rationale.strip() or '尚未获得充分回答'}")
+                    elif state.assessment is Assessment.not_discussed:
+                        gaps.append(f"{label}：本次审计未覆盖")
+                limitation = current_report.limitations
+                marker = f"本报告已按人工更正重新生成（audit_version {new_version}）。"
+                if marker not in limitation:
+                    limitation = (limitation + "\n" + marker).strip()[:2000]
+                report = current_report.model_copy(
+                    update={
+                        "audit_version": new_version,
+                        "dimension_states": states,
+                        "supported_points": supported[:10],
+                        "unresolved_gaps": gaps[:10],
+                        "limitations": limitation,
+                        "human_revised": True,
+                    }
+                )
+                audit_repo.save_report_revision(
+                    inner_db,
+                    audit_id=audit.id,
+                    audit_version=new_version,
+                    report=report.model_dump(mode="json"),
+                    generated_by="human",
+                    now_iso=now_iso,
+                )
+                report_json = report.model_dump(mode="json")
+
+        if report_json is not None:
+            audit_repo.update_audit(
+                inner_db,
+                target_audit,
+                now_iso=now_iso,
+                dimension_states=states,
+                report=report_json,
+                audit_version=new_version,
+            )
+        else:
+            audit_repo.update_audit(
+                inner_db,
+                target_audit,
+                now_iso=now_iso,
+                dimension_states=states,
+                audit_version=new_version,
+            )
         session_repo.touch_session(
             inner_db, session, now_iso=now_iso, current_audit_id=audit.id
         )
@@ -1940,14 +2033,18 @@ def _commit_outcome(
         terminal_payload["message"] = outcome.error_message
     if outcome.result_product_version or result_product_version:
         terminal_payload["product_version"] = result_product_version
-    run_repo.append_event(
-        db,
-        session_id=session.id,
-        run_id=run.id,
-        type=SM.terminal_event_for(target).value,
-        payload=terminal_payload,
-        now_iso=now_iso,
-    )
+    # 取消请求可能在 cancel_run 时已写入 run_cancelled（让 SSE 立即收尾），
+    # 这里不再重复追加，保持「每个 Run 恰好一个终结事件」。
+    terminal_type = SM.terminal_event_for(target).value
+    if not any(event.type == terminal_type for event in run_repo.events_after(db, run.id)):
+        run_repo.append_event(
+            db,
+            session_id=session.id,
+            run_id=run.id,
+            type=terminal_type,
+            payload=terminal_payload,
+            now_iso=now_iso,
+        )
 
     _set_run_fields(
         db,
@@ -1993,6 +2090,10 @@ def _commit_outcome(
     # 6) 额外写入钩子（审计问题/评估等，同事务）
     if outcome.apply is not None:
         outcome.apply(db)
+    elif SM.is_terminal_run(target):
+        # 兜底：本轮 Run 终结为 failed/cancelled 却没有 apply（deadline、内部异常、
+        # 提交失败等），仍需收口闭环，否则用户会看到永久 running（AUD-01）。
+        _abort_loop_for_run(db, run=run, now_iso=now_iso)
 
     # 7) 成功结果的后续任务（FR-04D：brainstorm → synthesis），同一事务建子 Run。
     #    取消/失败不排后续；子 Run 继承本次已提交的产品版本并占住 active_run_id。
@@ -2046,13 +2147,69 @@ def apply_outcome(
 # --------------------------------------------------------------------------- #
 
 
+def _abort_loop_for_run(db, *, run: RunRow, now_iso: str) -> bool:
+    """用户中止本轮时同步收口闭环（AUD-01）。
+
+    只终结「本 Run 正在执行的那一轮」：``loop.latest_run_id`` 必须指向该 Run，
+    避免取消历史 Run 时误伤已经推进到下一轮的闭环。闭环置 failed 后
+    ``active_loop_for_session`` 不再命中，前端 ``finished`` 分支才会出现
+    「开启新闭环」。
+    """
+
+    loop_id = getattr(run, "loop_id", None)
+    if not loop_id:
+        return False
+    loop = loop_repo.get_loop(db, loop_id)
+    if loop is None:  # pragma: no cover - 外键保证
+        return False
+    if C.LoopStatus(loop.status) is not C.LoopStatus.running:
+        return False
+    if loop.latest_run_id != run.id:
+        return False
+
+    round_row = loop_repo.get_round(db, loop_id=loop.id, ordinal=int(loop.current_round or 1))
+    if round_row is not None and C.LoopRoundStatus(round_row.status) is C.LoopRoundStatus.running:
+        loop_repo.update_round(
+            db,
+            round_row,
+            status=C.LoopRoundStatus.failed,
+            finished_at=now_iso,
+        )
+    loop_repo.close_loop(
+        db,
+        loop,
+        status=C.LoopStatus.failed,
+        note="本轮已被用户中止",
+        now_iso=now_iso,
+    )
+    event = _loop_event(loop)
+    run_repo.append_event(
+        db,
+        session_id=run.session_id,
+        run_id=run.id,
+        type=event["type"],
+        payload=event["payload"],
+        now_iso=now_iso,
+    )
+    return True
+
+
 def cancel_run(db, *, owner_email: str, run_id: str, now_iso: str | None = None) -> RunView:
-    """取消 Run：queued 立即终结；running 置 cancel_requested 由 Worker 收尾。"""
+    """取消 Run：queued 立即终结；running 置 cancel_requested 由 Worker 收尾。
+
+    对 Loop Studio 的轮次 Run，取消同时收口闭环（``status=failed`` +
+    ``closed_at``），否则闭环会永久停在 running，用户既不能决策也不能开新闭环。
+    """
 
     now_iso = now_iso or utc_now_iso()
     run = run_repo.require_run(db, run_id, owner_email=owner_email)
     status = RunStatus(run.status)
     if SM.is_terminal_run(status):
+        # 幂等修复：历史上取消已终结但 loop 仍 running 的死锁，再点一次即可复位。
+        if status is RunStatus.cancelled and _abort_loop_for_run(db, run=run, now_iso=now_iso):
+            session = session_repo.get_session(db, run.session_id, include_deleted=True)
+            if session is not None:
+                session_repo.bump_session_version(db, session)
         return run_to_view(run)
 
     session = session_repo.get_session(db, run.session_id)
@@ -2061,6 +2218,7 @@ def cancel_run(db, *, owner_email: str, run_id: str, now_iso: str | None = None)
 
     if status in (RunStatus.queued, RunStatus.interrupted):
         _set_run_fields(db, run, status=RunStatus.cancelled.value, finished_at=now_iso, lease_owner=None)
+        _abort_loop_for_run(db, run=run, now_iso=now_iso)
         run_repo.append_event(
             db,
             session_id=session.id,
@@ -2077,14 +2235,18 @@ def cancel_run(db, *, owner_email: str, run_id: str, now_iso: str | None = None)
     # running / cancel_requested：交给 Worker 在下一个安全点终结
     if status is not RunStatus.cancel_requested:
         _set_run_fields(db, run, status=RunStatus.cancel_requested.value)
+    aborted = _abort_loop_for_run(db, run=run, now_iso=now_iso)
+    if status is not RunStatus.cancel_requested:
         run_repo.append_event(
             db,
             session_id=session.id,
             run_id=run.id,
-            type=EventType.audit_updated.value,
+            type=EventType.run_cancelled.value,
             payload={"status": RunStatus.cancel_requested.value, "reason": "cancel_requested"},
             now_iso=now_iso,
         )
+    if aborted:
+        session_repo.bump_session_version(db, session)
     return run_to_view(run)
 
 

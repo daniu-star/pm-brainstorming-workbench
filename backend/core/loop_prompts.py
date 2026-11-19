@@ -311,6 +311,7 @@ def build_stage_messages(
         stage = LoopStage(stage)
     state = getattr(ctx, "product_state", None)
     focus = str(_budget_value(ctx, "loop_focus") or "").strip()
+    decision_note = str(_budget_value(ctx, "loop_decision_note") or "").strip()
 
     user_lines = ["产品定义（来自已确认的产品状态）："]
     user_lines.extend(_brief_lines(state))
@@ -318,10 +319,11 @@ def build_stage_messages(
         [
             "",
             f"本轮 focus：{_clip(focus, 500) if focus else '（未指定，聚焦最小可交付闭环）'}",
-            "",
-            "上阶段产物摘要：",
         ]
     )
+    if decision_note:
+        user_lines.append(f"上一轮决策备注（用户要求，优先满足）：{_clip(decision_note, 500)}")
+    user_lines.extend(["", "上阶段产物摘要："])
     user_lines.extend(_prior_lines(prior, stage))
     user_lines.extend(["", "<evidence>"])
     evidence = _evidence_lines(ctx)

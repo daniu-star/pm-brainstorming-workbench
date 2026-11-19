@@ -541,6 +541,7 @@ const AUDIT_ERROR_TEXT: Record<string, string> = {
   AUDIT_NOT_READY: "请先完成澄清或跳过引导，再发起审计",
   INTERNAL: "服务暂时不可用，请稍后重试",
   NETWORK_ERROR: "网络连接失败，请检查网络后重试",
+  TIMEOUT: "请求超时，请稍后重试",
 };
 
 /**

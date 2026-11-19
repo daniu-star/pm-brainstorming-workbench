@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSessionStore } from "@/store/sessionStore";
-import { decideBriefDraftOnServerVersion } from "@/lib/briefDraft";
+import { decideBriefDraftOnServerVersion, missingRequiredBriefFields } from "@/lib/briefDraft";
 import {
   BRIEF_FIELDS,
   BRIEF_FIELD_LABELS,
@@ -86,13 +86,10 @@ export function BriefCard() {
     setStaleNotice(null);
   }, [productState?.version]);
 
-  const missingRequired = useMemo(() => {
-    if (!brief) return [] as string[];
-    return BRIEF_REQUIRED_FIELDS.filter((field) => {
-      const value = brief[field]?.value;
-      return typeof value !== "string" || value.trim().length === 0;
-    });
-  }, [brief]);
+  const missingRequired = useMemo(
+    () => missingRequiredBriefFields(brief, edits, BRIEF_REQUIRED_FIELDS),
+    [brief, edits]
+  );
 
   const changedFields = useMemo(() => {
     const result: Record<string, { value: string; status: BriefFieldStatus }> = {};
@@ -169,6 +166,13 @@ export function BriefCard() {
   }
 
   function handleConfirm() {
+    // 服务端 brief 必填齐全不代表本地编辑后的值齐全：edits 会覆盖服务端字段。
+    if (missingRequired.length > 0) {
+      setErrorText(
+        `还缺必填字段：${missingRequired.map((field) => BRIEF_FIELD_LABELS[field] ?? field).join("、")}`
+      );
+      return;
+    }
     const payload: Record<string, unknown> = { expected_product_version: version };
     if (edits && Object.keys(edits).length > 0) payload.fields = edits;
     void runCommand("confirm_brief", "confirm_brief", payload);

@@ -482,6 +482,28 @@ class LoopDetailTests(LoopsApiTestBase):
         self.assertEqual(snapshot["scorecard"]["verdict"], C.LoopVerdict.iterate.value)
         self.assertEqual(snapshot["scorecard"]["blockers"], ["自动抓取尚未验证"])
 
+    def test_detail_exposes_decision_note_and_closed_at(self) -> None:
+        """AUD-03：决策备注与收口时间必须能从快照读回（前端 LoopSummary 依赖）。"""
+
+        session = self.create_session()
+        seeded = self.seed_loop(session["id"])
+        with database.session_scope() as db:
+            loop = loop_repo.get_loop(db, seeded["loop_id"])
+            self.assertIsNotNone(loop)
+            loop_repo.close_loop(
+                db,
+                loop,
+                status=C.LoopStatus.shipped,
+                decision=C.LoopDecisionKind.ship,
+                note="先交付主流程",
+                now_iso="2026-11-19T09:30:00Z",
+            )
+        snapshot = self.get(f"/api/v2/loops/{seeded['loop_id']}").json()
+        self.assertEqual(snapshot["status"], C.LoopStatus.shipped.value)
+        self.assertEqual(snapshot["decision"], C.LoopDecisionKind.ship.value)
+        self.assertEqual(snapshot["decision_note"], "先交付主流程")
+        self.assertEqual(snapshot["closed_at"], "2026-11-19T09:30:00Z")
+
     def test_detail_without_artifacts_is_null(self) -> None:
         session = self.create_session()
         seeded = self.seed_loop(session["id"], with_artifacts=False)

@@ -40,3 +40,52 @@ test("服务端版本更新时：没有草稿才允许清空", () => {
   assert.equal(decision.keepEdits, false);
   assert.equal(decision.notice, null);
 });
+
+const REQUIRED = ["target_users", "usage_scenario", "core_problem", "success_criteria"];
+
+function briefWith(values) {
+  const brief = {};
+  for (const field of REQUIRED) {
+    brief[field] = { value: values[field] ?? "", status: "confirmed" };
+  }
+  return brief;
+}
+
+test("missingRequiredBriefFields：服务端齐全且无编辑时不缺", () => {
+  const brief = briefWith({
+    target_users: "3-10 人财务团队",
+    usage_scenario: "每周五下午写周报",
+    core_problem: "手工汇总耗时 40 分钟",
+    success_criteria: "5 分钟内出稿",
+  });
+  assert.deepEqual(draft.missingRequiredBriefFields(brief, {}, REQUIRED), []);
+  assert.deepEqual(draft.missingRequiredBriefFields(brief, null, REQUIRED), []);
+});
+
+test("missingRequiredBriefFields：本地编辑清空必填项必须被判定缺失（AUD-02）", () => {
+  const brief = briefWith({
+    target_users: "3-10 人财务团队",
+    usage_scenario: "每周五下午写周报",
+    core_problem: "手工汇总耗时 40 分钟",
+    success_criteria: "5 分钟内出稿",
+  });
+  const edits = { target_users: "", success_criteria: "   " };
+  assert.deepEqual(
+    draft.missingRequiredBriefFields(brief, edits, REQUIRED),
+    ["target_users", "success_criteria"]
+  );
+  // 只有被清空的两项缺失，未被编辑的不做推断
+  assert.deepEqual(
+    draft.missingRequiredBriefFields(brief, { usage_scenario: "" }, REQUIRED),
+    ["usage_scenario"]
+  );
+});
+
+test("missingRequiredBriefFields：服务端本来就缺字段时也返回缺失", () => {
+  const brief = briefWith({ target_users: "3-10 人财务团队" });
+  assert.deepEqual(
+    draft.missingRequiredBriefFields(brief, null, REQUIRED),
+    ["usage_scenario", "core_problem", "success_criteria"]
+  );
+  assert.deepEqual(draft.missingRequiredBriefFields(null, null, REQUIRED), REQUIRED);
+});
