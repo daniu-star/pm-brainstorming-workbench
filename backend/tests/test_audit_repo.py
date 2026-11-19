@@ -34,6 +34,7 @@ from repositories import audit_repo, database
 from repositories.database import (
     AuditAssessmentRevisionRow,
     ControlIntentRow,
+    RunRow,
     SessionRow,
 )
 
@@ -468,6 +469,75 @@ class AuditRepoTestCase(unittest.TestCase):
             self.assertEqual([state.key for state in snapshot.dimension_states], ["problem_validity"])
             # 不合法报告降级为 None，而不是让读取路径崩溃。
             self.assertIsNone(snapshot.report)
+
+    # ------------------------------------------------------------------ #
+    # 失败原因可见（PRD-03）
+    # ------------------------------------------------------------------ #
+    def test_snapshot_exposes_latest_failed_run_error(self) -> None:
+        """PRD-03：审计失败时快照必须带最近失败 Run 的错误码/文案。
+
+        修复前失败原因只存在 Run 上，审计页只能显示「报告未生成」，用户既看不到
+        原因也没有重试依据。
+        """
+
+        with database.session_scope() as db:
+            audit = self._audit(db)
+            audit_repo.update_audit(db, audit, now_iso=NOW, status=AuditStatus.failed, end_reason=EndReason.failed)
+            session_id = self.session_id_fallback(db)
+            for run_id, error_code, error_message, created_at in (
+                ("r" * 32, "MODEL_OUTPUT_INVALID", "开场问题未能通过协议校验", NOW),
+                ("s" * 32, "MODEL_TIMEOUT", "开场问题生成超时", NOW_LATER),
+            ):
+                db.add(
+                    RunRow(
+                        id=run_id,
+                        session_id=session_id,
+                        owner_email=OWNER,
+                        request_id=f"req-{run_id[0]}",
+                        action="start_audit",
+                        input_hash="",
+                        base_session_version=1,
+                        base_product_version=1,
+                        status="failed",
+                        audit_id=audit.id,
+                        error_code=error_code,
+                        error_message=error_message,
+                        created_at=created_at,
+                    )
+                )
+            db.flush()
+            snapshot = audit_repo.audit_to_snapshot(db, audit_repo.get_audit(db, audit.id))
+            self.assertEqual(snapshot.status, AuditStatus.failed)
+            self.assertEqual(snapshot.last_error_code, "MODEL_TIMEOUT")
+            self.assertEqual(snapshot.last_error_message, "开场问题生成超时")
+
+    def test_snapshot_omits_error_fields_when_audit_not_failed(self) -> None:
+        """非 failed 审计不暴露历史错误（避免把已恢复的失败当现状展示）。"""
+
+        with database.session_scope() as db:
+            audit = self._audit(db)
+            audit_repo.update_audit(db, audit, now_iso=NOW, status=AuditStatus.active)
+            db.add(
+                RunRow(
+                    id="t" * 32,
+                    session_id=self.session_id_fallback(db),
+                    owner_email=OWNER,
+                    request_id="req-t",
+                    action="answer_audit",
+                    input_hash="",
+                    base_session_version=1,
+                    base_product_version=1,
+                    status="failed",
+                    audit_id=audit.id,
+                    error_code="MODEL_OUTPUT_INVALID",
+                    error_message="回答未被接受",
+                    created_at=NOW,
+                )
+            )
+            db.flush()
+            snapshot = audit_repo.audit_to_snapshot(db, audit_repo.get_audit(db, audit.id))
+            self.assertIsNone(snapshot.last_error_code)
+            self.assertIsNone(snapshot.last_error_message)
 
     # ------------------------------------------------------------------ #
     # 控制意图

@@ -604,6 +604,411 @@ test("hydrateMessages 保存 next_before_seq：长会话刷新后可继续加载
   assert.equal(page.hasEarlier, true, "还有 200 条历史消息，应显示「加载更早」");
 });
 
+// ---------------------------------------------------------------------------
+// UX-D1：工作台卸载断流后，审计页需要 resumeRunSubscription 续订同一个 Run
+// ---------------------------------------------------------------------------
+test("resumeRunSubscription：active_run_id 未订阅时重新订阅，已订阅时不重复", () => {
+  const subscribed = [];
+  prime({
+    sessionView: { ...SESSION_VIEW, active_run_id: "run_9" },
+    subscribingRunId: null,
+    subscribeRun: (runId) => subscribed.push(runId),
+  });
+
+  useSessionStore.getState().resumeRunSubscription();
+  assert.deepEqual(subscribed, ["run_9"], "审计页 mount 必须重新订阅运行中的 Run");
+
+  prime({
+    sessionView: { ...SESSION_VIEW, active_run_id: "run_9" },
+    subscribingRunId: "run_9",
+    subscribeRun: (runId) => subscribed.push(runId),
+  });
+  useSessionStore.getState().resumeRunSubscription();
+  assert.deepEqual(subscribed, ["run_9"], "同一个 Run 已在订阅中，不能重复打开流");
+
+  // 没有 active_run_id 时什么都不做；activeRunId 作为兜底来源
+  prime({
+    sessionView: { ...SESSION_VIEW, active_run_id: null },
+    subscribingRunId: null,
+    activeRunId: null,
+    subscribeRun: (runId) => subscribed.push(runId),
+  });
+  useSessionStore.getState().resumeRunSubscription();
+  assert.deepEqual(subscribed, ["run_9"]);
+
+  prime({
+    sessionView: { ...SESSION_VIEW, active_run_id: null },
+    subscribingRunId: null,
+    activeRunId: "run_8",
+    subscribeRun: (runId) => subscribed.push(runId),
+  });
+  useSessionStore.getState().resumeRunSubscription();
+  assert.deepEqual(subscribed, ["run_9", "run_8"], "sessionView 缺失时回退到 activeRunId");
+});
+
+// ---------------------------------------------------------------------------
+// UX-D4：切换会话必须清空上一个会话的消息投影
+// ---------------------------------------------------------------------------
+test("loadSession：切换会话先清空 messages，加载失败也不残留旧会话消息", async () => {
+  prime({ messages: [messageView(1), messageView(2)] });
+  assert.equal(useSessionStore.getState().messages.length, 2);
+
+  stubFetch(() => {
+    throw new Error("会话读取失败");
+  });
+
+  await useSessionStore.getState().loadSession("s2");
+
+  const state = useSessionStore.getState();
+  assert.equal(state.currentSessionId, "s2");
+  assert.deepEqual(state.messages, [], "上一个会话的消息必须被清空（UX-D4）");
+  assert.equal(state.sessionView, null);
+  assert.deepEqual(state.stateWarnings, []);
+  assert.ok(state.error, "加载失败必须写入可见错误，而不是静默留空");
+  assert.equal(state.sessionLoading, false);
+});
+
+// ---------------------------------------------------------------------------
+// DX-03：丢弃旧画布版本后必须退出 generating，否则 CanvasPanel 永久「生成中」
+test("refreshCanvas：丢弃旧投影后 canvas.status 复位为 stale/error，且 loading 结束", async () => {
+  prime({
+    productVersion: 2,
+    canvas: {
+      projection: { product_version: 2, nodes: [], edges: [] },
+      productVersion: 2,
+      status: "latest",
+      error: null,
+    },
+  });
+  stubFetch((url) =>
+    url.includes("/canvas") ? { product_version: 1, nodes: [], edges: [] } : {},
+  );
+
+  const refreshed = await useSessionStore.getState().refreshCanvas(2);
+  assert.equal(refreshed, false, "旧版本投影必须被丢弃");
+
+  const state = useSessionStore.getState();
+  assert.notEqual(state.canvas?.status, "generating", "丢弃旧投影后不能停在 generating");
+  assert.equal(state.canvas?.status, "stale", "已有旧投影时标 stale（可重试）");
+  assert.equal(state.canvasLoading, false);
+  assert.equal(state.isGeneratingCanvas, false);
+  assert.ok(state.stateWarnings.some((warning) => warning.includes("丢弃旧画布版本")));
+});
+
+// FE-05：告警要有生命周期，画布重试成功后不能继续挂旧错误
+test("refreshCanvas：失败留下告警，重试成功后自动清除画布类告警", async () => {
+  prime({ productVersion: 2, canvas: null });
+  let attempt = 0;
+  stubFetch((url) => {
+    if (!url.includes("/canvas")) return {};
+    attempt += 1;
+    if (attempt === 1) throw new Error("画布投影读取失败");
+    return { product_version: 2, nodes: [], edges: [] };
+  });
+
+  assert.equal(await useSessionStore.getState().refreshCanvas(), false);
+  assert.ok(
+    useSessionStore.getState().stateWarnings.some((warning) => warning.includes("画布加载失败")),
+  );
+
+  assert.equal(await useSessionStore.getState().refreshCanvas(), true);
+  assert.equal(useSessionStore.getState().stateWarnings.length, 0, "恢复成功后旧告警必须清掉");
+});
+
+// PROD-06：refreshCanvas 失败返回 false，调用方不得再弹「画布已刷新」
+// ---------------------------------------------------------------------------
+test("refreshCanvas：读取失败返回 false 并保留「画布加载失败」提示", async () => {
+  prime({ productVersion: 2, canvas: null });
+  stubFetch(() => {
+    throw new Error("画布投影读取失败");
+  });
+
+  const refreshed = await useSessionStore.getState().refreshCanvas();
+  assert.equal(refreshed, false);
+
+  const state = useSessionStore.getState();
+  assert.equal(state.canvas?.status, "error");
+  assert.ok(state.stateWarnings.some((warning) => warning.includes("画布加载失败")));
+});
+
+test("generateCanvas：v2 刷新失败不得弹「画布已刷新」成功 toast", async () => {
+  const toastModule = require(path.join(BUILD_DIR, "components", "Toast.js"));
+  const successCalls = [];
+  const originalSuccess = toastModule.toast.success;
+  toastModule.toast.success = (message) => successCalls.push(message);
+
+  try {
+    prime({ legacyMode: false, productVersion: 2, canvas: null });
+    stubFetch(() => {
+      throw new Error("画布投影读取失败");
+    });
+
+    await useSessionStore.getState().generateCanvas();
+
+    assert.deepEqual(successCalls, [], "失败时不能出现成功 toast");
+    assert.ok(
+      useSessionStore.getState().stateWarnings.some((warning) => warning.includes("画布加载失败"))
+    );
+  } finally {
+    toastModule.toast.success = originalSuccess;
+  }
+});
+
+test("发送失败回滚乐观消息；重试复用同一 Idempotency-Key，成功后不误报失败（FE-01/FE-03/DX-05）", async () => {
+  prime({
+    phase: "brainstorm",
+    v2Phase: "brainstorming",
+    sessionView: { ...SESSION_VIEW, phase: "brainstorming" },
+  });
+
+  const commandCalls = [];
+  let commandCount = 0;
+
+  const jsonRes = (payload, status = 200) => ({
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: () => "application/json" },
+    json: async () => payload,
+    text: async () => JSON.stringify(payload),
+  });
+
+  const sseRes = (frame) => {
+    const encoder = new global.TextEncoder();
+    let sent = false;
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => "text/event-stream" },
+      json: async () => ({}),
+      text: async () => "",
+      body: {
+        getReader() {
+          return {
+            read: async () => {
+              if (sent) return { done: true, value: undefined };
+              sent = true;
+              return { done: false, value: encoder.encode(frame) };
+            },
+            cancel: async () => undefined,
+          };
+        },
+      },
+    };
+  };
+
+  const HUMAN_MESSAGE = messageView(1, {
+    id: "m_human",
+    content: "看下动效",
+    stage: "brainstorm",
+    run_id: "run_r",
+  });
+  const SNAPSHOT = {
+    run_id: "run_r",
+    session_id: "s1",
+    action: "brainstorm",
+    status: "completed",
+    base_session_version: 3,
+    base_product_version: 2,
+    result_product_version: 2,
+    steps: [],
+    messages: [HUMAN_MESSAGE],
+    session_version: 4,
+    product_version: 2,
+    canvas: null,
+    audit: null,
+    loop: null,
+    loop_id: null,
+    snapshot_event_seq: 1,
+    latest_event_seq: 1,
+  };
+
+  global.fetch = async (url, init = {}) => {
+    const href = String(url);
+    if (href.includes("/commands")) {
+      commandCount += 1;
+      const body = JSON.parse(init.body);
+      commandCalls.push({
+        requestId: body.request_id,
+        idempotencyKey: init.headers["Idempotency-Key"],
+        target: body.payload && body.payload.target,
+      });
+      if (commandCount === 1) {
+        return jsonRes(
+          { error: { code: "VERSION_CONFLICT", message: "内容已在别处更新，请刷新后重试", retryable: false } },
+          409,
+        );
+      }
+      return jsonRes(
+        {
+          run_id: "run_r",
+          session_id: "s1",
+          status: "queued",
+          action: "brainstorm",
+          session_version: 4,
+          audit_id: null,
+        },
+        202,
+      );
+    }
+    if (href.includes("/events")) {
+      const frame = `event: run.completed\ndata: ${JSON.stringify({
+        type: "run.completed",
+        run_id: "run_r",
+        session_id: "s1",
+        event_seq: 1,
+        occurred_at: new Date(0).toISOString(),
+        payload: { session_version: 4 },
+      })}\n\n`;
+      return sseRes(frame);
+    }
+    if (href.includes("/snapshot")) return jsonRes(SNAPSHOT);
+    if (href.match(/\/api\/v2\/runs\/[^/]+$/)) {
+      return jsonRes({
+        id: "run_r",
+        session_id: "s1",
+        action: "brainstorm",
+        status: "completed",
+        error_code: null,
+        error_message: null,
+        loop_id: null,
+      });
+    }
+    if (href.match(/\/api\/v2\/sessions\/s1$/)) return jsonRes(SESSION_VIEW);
+    return jsonRes({});
+  };
+
+  try {
+    // 第一次发送：409 失败
+    useSessionStore.getState().sendMessage("看下动效", "designer");
+    await waitFor(() => useSessionStore.getState().lastFailedSend !== null, 3000);
+
+    const afterFailure = useSessionStore.getState();
+    assert.deepEqual(
+      (afterFailure.messagesBySession.s1 ?? []).filter((view) => view.id.startsWith("local-")),
+      [],
+      "发送失败后必须立刻回滚乐观用户气泡（不能留到下一个 Run 收尾再删）",
+    );
+    assert.equal(afterFailure.error, "内容已在别处更新，请刷新后重试");
+    assert.equal(afterFailure.lastFailedSend.targetRole, "designer", "定向消息不能被降级成群发");
+    assert.equal(typeof afterFailure.lastFailedSend.requestId, "string", "失败条必须保存首次 request_id 供重试复用");
+
+    // 用户点「重试」：等价 ChatPanel.retrySend
+    const failed = afterFailure.lastFailedSend;
+    afterFailure.clearLastFailedSend();
+    useSessionStore.getState().sendMessage(failed.content, failed.targetRole, { requestId: failed.requestId });
+
+    await waitFor(() => useSessionStore.getState().runs.run_r !== undefined, 3000);
+    await waitFor(() => useSessionStore.getState().isStreaming === false, 5000);
+
+    assert.equal(commandCalls.length, 2, "应恰好发出两次命令（失败 + 重试）");
+    assert.equal(commandCalls[0].requestId, commandCalls[1].requestId, "重试必须复用首次 request_id");
+    assert.equal(
+      commandCalls[0].idempotencyKey,
+      commandCalls[1].idempotencyKey,
+      "重试的 Idempotency-Key 必须与首次一致，否则响应丢失后会重复执行命令",
+    );
+    assert.equal(commandCalls[1].target, "designer");
+
+    const finalState = useSessionStore.getState();
+    const finalHumans = (finalState.messagesBySession.s1 ?? []).filter(
+      (view) => view.sender_kind === "human",
+    );
+    assert.equal(
+      finalHumans.filter((view) => view.id.startsWith("local-")).length,
+      0,
+      "服务端回执到达后不能残留本地乐观占位",
+    );
+    assert.equal(finalHumans.filter((view) => view.id === "m_human").length, 1, "重试成功只应有一条真人消息");
+    assert.equal(finalState.error, null, "重试成功后不得再报「消息发送未确认」");
+    assert.equal(finalState.lastFailedSend, null, "重试成功后必须清空失败条，避免再次误点重试");
+  } finally {
+    useSessionStore.getState().unsubscribe();
+    global.fetch = realFetch;
+  }
+});
+
+test("v2 会话读取 200 非 JSON 时不静默降级 legacy，报可重试错误且刷新后恢复（FE-02）", async () => {
+  prime({
+    phase: "interview",
+    v2Phase: null,
+    sessionView: null,
+    sessionLoading: false,
+    legacyMode: false,
+    error: null,
+  });
+
+  const requested = [];
+  let sessionAttempts = 0;
+
+  const jsonRes = (payload, status = 200) => ({
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: () => "application/json" },
+    json: async () => payload,
+    text: async () => JSON.stringify(payload),
+  });
+
+  global.fetch = async (url, init = {}) => {
+    const href = String(url);
+    requested.push(href);
+    if (href.match(/\/api\/v2\/sessions\/s1$/)) {
+      sessionAttempts += 1;
+      if (sessionAttempts === 1) {
+        // 网关/代理返回 HTML：HTTP 200 但正文不是 JSON
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => "text/html" },
+          json: async () => {
+            throw new SyntaxError("Unexpected token '<', \"<html>\" is not valid JSON");
+          },
+          text: async () => "<html><body>gateway error</body></html>",
+        };
+      }
+      return jsonRes({
+        ...SESSION_VIEW,
+        phase: "brainstorming",
+        session_version: 4,
+        current_audit_id: null,
+      });
+    }
+    if (href.includes("/messages")) return jsonRes({ items: [], next_before_seq: null });
+    if (href.includes("/product-state")) return jsonRes({ version: 2, dimensions: [], decisions: [] });
+    if (href.includes("/canvas")) {
+      return jsonRes({ session_id: "s1", product_version: 2, status: "ready", tree: null });
+    }
+    return jsonRes({});
+  };
+
+  try {
+    await useSessionStore.getState().loadSession("s1");
+
+    const failed = useSessionStore.getState();
+    assert.equal(failed.legacyMode, false, "200 非 JSON 绝不能被当成 v1 端点缺失而静默降级");
+    assert.notEqual(failed.error, null, "必须给出可见错误，不能让审计/Loop/简报入口静默消失");
+    assert.equal(typeof failed.error, "string");
+    assert.equal(failed.sessionLoading, false, "失败后必须退出加载态，重试按钮才可用");
+    assert.equal(failed.sessionView, null);
+    assert.equal(
+      requested.filter((href) => href.includes("/api/session/s1")).length,
+      0,
+      "非 JSON 错误不得回落到 legacy /api/session/:id",
+    );
+
+    // 页面「重试」：第二次读到合法 v2 JSON，错误必须被清除且视图恢复
+    await useSessionStore.getState().loadSession("s1");
+    const recovered = useSessionStore.getState();
+    assert.equal(recovered.error, null, "重试成功后必须清除上一次的读取错误");
+    assert.equal(recovered.v2Phase, "brainstorming");
+    assert.equal(recovered.sessionView?.phase, "brainstorming");
+    assert.equal(recovered.legacyMode, false);
+    assert.equal(recovered.sessionLoading, false);
+  } finally {
+    useSessionStore.getState().unsubscribe();
+    global.fetch = realFetch;
+  }
+});
+
 test.after(() => {
   if (realFetch) global.fetch = realFetch;
   else delete global.fetch;

@@ -274,12 +274,18 @@ test("answeredCount / isAuditFinished / canControlAudit", () => {
   assert.equal(view.isAuditFinished(audit), true);
   assert.equal(view.canControlAudit(audit), false);
 
-  for (const status of ["active", "opening", "created"]) {
-    const open = view.normalizeAudit({ id: `a_${status}`, status });
-    assert.equal(view.canControlAudit(open), true, `${status} 应可控制`);
-    assert.equal(view.isAuditFinished(open), false);
+  // PRD-08：结束审计只在 active 开放；created/opening 仍可取消（后端允许 →cancelled），
+  // 但「结束并生成报告」不可用，避免点击后得到「非法审计状态迁移」。
+  assert.equal(view.canControlAudit(view.normalizeAudit({ id: "a_active", status: "active" })), true);
+  assert.equal(view.canEndAudit(view.normalizeAudit({ id: "a_active", status: "active" })), true);
+  for (const status of ["opening", "created"]) {
+    const preparing = view.normalizeAudit({ id: `a_${status}`, status });
+    assert.equal(view.canControlAudit(preparing), true, `${status} 仍允许取消`);
+    assert.equal(view.canEndAudit(preparing), false, `${status} 不应允许结束`);
+    assert.equal(view.isAuditFinished(preparing), false);
   }
   assert.equal(view.canControlAudit(null), false);
+  assert.equal(view.canEndAudit(null), false);
 });
 
 // ---------------------------------------------------------------------------
@@ -609,4 +615,133 @@ test("resolveAuditEntryState：brainstorming 可开始；旧调用不传 v2Phase
 test("AUDIT_NOT_READY 错误码映射为「先完成澄清」文案", () => {
   assert.match(view.auditErrorText("AUDIT_NOT_READY"), /澄清/);
   assert.match(view.auditErrorText("AUDIT_NOT_READY"), /审计/);
+});
+
+// ---------------------------------------------------------------------------
+// UX-D3：会话快照未加载时不得放行「开始审计」
+// ---------------------------------------------------------------------------
+test("resolveAuditEntryState：sessionLoaded=false 时 canStart=false（会话状态未加载）", () => {
+  const base = {
+    auditId: null,
+    hasAudit: false,
+    auditError: null,
+    auditLoading: false,
+    sessionLoading: false,
+    legacyMode: false,
+    starting: false,
+    v2Phase: "brainstorming",
+  };
+  const unloaded = view.resolveAuditEntryState({ ...base, sessionLoaded: false });
+  assert.equal(unloaded.showStartPanel, true, "仍展示开始审计区块（含重新加载入口）");
+  assert.equal(unloaded.canStart, false, "会话状态未加载时按钮必须禁用");
+
+  // 旧调用不传 sessionLoaded 视为已加载，保持既有行为
+  assert.equal(view.resolveAuditEntryState({ ...base }).canStart, true);
+  assert.equal(view.resolveAuditEntryState({ ...base, sessionLoaded: true }).canStart, true);
+});
+
+// ---------------------------------------------------------------------------
+// PROD-07：进度分母恒 18 会误导（六维都有结论即收尾，目标 12 问）
+// ---------------------------------------------------------------------------
+test("auditProgressLabel：显示六维覆盖 k/6，并把 18 标成上限而非目标", () => {
+  const states = [
+    { key: "problem_validity", assessment: "supported" },
+    { key: "solution_effectiveness", assessment: "supported" },
+    { key: "technical_risk", assessment: "gap" },
+    { key: "business_loop", assessment: "gap" },
+    { key: "user_adoption", assessment: "not_applicable" },
+    { key: "execution_risk", assessment: "supported" },
+  ];
+  const label = view.auditProgressLabel(6, states);
+  assert.ok(label.includes("已回答 6 问"));
+  assert.ok(label.includes("六维覆盖 6/6"));
+  assert.ok(label.includes("上限 18 问"));
+  assert.ok(label.includes("即收尾"));
+});
+
+test("auditProgressLabel：未回答维度不计入覆盖，answered 非法值归零", () => {
+  const states = [
+    { key: "problem_validity", assessment: "supported" },
+    { key: "solution_effectiveness", assessment: "awaiting_answer" },
+    { key: "technical_risk", assessment: "not_discussed" },
+    { key: "business_loop", assessment: "needs_clarification" },
+  ];
+  const label = view.auditProgressLabel(2, states);
+  assert.ok(label.includes("已回答 2 问"));
+  assert.ok(label.includes("六维覆盖 1/6"));
+  assert.ok(view.auditProgressLabel(NaN, null).includes("已回答 0 问"));
+  assert.ok(view.auditProgressLabel(-1, undefined).includes("六维覆盖 0/6"));
+});
+
+// ---------------------------------------------------------------------------
+// DX-06 / DX-07：空态文案按阶段分支 + 错误分类去文案耦合
+// ---------------------------------------------------------------------------
+test("shouldResyncAuditAfterError 只按 error.code 判定是否需要重新同步（DX-07）", () => {
+  assert.equal(view.shouldResyncAuditAfterError(null), false);
+  assert.equal(view.shouldResyncAuditAfterError(undefined), false);
+  assert.equal(view.shouldResyncAuditAfterError("AUDIT_NOT_READY"), false);
+  assert.equal(view.shouldResyncAuditAfterError("VERSION_CONFLICT"), true);
+  assert.equal(view.shouldResyncAuditAfterError("AUDIT_VERSION_CONFLICT"), true);
+});
+
+test("resolveAuditEntryState：auditing 阶段缺审计记录时不再提示「先完成澄清」（DX-06）", () => {
+  const base = {
+    auditId: null,
+    hasAudit: false,
+    auditError: null,
+    auditLoading: false,
+    sessionLoading: false,
+    legacyMode: false,
+    starting: false,
+  };
+
+  const auditing = view.resolveAuditEntryState({ ...base, v2Phase: "auditing" });
+  assert.equal(auditing.showNotReady, true);
+  assert.match(auditing.notReadyText, /重新进入审计/);
+  assert.doesNotMatch(auditing.notReadyText, /澄清/);
+
+  // clarifying 保持原文案（审计入口确实要让路给澄清引导）
+  const clarifying = view.resolveAuditEntryState({ ...base, v2Phase: "clarifying" });
+  assert.match(clarifying.notReadyText, /澄清/);
+});
+
+// ---------------------------------------------------------------------------
+// 12. 失败审计：end_reason 不再折叠成 completed（DX-R3-01）
+// ---------------------------------------------------------------------------
+test("normalizeAudit 保留失败 end_reason 原文，不折叠成正常结束", () => {
+  const audit = view.normalizeAudit({
+    id: "aud_failed",
+    status: "failed",
+    end_reason: "MODEL_OUTPUT_INVALID",
+    questions: [],
+  });
+  assert.equal(audit.endReason, null, "未知失败码不能被当成 EndReason");
+  assert.equal(audit.endReasonRaw, "MODEL_OUTPUT_INVALID");
+  assert.notEqual(view.endReasonLabel(audit.endReasonRaw), "正常结束");
+  assert.match(view.endReasonLabel(audit.endReasonRaw), /MODEL_OUTPUT_INVALID/);
+});
+
+test("resolveAuditFailureRecoveryState 失败态给出原因与恢复指引", () => {
+  const failed = view.resolveAuditFailureRecoveryState({
+    status: "failed",
+    endReasonRaw: "MODEL_OUTPUT_INVALID",
+    hasFailedRun: true,
+    runErrorText: "开场问题未能通过协议校验，审计未启动",
+  });
+  assert.equal(failed.isFailed, true);
+  assert.equal(failed.showRecovery, true);
+  assert.match(failed.reasonText, /协议校验/);
+  assert.match(failed.hintText, /重试/);
+
+  // 没有 Run 文案时回退到原始 end_reason 标签
+  const rawOnly = view.resolveAuditFailureRecoveryState({
+    status: "failed",
+    endReasonRaw: "MODEL_OUTPUT_INVALID",
+    hasFailedRun: false,
+  });
+  assert.match(rawOnly.reasonText, /MODEL_OUTPUT_INVALID/);
+
+  const active = view.resolveAuditFailureRecoveryState({ status: "active", hasFailedRun: false });
+  assert.equal(active.isFailed, false);
+  assert.equal(active.showRecovery, false);
 });

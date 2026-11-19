@@ -55,6 +55,34 @@ ACTION_PHASES: dict[Action, frozenset[SessionPhase]] = {
 #: 控制意图不受 SESSION_BUSY 约束（PRD FR-07）
 CONTROL_ALLOWED = frozenset({Action.end_audit, Action.cancel_audit})
 
+#: 面向用户的中文标签：错误文案不再暴露英文动作名 / 阶段值（PROD-03）
+PHASE_LABELS: dict[SessionPhase, str] = {
+    SessionPhase.clarifying: "澄清",
+    SessionPhase.brainstorming: "共创",
+    SessionPhase.auditing: "审计中",
+    SessionPhase.audit_completed: "审计完成",
+}
+
+ACTION_LABELS: dict[Action, str] = {
+    Action.clarify: "澄清提问",
+    Action.confirm_brief: "确认简报",
+    Action.skip_clarification: "跳过澄清",
+    Action.revise_brief: "修订简报",
+    Action.add_evidence: "补充证据",
+    Action.brainstorm: "继续脑暴",
+    Action.synthesis: "主持人归并",
+    Action.confirm_decision: "确认决策",
+    Action.start_audit: "开始审计",
+    Action.answer_audit: "回答审计",
+    Action.correct_audit_assessment: "修正审计评估",
+    Action.rebuild_legacy: "重建旧版会话",
+    Action.end_audit: "结束审计",
+    Action.cancel_audit: "取消审计",
+    Action.start_loop: "开启闭环",
+    Action.loop_decision: "闭环决策",
+    Action.loop_round: "闭环轮次",
+}
+
 #: 允许改变的阶段（用于 session_version 校验、活动 Run 判定之外的语义变化）
 ACTION_ADVANCES_PHASE = frozenset(
     {Action.confirm_brief, Action.skip_clarification, Action.start_audit, Action.end_audit, Action.cancel_audit}
@@ -74,17 +102,31 @@ def phase_error_code(action: Action, phase: SessionPhase) -> str:
     return ErrorCode.INVALID_REQUEST
 
 
+def _phase_label(phase: SessionPhase) -> str:
+    return PHASE_LABELS.get(phase, phase.value)
+
+
+def _action_label(action: Action) -> str:
+    return ACTION_LABELS.get(action, str(action))
+
+
 def validate_action_for_phase(action: Action, phase: SessionPhase) -> None:
     """校验动作是否允许在当前阶段执行，不允许则抛 AppError。"""
     allowed = ACTION_PHASES.get(action)
     if allowed is None:
-        raise AppError(ErrorCode.UNKNOWN_ACTION, f"未知动作：{action}")
+        raise AppError(ErrorCode.UNKNOWN_ACTION, f"未知动作：「{_action_label(action)}」")
     if phase in allowed:
         return
     code = phase_error_code(action, phase)
+    allowed_labels = "、".join(
+        f"「{_phase_label(candidate)}」"
+        for candidate in SessionPhase
+        if candidate in allowed
+    )
     raise AppError(
         code,
-        f"当前会话阶段 {phase.value} 不允许执行 {action.value}",
+        f"当前会话阶段「{_phase_label(phase)}」不允许执行「{_action_label(action)}」"
+        + (f"（允许阶段：{allowed_labels}）" if allowed_labels else ""),
         details={"phase": phase.value, "action": str(action), "allowed_phases": sorted(p.value for p in allowed)},
     )
 
@@ -280,10 +322,12 @@ def phase_after_brainstorm(current: SessionPhase) -> SessionPhase:
 
 
 __all__ = [
+    "ACTION_LABELS",
     "ACTION_PHASES",
     "AUDIT_TRANSITIONS",
     "CONTROL_ALLOWED",
     "CONTROL_TRANSITIONS",
+    "PHASE_LABELS",
     "RUN_TRANSITIONS",
     "STEP_TRANSITIONS",
     "audit_accepts_answers",

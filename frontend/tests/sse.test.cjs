@@ -198,6 +198,29 @@ test("openRunEvents 在 EOF 且无终结事件时关闭为 eof", async () => {
   assert.deepEqual(result.closes, ["eof"]);
 });
 
+test("openRunEvents 空闲超时（reader.read 永不返回）关闭为 idle（FE-04）", async () => {
+  // 只发一帧心跳注释，之后流保持打开且不再有数据：模拟 TCP 半开
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(": keep-alive\n\n"));
+    },
+  });
+  const result = await collect("/api/v2/runs/r1/events", {
+    idleTimeoutMs: 60,
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      body,
+      json: async () => ({}),
+      text: async () => "",
+    }),
+  });
+  assert.deepEqual(result.closes, ["idle"]);
+  assert.equal(result.events.length, 0);
+  // 空闲超时是可控重连信号，不应计入错误横幅
+  assert.equal(result.errors.length, 0);
+});
+
 test("openRunEvents 非 2xx 走 onError 并关闭 eof", async () => {
   const result = await collect("/api/v2/runs/r1/events", {
     fetchImpl: async () => ({

@@ -19,6 +19,9 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from domain import state_machine as SM
 from domain.contracts import (
     EventType,
+    LoopRoundStatus,
+    LoopStatus,
+    LoopUpdatedPayload,
     RunStatus,
     StepStatus,
     canonical_json,
@@ -388,8 +391,71 @@ def requeue_interrupted(db, *, limit: int = 10) -> list[str]:
     return requeued
 
 
+def _settle_expired_run(db, *, run: RunRow, now_iso: str) -> None:
+    """排队超时终态的收口：释放会话占位 + 终结所在闭环轮次。
+
+    ``expire_queued_runs`` 由 Worker 的维护 tick 直接调用，不经过
+    ``command_service._commit_outcome``，所以必须在这里补齐「Run 终结」的副作用：
+    否则 ``session.active_run_id`` 仍指向失败 Run、``loop.status`` 永久停在
+    running，用户既不能决策也不能开新闭环（AUD-01 同类死锁）。
+    """
+
+    from repositories import loop_repo, session_repo
+
+    changed = False
+    session = session_repo.get_session(db, run.session_id, include_deleted=True)
+    if session is not None and session.active_run_id == run.id:
+        session_repo.touch_session(db, session, now_iso=now_iso, active_run_id=None)
+        changed = True
+
+    loop_id = getattr(run, "loop_id", None)
+    if loop_id:
+        loop = loop_repo.get_loop(db, loop_id)
+        if (
+            loop is not None
+            and LoopStatus(loop.status) is LoopStatus.running
+            and loop.latest_run_id == run.id
+        ):
+            ordinal = int(loop.current_round or 1)
+            round_row = loop_repo.get_round(db, loop_id=loop.id, ordinal=ordinal)
+            if round_row is not None and (
+                LoopRoundStatus(round_row.status) is LoopRoundStatus.running
+            ):
+                loop_repo.update_round(
+                    db, round_row, status=LoopRoundStatus.failed, finished_at=now_iso
+                )
+            loop = loop_repo.close_loop(
+                db,
+                loop,
+                status=LoopStatus.failed,
+                note="排队超时，本轮未能启动",
+                now_iso=now_iso,
+            )
+            append_event(
+                db,
+                session_id=run.session_id,
+                run_id=run.id,
+                type=EventType.loop_updated,
+                payload=LoopUpdatedPayload(
+                    loop_id=loop.id,
+                    status=LoopStatus(loop.status),
+                    current_round=int(loop.current_round or 1),
+                    loop_version=int(loop.loop_version or 1),
+                ).model_dump(mode="json"),
+                now_iso=now_iso,
+            )
+            changed = True
+
+    if changed and session is not None:
+        session_repo.bump_session_version(db, session)
+
+
 def expire_queued_runs(db, *, now_epoch: int, now_iso: str | None = None) -> list[str]:
-    """排队超时（默认 10 分钟）→ failed(QUEUE_WAIT_EXCEEDED)（FR-03）。"""
+    """排队超时（默认 10 分钟）→ failed(QUEUE_WAIT_EXCEEDED)（FR-03）。
+
+    失败是终结态：同一事务内同步收口（释放 ``session.active_run_id``、把闭环
+    轮次与闭环置 failed），否则会留下「Run 已失败但闭环永远 running」的死锁。
+    """
 
     now_iso = now_iso or utc_now_iso()
     rows = list(
@@ -420,6 +486,7 @@ def expire_queued_runs(db, *, now_epoch: int, now_iso: str | None = None) -> lis
             },
             now_iso=now_iso,
         )
+        _settle_expired_run(db, run=run, now_iso=now_iso)
         expired.append(run.id)
     return expired
 

@@ -935,6 +935,207 @@ class LoopWorkflowSuccessTests(LoopWorkflowTestCase):
         )
         self.assertNotEqual(receipt.run_id, self.run_id)
 
+    async def test_second_round_appends_prior_state_and_keeps_confirmed_decision(
+        self,
+    ) -> None:
+        """回归 PRD-01（P0）：第二轮必须「追加」产品状态，不能整体覆盖上一轮产物。
+
+        ``docs/loop-studio-interfaces.md:97`` 契约要求 claims/options/decisions/
+        unresolved_issues 追加；若 ``_build_product_state`` 用本轮局部 list 整体
+        覆盖，用户在第 1 轮确认的决策与上一轮 claims/options/experiments 会在
+        交付前消失，并留下 experiment → claim 的悬空引用。
+        """
+
+        self._prepare_round(max_rounds=3)
+        first = await loop_workflow.run_loop_round(
+            self.make_ctx(llm=FakeLLM(_script(scorecard=_scorecard_payload(scores=_LOW_SCORES))))
+        )
+        self.assertEqual(first.status, RunStatus.succeeded)
+        self.commit_outcome(first)
+
+        loop = self._loop_row()
+        self.assertEqual(loop.status, LoopStatus.awaiting_decision.value)
+        self.assertEqual(int(loop.current_round), 1)
+
+        # 预置：第 1 轮产物 + 用户已确认决策 + 引用既有 claim 的 experiment/issue。
+        # 先复制出「本轮不可能重现」的遗留 claim/option，才能区分「追加保留」与
+        # 「整体覆盖」；与本轮同文本的新条目应走去重（_append_new），不产生重复。
+        with session_scope() as db:
+            session = session_repo.get_session(db, self.session_id)
+            state = session_repo.get_product_state(db, self.session_id)
+            prior_claim = state.claims[0].model_copy(
+                update={
+                    "id": C.new_id(),
+                    "text": "遗留假设：离线场景下也需要预算协同",
+                }
+            )
+            prior_option = state.options[0].model_copy(
+                update={
+                    "id": C.new_id(),
+                    "title": "遗留方案：离线优先",
+                    "summary": "断网时先本地暂存，联网后同步",
+                    "claim_ids": [prior_claim.id],
+                }
+            )
+            prior_decision = state.decisions[0].model_copy(
+                update={
+                    "id": C.new_id(),
+                    "option_id": prior_option.id,
+                    "rationale": "第 0 轮：用户已确认离线优先方案",
+                    "status": C.DecisionStatus.confirmed,
+                    "confirmed_by": OWNER,
+                    "confirmed_at": NOW_ISO,
+                }
+            )
+            prior_issue = C.UnresolvedIssue(
+                id=C.new_id(),
+                kind="gap",
+                text="缺少留存数据",
+                status=C.IssueStatus.open,
+                dimension="loop",
+            )
+            experiment = C.ExperimentItem(
+                id=C.new_id(),
+                hypothesis_claim_id=prior_claim.id,
+                method="A/B 测试",
+            )
+            preset = state.model_copy(
+                update={
+                    "version": int(state.version) + 1,
+                    "claims": [*state.claims, prior_claim],
+                    "options": [*state.options, prior_option],
+                    "decisions": [prior_decision],
+                    "experiments": [experiment],
+                    "unresolved_issues": [prior_issue],
+                }
+            )
+            session_repo.save_product_state(db, session, preset, now_iso=NOW_ISO)
+
+        # 用户选择「继续迭代」→ 第 2 轮 Run 入队，由测试 Worker 领取
+        receipt = self._submit(
+            Action.loop_decision,
+            {
+                "loop_id": self.loop_id,
+                "expected_loop_version": int(loop.loop_version),
+                "decision": "iterate",
+                "note": "第二轮补齐阻塞项",
+            },
+        )
+        self.assertNotEqual(receipt.run_id, self.run_id)
+        self.run_id = str(receipt.run_id)
+        claimed = run_repo.claim_next_run(
+            self.db, worker_id=WORKER, now_epoch=int(time.time()), lease_seconds=60
+        )
+        self.assertIsNotNone(claimed)
+        self.assertEqual(str(claimed.id), self.run_id)
+        self.db.commit()
+
+        # 第 2 轮给出与本轮不同的 must 功能，才能验证「追加」而非仅「去重」
+        round2_spec = _spec_payload()
+        for feature in round2_spec["features"]:
+            feature["title"] = f"{feature['title']}（第 2 轮细化）"
+            feature["description"] = f"{feature['description']}（第 2 轮细化）"
+        round2_script = _script()
+        round2_script[PURPOSE_IDEATE] = [round2_spec]
+        ctx2 = self.make_ctx(llm=FakeLLM(round2_script))
+        self.assertEqual(int(ctx2.run.base_product_version), int(preset.version))
+        second = await loop_workflow.run_loop_round(ctx2)
+        self.assertEqual(second.status, RunStatus.succeeded)
+        merged = second.product_state
+        self.assertIsNotNone(merged)
+        base = int(preset.version)
+        self.assertEqual(merged.version, base + 1)
+
+        # 1) 旧条目一条都不能丢（P0 核心断言）
+        claim_ids = set(merged.claim_ids())
+        self.assertIn(prior_claim.id, claim_ids)
+        self.assertIn(prior_option.id, merged.option_ids())
+        self.assertIn(prior_decision.id, merged.decision_ids())
+        self.assertIn(prior_issue.id, {issue.id for issue in merged.unresolved_issues})
+        # 2) 本轮 must 功能按数量追加（2 个 feature → claims/options 各 +2），
+        #    且与本轮文本相同的历史条目去重、不产生重复 id
+        self.assertEqual(len(merged.claims), len(preset.claims) + 2)
+        self.assertEqual(len(merged.options), len(preset.options) + 2)
+        self.assertEqual(len(claim_ids), len(merged.claims))
+        self.assertEqual(
+            len({(str(claim.kind), claim.text) for claim in merged.claims}),
+            len(merged.claims),
+        )
+        # 3) 已确认决策保持 confirmed；本轮只追加一条 proposed 建议
+        kept = next(item for item in merged.decisions if item.id == prior_decision.id)
+        self.assertEqual(kept.status, C.DecisionStatus.confirmed)
+        self.assertEqual(kept.confirmed_by, OWNER)
+        new_decisions = [
+            item for item in merged.decisions if item.id != prior_decision.id
+        ]
+        self.assertEqual(len(new_decisions), 1)
+        self.assertEqual(new_decisions[0].status, C.DecisionStatus.proposed)
+        # 4) experiment 引用的 claim 仍在：整体覆盖会删旧 claim 留下悬空引用
+        self.assertEqual(len(merged.experiments), 1)
+        self.assertEqual(
+            [
+                item.id
+                for item in merged.experiments
+                if item.hypothesis_claim_id
+                and item.hypothesis_claim_id not in claim_ids
+            ],
+            [],
+        )
+
+        # 提交后落库同样是「旧 + 新」，而不是只剩本轮
+        self.commit_outcome(second)
+        with session_scope() as db:
+            persisted = session_repo.get_product_state(db, self.session_id)
+        self.assertEqual(persisted.version, base + 1)
+        self.assertEqual(len(persisted.claims), len(preset.claims) + 2)
+        self.assertIn(prior_claim.id, persisted.claim_ids())
+        self.assertIn(prior_decision.id, persisted.decision_ids())
+
+    async def test_ship_confirms_loop_decision_and_bumps_version(self) -> None:
+        """回归 PRD-04：交付即签字，闭环生成的 proposed 决策必须收口为 confirmed。
+
+        修复前 ship 只关闭 loop、不动产品状态：画布在「已交付」后仍显示
+        「确认决策」，用户还能改写决策，交付动作与产品状态自相矛盾。
+        """
+
+        self._prepare_round(max_rounds=3)
+        outcome = await loop_workflow.run_loop_round(
+            self.make_ctx(llm=FakeLLM(_script()))
+        )
+        self.assertEqual(outcome.status, RunStatus.succeeded)
+        self.commit_outcome(outcome)
+
+        with session_scope() as db:
+            state = session_repo.get_product_state(db, self.session_id)
+            decision = state.decisions[0]
+            self.assertEqual(decision.status, C.DecisionStatus.proposed)
+            self.assertEqual(decision.source_run_id, self.run_id)
+            version = int(state.version)
+
+        loop = self._loop_row()
+        self.assertEqual(loop.status, LoopStatus.awaiting_decision.value)
+        receipt = self._submit(
+            Action.loop_decision,
+            {
+                "loop_id": self.loop_id,
+                "expected_loop_version": int(loop.loop_version),
+                "decision": "ship",
+                "note": "交付主流程",
+            },
+        )
+        self.assertEqual(receipt.status, RunStatus.succeeded.value)
+
+        with session_scope() as db:
+            shipped = session_repo.get_product_state(db, self.session_id)
+            shipped_loop = loop_repo.get_loop(db, self.loop_id)
+        self.assertEqual(shipped.version, version + 1)
+        confirmed = next(item for item in shipped.decisions if item.id == decision.id)
+        self.assertEqual(confirmed.status, C.DecisionStatus.confirmed)
+        self.assertFalse(confirmed.needs_review)
+        self.assertEqual(confirmed.confirmed_by, OWNER)
+        self.assertEqual(shipped_loop.status, LoopStatus.shipped.value)
+        self.assertIsNone(self._session_row().active_run_id)
+
 
 class LoopWorkflowFailureTests(LoopWorkflowTestCase):
     async def test_budget_shortfall_fails_without_product_state(self) -> None:
@@ -997,6 +1198,59 @@ class LoopWorkflowFailureTests(LoopWorkflowTestCase):
         self.assertEqual(ideate_step[0].status, StepStatus.failed.value)
         self.assertEqual(self._loop_row().status, LoopStatus.failed.value)
         self.assertEqual(self._round_row().status, LoopRoundStatus.failed.value)
+
+    async def test_app_error_stage_failure_is_recorded(self) -> None:
+        """PROD-02：阶段抛出 AppError（超时/预算/上下文）也要落失败阶段行。
+
+        否则前端「阶段时间线」看不到任何失败阶段，用户无法定位失败原因。
+        """
+
+        self._prepare_round()
+        failure = AppError(ErrorCode.RUN_DEADLINE_EXCEEDED, "模型调用超时，阶段未完成")
+        llm = FakeLLM({PURPOSE_IDEATE: [failure]})
+        ctx = self.make_ctx(llm=llm)
+        outcome = await loop_workflow.run_loop_round(ctx)
+
+        self.assertEqual(outcome.status, RunStatus.failed)
+        self.assertEqual(outcome.error_code, ErrorCode.RUN_DEADLINE_EXCEEDED)
+        self.assertIn("模型调用超时", outcome.error_message)
+        self.assertIsNone(outcome.product_state)
+        # 非修复性错误不重试，直接失败
+        self.assertEqual(llm.purposes(), [PURPOSE_IDEATE])
+
+        self.commit_outcome(outcome)
+        stage_rows = self._stage_rows()
+        self.assertEqual(len(stage_rows), 1)
+        self.assertEqual(stage_rows[0].stage, LoopStage.ideate.value)
+        self.assertEqual(stage_rows[0].status, LoopStageStatus.failed.value)
+        self.assertEqual(stage_rows[0].error_code, ErrorCode.RUN_DEADLINE_EXCEEDED)
+        self.assertIn("阶段执行失败", stage_rows[0].summary)
+        ideate_step = [
+            step
+            for step in self._step_rows()
+            if step.logical_key == loop_workflow.STAGE_KEYS[LoopStage.ideate]
+        ]
+        self.assertEqual(len(ideate_step), 1)
+        self.assertEqual(ideate_step[0].status, StepStatus.failed.value)
+        self.assertEqual(ideate_step[0].error_code, ErrorCode.RUN_DEADLINE_EXCEEDED)
+        self.assertEqual(self._run_row().status, RunStatus.failed.value)
+        self.assertEqual(self._run_row().error_code, ErrorCode.RUN_DEADLINE_EXCEEDED)
+        self.assertEqual(self._loop_row().status, LoopStatus.failed.value)
+        self.assertEqual(self._round_row().status, LoopRoundStatus.failed.value)
+        self.assertEqual(self._artifact_rows(), [])
+
+        # 前端拿到的快照里必须能看到失败阶段与错误码（PROD-02 的可定位性）
+        with session_scope() as db:
+            loop_row = loop_repo.get_loop(db, self.loop_id)
+            snapshot = loop_repo.loop_to_snapshot(db, loop_row)
+        self.assertEqual(snapshot.status, LoopStatus.failed)
+        round_view = snapshot.rounds[0]
+        self.assertEqual(round_view.status, LoopRoundStatus.failed)
+        self.assertEqual(len(round_view.stages), 1)
+        self.assertEqual(round_view.stages[0].stage, LoopStage.ideate)
+        self.assertEqual(round_view.stages[0].status, LoopStageStatus.failed)
+        self.assertEqual(round_view.stages[0].error_code, ErrorCode.RUN_DEADLINE_EXCEEDED)
+        self.assertIn("阶段执行失败", round_view.stages[0].summary)
 
     async def test_missing_loop_parameters_is_invalid_request(self) -> None:
         self._create_plain_run()

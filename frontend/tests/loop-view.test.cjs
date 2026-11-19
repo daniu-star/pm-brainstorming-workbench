@@ -228,6 +228,48 @@ test("decisionAvailability：轮次未耗尽 iterate 可点，耗尽后只能交
   assert.equal(view.normalizeDecisionNote(null), "");
 });
 
+// PROD-03：审计进行中 confirm/iterate/ship/stop 后端必 INVALID_REQUEST，前端需提前禁用
+test("decisionAvailability：phase=auditing 时三个决策键全部禁用并给出审计原因", () => {
+  const auditing = view.decisionAvailability(
+    snapshot({ status: "awaiting_decision", current_round: 1, max_rounds: 3 }),
+    "auditing"
+  );
+  assert.equal(auditing.awaiting, true);
+  assert.equal(auditing.iterate.enabled, false);
+  assert.equal(auditing.ship.enabled, false);
+  assert.equal(auditing.stop.enabled, false);
+  assert.ok(auditing.stop.reason.includes("审计"));
+  assert.ok(auditing.iterate.reason.includes("审计"));
+  assert.equal(auditing.iterate.reason, auditing.ship.reason);
+});
+
+test("decisionAvailability：phase=brainstorming / audit_completed 保持可决策", () => {
+  for (const phase of ["brainstorming", "audit_completed"]) {
+    const availability = view.decisionAvailability(
+      snapshot({ status: "awaiting_decision", current_round: 1, max_rounds: 3 }),
+      phase
+    );
+    assert.equal(availability.iterate.enabled, true, phase);
+    assert.equal(availability.ship.enabled, true, phase);
+    assert.equal(availability.stop.enabled, true, phase);
+  }
+});
+
+test("decisionAvailability：其它阶段（clarifying）也禁用，避免浏览器直接跳 URL 绕过审计", () => {
+  const clarifying = view.decisionAvailability(
+    snapshot({ status: "awaiting_decision", current_round: 1, max_rounds: 3 }),
+    "clarifying"
+  );
+  assert.equal(clarifying.iterate.enabled, false);
+  assert.equal(clarifying.iterate.reason, "当前阶段不能决策，请回到脑暴或结束审计");
+});
+
+test("loopErrorText：INVALID_REQUEST 阶段拒绝给出中文动作提示", () => {
+  const text = view.loopErrorText("INVALID_REQUEST");
+  assert.ok(text.includes("当前阶段不能执行该决策"));
+  assert.ok(text.includes("审计"));
+});
+
 // --------------------------------------------------------------------------- //
 // 阻塞项 / 错误文案
 // --------------------------------------------------------------------------- //
@@ -472,6 +514,36 @@ test("resolveLoopEntryState 覆盖加载/门槛/启动表单/闭环主体四种�
   assert.ok(notFound.loadErrorText.includes("重新启动"));
 });
 
+test("resolveLoopEntryState：会话读完仍无快照 → 读取失败态而不是「阶段不满足」（DX-02）", () => {
+  // 会话读取失败时 sessionView=null、phase=null：旧逻辑会误判成阶段不满足，
+  // 用户看到「需要先完成头脑风暴或审计」且没有重试入口。
+  const loadFailed = view.resolveLoopEntryState({
+    sessionLoading: false,
+    sessionLoaded: false,
+    sessionPhase: null,
+    legacyMode: false,
+    loop: null,
+    loopLoading: false,
+    loopError: null,
+  });
+  assert.equal(loadFailed.showLoadError, true);
+  assert.equal(loadFailed.showGate, false);
+  assert.equal(loadFailed.showStartPanel, false);
+  assert.match(loadFailed.loadErrorText, /重试/);
+
+  // 缺省 sessionLoaded（旧调用）语义不变：仍按阶段判定
+  const legacyCaller = view.resolveLoopEntryState({
+    sessionLoading: false,
+    sessionPhase: "clarifying",
+    legacyMode: false,
+    loop: null,
+    loopLoading: false,
+    loopError: null,
+  });
+  assert.equal(legacyCaller.showGate, true);
+  assert.equal(legacyCaller.showLoadError, false);
+});
+
 test("shouldShowLoopEntry 只在 brainstorming / audit_completed 且非 legacy 时显示", () => {
   assert.equal(view.shouldShowLoopEntry({ v2Phase: "brainstorming", legacyMode: false }), true);
   assert.equal(view.shouldShowLoopEntry({ v2Phase: "audit_completed", legacyMode: false }), true);
@@ -514,4 +586,49 @@ test("formatTimestamp / formatBytes / testReportStats 有稳定兜底", () => {
     view.testReportStats({ total: 4, passed: 3, failed: 1, skipped: 0 }).passRate,
     75
   );
+});
+
+// --------------------------------------------------------------------------- //
+// DX-R3-03 / PRD-07：读取失败分支与失败轮次重试入口
+// --------------------------------------------------------------------------- //
+
+test("resolveLoopEntryState 用 sessionLoadFailed 命中读取失败分支而不是阶段门", () => {
+  const base = {
+    sessionLoading: false,
+    sessionLoaded: false,
+    sessionLoadFailed: true,
+    sessionPhase: "brainstorming",
+    legacyMode: false,
+    loop: null,
+    loopLoading: false,
+    loopError: null,
+  };
+  const failed = view.resolveLoopEntryState(base);
+  assert.equal(failed.showLoadError, true);
+  assert.equal(failed.showGate, false);
+  assert.match(failed.loadErrorText, /读取失败/);
+
+  // 会话还没读完（loading）依旧不能闪失败
+  const stillLoading = view.resolveLoopEntryState({ ...base, sessionLoading: true, sessionLoadFailed: false });
+  assert.equal(stillLoading.showLoading, true);
+  assert.equal(stillLoading.showLoadError, false);
+
+  // 读到会话但阶段不满足 → 阶段门（并可刷新重试）
+  const gate = view.resolveLoopEntryState({
+    ...base,
+    sessionLoaded: true,
+    sessionLoadFailed: false,
+    sessionPhase: "clarifying",
+  });
+  assert.equal(gate.showGate, true);
+  assert.equal(gate.showLoadError, false);
+  assert.match(gate.gateText, /头脑风暴|审计/);
+});
+
+test("canRetryLoopRound 只在 failed 且有 latest_run_id 时为真", () => {
+  assert.equal(view.canRetryLoopRound({ loop_id: "l1", status: "failed", latest_run_id: "run_1" }), true);
+  assert.equal(view.canRetryLoopRound({ loop_id: "l1", status: "failed", latest_run_id: null }), false);
+  assert.equal(view.canRetryLoopRound({ loop_id: "l1", status: "shipped", latest_run_id: "run_1" }), false);
+  assert.equal(view.canRetryLoopRound({ loop_id: "l1", status: "running", latest_run_id: "run_1" }), false);
+  assert.equal(view.canRetryLoopRound(null), false);
 });

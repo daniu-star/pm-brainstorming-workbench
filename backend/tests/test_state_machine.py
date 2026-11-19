@@ -52,6 +52,21 @@ class ActionPhaseTests(unittest.TestCase):
             SM.validate_action_for_phase(Action.start_audit, SessionPhase.auditing)
         self.assertEqual(ctx.exception.code, ErrorCode.AUDIT_ACTIVE)
 
+    def test_rejection_message_uses_chinese_labels(self):
+        """PROD-03：用户可见文案不夹英文动作名/阶段值，机器值仍留在 details。"""
+        with self.assertRaises(AppError) as ctx:
+            SM.validate_action_for_phase(Action.confirm_brief, SessionPhase.brainstorming)
+        message = ctx.exception.message
+        self.assertEqual(ctx.exception.code, ErrorCode.INVALID_REQUEST)
+        self.assertIn("共创", message)
+        self.assertIn("确认简报", message)
+        self.assertIn("澄清", message)
+        self.assertNotIn("confirm_brief", message)
+        self.assertNotIn("brainstorming", message)
+        self.assertNotIn("clarifying", message)
+        self.assertEqual(ctx.exception.details["action"], "confirm_brief")
+        self.assertEqual(ctx.exception.details["phase"], "brainstorming")
+
     def test_add_evidence_allowed_in_every_phase(self):
         for phase in SessionPhase:
             SM.validate_action_for_phase(Action.add_evidence, phase)

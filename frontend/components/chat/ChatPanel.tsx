@@ -38,9 +38,10 @@ export function ChatPanel() {
 
   const retrySend = () => {
     if (!lastFailedSend || isStreaming) return;
-    const { content, targetRole } = lastFailedSend;
+    const { content, targetRole, requestId } = lastFailedSend;
     clearLastFailedSend();
-    sendMessage(content, targetRole);
+    // 复用首次的 request_id：同一 Idempotency-Key 让后端把重试识别为同一条命令（FE-03）
+    sendMessage(content, targetRole, requestId ? { requestId } : undefined);
   };
 
   // 澄清结束进入脑暴后，尚无 brainstorm 产物时给一个显式的「开始讨论」入口，

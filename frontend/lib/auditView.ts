@@ -180,6 +180,16 @@ function asKnown<T extends string>(values: readonly T[], value: unknown, fallbac
     : fallback;
 }
 
+/**
+ * 与 asKnown 相同，但未知值返回 null 而不是折叠成某个「正常」值。
+ * 用于 end_reason：失败码（如 MODEL_OUTPUT_INVALID）绝不能被显示成 completed。
+ */
+function asKnownOrNull<T extends string>(values: readonly T[], value: unknown): T | null {
+  return typeof value === "string" && (values as readonly string[]).includes(value)
+    ? (value as T)
+    : null;
+}
+
 export interface NormalizedDimensionState {
   key: string;
   label: string;
@@ -210,6 +220,8 @@ export interface NormalizedQuestion {
 export interface NormalizedReport {
   questionCount: number;
   endReason: EndReason;
+  /** 原始 end_reason（可能是后端错误码）；失败码不能折叠成 completed */
+  endReasonRaw: string | null;
   endReasonLabel: string;
   dimensionStates: NormalizedDimensionState[];
   supportedPoints: string[];
@@ -232,7 +244,10 @@ export interface NormalizedAudit {
   auditVersion: number;
   questionCount: number;
   activeQuestionId: string | null;
+  /** 已识别的结束原因；未知/失败码为 null（原始值见 endReasonRaw） */
   endReason: EndReason | null;
+  /** 后端原始 end_reason：失败码（如 MODEL_OUTPUT_INVALID）必须保留可展示 */
+  endReasonRaw: string | null;
   closeRequested: boolean;
   /** 上一问处理失败、后端要求继续（AuditSnapshot.pending_continuation） */
   pendingContinuation: boolean;
@@ -303,12 +318,15 @@ export function normalizeReport(raw: unknown): NormalizedReport | null {
   if (limitations.trim().length === 0) missingFields.push("局限性说明");
   if (dimensionStates.length === 0) missingFields.push("维度评估");
 
-  const endReason = asKnown(END_REASONS, raw.end_reason, "completed");
+  const rawEndReason = asNullableString(raw.end_reason);
+  const endReason = asKnown(END_REASONS, rawEndReason, "completed");
 
   return {
     questionCount: asNumber(raw.question_count, 0),
     endReason,
-    endReasonLabel: endReasonLabel(endReason),
+    endReasonRaw: rawEndReason,
+    // 未知值（失败码）原样展示，不折叠成「正常结束」
+    endReasonLabel: endReasonLabel(rawEndReason ?? endReason),
     dimensionStates,
     supportedPoints,
     unresolvedGaps,
@@ -343,6 +361,8 @@ export function normalizeAudit(raw: unknown): NormalizedAudit | null {
     ? raw.dimension_states.map(normalizeDimensionState)
     : [];
 
+  const rawEndReason = asNullableString(raw.end_reason);
+
   return {
     id,
     sessionId: asString(raw.session_id),
@@ -352,7 +372,8 @@ export function normalizeAudit(raw: unknown): NormalizedAudit | null {
     auditVersion: asNumber(raw.audit_version, 1),
     questionCount: asNumber(raw.question_count, 0),
     activeQuestionId: asNullableString(raw.active_question_id),
-    endReason: typeof raw.end_reason === "string" ? asKnown(END_REASONS, raw.end_reason, "completed") : null,
+    endReason: rawEndReason ? asKnownOrNull(END_REASONS, rawEndReason) : null,
+    endReasonRaw: rawEndReason,
     closeRequested: asBoolean(raw.close_requested),
     pendingContinuation: asBoolean(raw.pending_continuation),
     dimensionStates,
@@ -386,6 +407,24 @@ export function pickCurrentQuestion(audit: NormalizedAudit | null): NormalizedQu
 export function answeredCount(audit: NormalizedAudit | null): number {
   if (!audit) return 0;
   return audit.questions.filter((item) => item.answerMessageId !== null).length;
+}
+
+/**
+ * 页头进度文案（PROD-07）。
+ *
+ * 18 只是硬上限：六维都有结论（或达到 12 问目标）就会提前收尾
+ * （backend/domain/constants.py AUDIT_QUESTION_TARGET / AUDIT_QUESTION_HARD_LIMIT，
+ * backend/workflows/audit.py should_close）。只写「N / 18」会让用户以为必须走满 18 问。
+ */
+export function auditProgressLabel(
+  answered: number,
+  dimensionStates: readonly NormalizedDimensionState[] | null | undefined
+): string {
+  const answeredSafe = Number.isFinite(answered) && answered > 0 ? Math.floor(answered) : 0;
+  const covered = (dimensionStates ?? []).filter(
+    (state) => state.assessment === "supported" || state.assessment === "gap" || state.assessment === "not_applicable"
+  ).length;
+  return `已回答 ${answeredSafe} 问 · 六维覆盖 ${covered}/${AUDIT_DIMENSIONS.length} · 上限 ${AUDIT_QUESTION_HARD_LIMIT} 问（维度都有结论即收尾）`;
 }
 
 /** 只有 active 且有当前问题时才允许提交回答 */
@@ -468,6 +507,55 @@ export function resolveClosingRetryTarget(
   lastFailedRunId: string | null | undefined,
 ): "retry_failed_run" | "refresh_snapshot" {
   return lastFailedRunId ? "retry_failed_run" : "refresh_snapshot";
+}
+
+// --------------------------------------------------------------------------- //
+// failed 审计的失败原因与恢复入口（DX-R3-01）
+// --------------------------------------------------------------------------- //
+
+export interface AuditFailureRecoveryInput {
+  status: AuditStatus | null | undefined;
+  /** 后端原始 end_reason（可能是错误码） */
+  endReasonRaw?: string | null;
+  /** 是否有可重试的失败 Run（store.lastFailedRunId） */
+  hasFailedRun: boolean;
+  /** 失败 Run 的 error_message（有则优先展示，比错误码更可读） */
+  runErrorText?: string | null;
+}
+
+export interface AuditFailureRecoveryState {
+  /** 审计是否失败 */
+  isFailed: boolean;
+  /** 是否展示「重试生成报告 / 返回工作台」恢复入口 */
+  showRecovery: boolean;
+  /** 失败原因文案（不再折叠成「正常结束」） */
+  reasonText: string;
+  /** 下一步指引 */
+  hintText: string;
+}
+
+/** 审计失败时的原因与恢复入口：失败必须可解释、可重试，不能只显示「报告未生成」 */
+export function resolveAuditFailureRecoveryState(
+  input: AuditFailureRecoveryInput,
+): AuditFailureRecoveryState {
+  const isFailed = input.status === "failed";
+  if (!isFailed) {
+    return { isFailed: false, showRecovery: false, reasonText: "", hintText: "" };
+  }
+  const runError = (input.runErrorText ?? "").trim();
+  const reasonText = runError
+    ? runError
+    : input.endReasonRaw
+      ? endReasonLabel(input.endReasonRaw)
+      : "执行失败";
+  return {
+    isFailed: true,
+    showRecovery: true,
+    reasonText,
+    hintText: input.hasFailedRun
+      ? "可重试该失败任务；若反复失败，返回工作台调整方案后重新审计。"
+      : "可直接重试生成报告（会重新发起审计），或返回工作台调整方案后重新审计。",
+  };
 }
 
 export interface AnswerValidation {
@@ -590,10 +678,24 @@ export function describeControlOutcome(
   return `${base}${suffix === "请求已提交" ? "已提交" : suffix}`;
 }
 
-/** 审计状态是否仍可被控制（终结后按钮禁用） */
+/**
+ * 审计是否仍可被控制（终结后按钮禁用）。
+ * created/opening 允许 cancel_audit（domain/state_machine.py AUDIT_TRANSITIONS: created/opening → cancelled），
+ * 但结束审计只能从 active 发起，因此「结束」按钮单独用 canEndAudit 收紧（PRD-08）。
+ */
 export function canControlAudit(audit: NormalizedAudit | null): boolean {
   if (!audit) return false;
   return audit.status === "active" || audit.status === "opening" || audit.status === "created";
+}
+
+/**
+ * 是否可以「结束审计并生成报告」。
+ * 后端 validate_audit_transition 只允许 active → closing；created/opening 点击会得到
+ * 「非法审计状态迁移」，所以前端提前隐藏并提示「准备中」（PRD-08）。
+ */
+export function canEndAudit(audit: NormalizedAudit | null): boolean {
+  if (!audit) return false;
+  return audit.status === "active";
 }
 
 /** 审计快照读取失败的统一文案（读取失败不得渲染成「开始审计」，避免误判为还没建审计） */
@@ -602,6 +704,19 @@ export const AUDIT_LOAD_ERROR_TEXT = "审计信息读取失败，请重试";
 export const AUDIT_LOADING_TEXT = "正在读取审计信息…";
 /** 会话还处于 clarifying（或其它不允许阶段）时的入口替代文案 */
 export const AUDIT_NOT_READY_TEXT = "请先完成澄清或跳过引导，再发起审计";
+/**
+ * 审计/闭环等「已过澄清」阶段却没有审计快照时的文案（DX-06）：
+ * 此时再让用户「先完成澄清」是误导，真实原因是记录不存在或已翻篇。
+ */
+export const AUDIT_NOT_READY_STALE_TEXT = "该审计记录已不存在，请回工作台重新进入审计";
+
+/**
+ * 动作失败后是否需要重新同步会话/审计（DX-07）。
+ * 用 error.code 判定，不再匹配中文文案；文案只用于展示。
+ */
+export function shouldResyncAuditAfterError(code: string | null | undefined): boolean {
+  return code === "VERSION_CONFLICT" || code === "AUDIT_VERSION_CONFLICT";
+}
 
 export interface AuditEntryStateInput {
   /** 当前页面要展示的 auditId（URL 参数或会话快照里的 current_audit_id） */
@@ -617,6 +732,11 @@ export interface AuditEntryStateInput {
   starting: boolean;
   /** v2 会话阶段；缺省（旧调用/旧路由）时不拦截 */
   v2Phase?: SessionPhase | null;
+  /**
+   * 会话快照是否已加载（UX-D3）。审计入口依赖 sessionView.current_audit_id 等字段，
+   * 未加载时不能放行「开始审计」；缺省视为 true，保持旧调用语义。
+   */
+  sessionLoaded?: boolean;
 }
 
 export interface AuditEntryState {
@@ -654,7 +774,11 @@ export function resolveAuditEntryState(input: AuditEntryStateInput): AuditEntryS
   const showStartPanel = wouldStart && !phaseBlocked;
   const showLoading = !input.hasAudit && !showLoadError && !wouldStart;
   const canStart =
-    showStartPanel && !input.starting && !input.sessionLoading && !input.legacyMode;
+    showStartPanel &&
+    !input.starting &&
+    !input.sessionLoading &&
+    !input.legacyMode &&
+    input.sessionLoaded !== false;
   return {
     showLoadError,
     showLoading,
@@ -662,6 +786,10 @@ export function resolveAuditEntryState(input: AuditEntryStateInput): AuditEntryS
     showNotReady,
     canStart,
     loadErrorText: showLoadError && error ? error.message || AUDIT_LOAD_ERROR_TEXT : null,
-    notReadyText: showNotReady ? AUDIT_NOT_READY_TEXT : null,
+    notReadyText: showNotReady
+      ? input.v2Phase === "clarifying" || !input.v2Phase
+        ? AUDIT_NOT_READY_TEXT
+        : AUDIT_NOT_READY_STALE_TEXT
+      : null,
   };
 }

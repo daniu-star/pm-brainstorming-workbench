@@ -704,6 +704,20 @@ def _additive_schema_upgrade(engine: Engine) -> None:
         if "loop_id" not in columns:
             conn.exec_driver_sql("ALTER TABLE runs ADD COLUMN loop_id VARCHAR(64)")
 
+        # steps.created_at 是后加的 NOT NULL 列。旧库缺列时 ensure_step/get_step 会直接抛
+        # OperationalError("no such column: steps.created_at")，用户侧表现就是「发消息一律失败」。
+        # 补列后回填历史行，避免 NOT NULL 违约。
+        step_columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(steps)")}
+        if step_columns and "created_at" not in step_columns:
+            conn.exec_driver_sql(
+                "ALTER TABLE steps ADD COLUMN created_at VARCHAR(32) NOT NULL DEFAULT ''"
+            )
+            conn.exec_driver_sql(
+                "UPDATE steps SET created_at = "
+                "COALESCE(started_at, finished_at, '1970-01-01T00:00:00Z') "
+                "WHERE created_at = ''"
+            )
+
 
 def dispose_engine() -> None:
     """释放当前引擎的所有连接（Windows 上不释放会锁住 sqlite 文件，导致临时目录删不掉）。"""

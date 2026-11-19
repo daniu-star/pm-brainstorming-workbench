@@ -127,7 +127,13 @@ export function parseSSEChunk(
 // Run 事件订阅（GET /api/v2/runs/{rid}/events）
 // --------------------------------------------------------------------------- //
 
-export type RunStreamCloseReason = "terminal" | "eof" | "abort";
+export type RunStreamCloseReason = "terminal" | "eof" | "abort" | "idle";
+
+/**
+ * 事件流空闲看门狗（FE-04）：TCP 半开时 reader.read() 可能永远不返回，
+ * 页面会永久「正在生成」且输入框禁用；服务端心跳注释会刷新计时。
+ */
+export const DEFAULT_IDLE_TIMEOUT_MS = 45_000;
 
 export interface OpenRunEventsOptions {
   /** 断点续读：>=1 的 event_seq，服务端与 Last-Event-ID 取较大值 */
@@ -139,6 +145,8 @@ export interface OpenRunEventsOptions {
   signal?: AbortSignal;
   /** 跨连接复用的去重集合；同一 Run 重连时应传同一个 Set */
   seen?: Set<string>;
+  /** 空闲超时（毫秒）：超过该时间没有收到任何字节即视为断线，默认 45s */
+  idleTimeoutMs?: number;
   /** 测试注入用；默认为全局 fetch */
   fetchImpl?: typeof fetch;
 }
@@ -153,6 +161,14 @@ function isAbortError(error: unknown): boolean {
     error !== null &&
     ((error as { name?: string }).name === "AbortError" ||
       (error as { code?: string }).code === "ABORT_ERR")
+  );
+}
+
+function isIdleTimeout(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { name?: string }).name === "IdleTimeoutError"
   );
 }
 
@@ -178,9 +194,18 @@ export function openRunEvents(url: string, opts: OpenRunEventsOptions): () => vo
   let closed = false;
   let stopped = false;
 
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearIdleTimer = (): void => {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
+  };
+
   const close = (reason: RunStreamCloseReason): void => {
     if (closed) return;
     closed = true;
+    clearIdleTimer();
     try {
       opts.onClose(reason);
     } catch {
@@ -261,12 +286,35 @@ export function openRunEvents(url: string, opts: OpenRunEventsOptions): () => vo
       return;
     }
 
+    const readWithIdleTimeout = async (): Promise<ReadableStreamReadResult<Uint8Array>> => {
+      if (idleTimeoutMs <= 0) return reader.read();
+      return new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+        idleTimer = setTimeout(() => {
+          idleTimer = null;
+          const timeoutError = new Error("事件流空闲超时");
+          timeoutError.name = "IdleTimeoutError";
+          reject(timeoutError);
+        }, idleTimeoutMs);
+        reader.read().then(
+          (result) => {
+            clearIdleTimer();
+            resolve(result);
+          },
+          (error) => {
+            clearIdleTimer();
+            reject(error);
+          }
+        );
+      });
+    };
+
     const decoder = new TextDecoder("utf-8");
     let buffer = "";
+    const idleTimeoutMs = opts.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
 
     try {
       while (!stopped) {
-        const { done, value } = await reader.read();
+        const { done, value } = await readWithIdleTimeout();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
 
@@ -325,6 +373,15 @@ export function openRunEvents(url: string, opts: OpenRunEventsOptions): () => vo
         close("abort");
         return;
       }
+      if (isIdleTimeout(error)) {
+        try {
+          await reader.cancel();
+        } catch {
+          /* ignore */
+        }
+        close("idle");
+        return;
+      }
       reportError(error);
       close("eof");
       return;
@@ -338,6 +395,7 @@ export function openRunEvents(url: string, opts: OpenRunEventsOptions): () => vo
   return () => {
     // 静默清理：调用方主动取消时不再回调任何 onClose
     stopped = true;
+    clearIdleTimer();
     if (opts.signal) opts.signal.removeEventListener("abort", handleExternalAbort);
     controller.abort();
     closed = true;

@@ -694,6 +694,8 @@ class DecisionItem(StrictModel):
     confirmed_by: str | None = None
     confirmed_at: str | None = None
     origin: OriginKind = OriginKind.model
+    #: 生成该决策建议的 Run（Loop 轮次）；交付时据此把本闭环的 proposed 决策收口。
+    source_run_id: str | None = None
 
 
 class ExperimentItem(StrictModel):
@@ -1046,6 +1048,9 @@ class AuditSnapshot(StrictModel):
     # 审计问题列表随快照一并返回，前端无需为「第 N 问/历史问答」再发一次请求（FR-07）。
     questions: list[AuditQuestion] = Field(default_factory=list)
     report: AuditReport | None = None
+    #: 最近一次失败 Run 的错误码/文案：审计失败时必须让用户看见原因（PRD-03）。
+    last_error_code: str | None = None
+    last_error_message: str | None = None
     created_at: str = Field(default_factory=utc_now_iso)
     updated_at: str = Field(default_factory=utc_now_iso)
 

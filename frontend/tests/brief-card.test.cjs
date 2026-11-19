@@ -89,3 +89,62 @@ test("missingRequiredBriefFields：服务端本来就缺字段时也返回缺失
   );
   assert.deepEqual(draft.missingRequiredBriefFields(null, null, REQUIRED), REQUIRED);
 });
+
+// ---------------------------------------------------------------------------
+// UX-D2：简报动作按会话阶段门控（backend ACTION_PHASES[confirm_brief] 仅 clarifying）
+// ---------------------------------------------------------------------------
+
+test("briefActionsVisible：只有 clarifying 才渲染「确认简报 / 带假设进入脑暴」", () => {
+  assert.equal(draft.briefActionsVisible("clarifying"), true);
+  assert.equal(draft.briefActionsVisible({ phase: "clarifying" }), true);
+  assert.equal(draft.briefActionsVisible({ v2Phase: "clarifying" }), true);
+  for (const phase of ["brainstorming", "auditing", "audit_completed"]) {
+    assert.equal(draft.briefActionsVisible(phase), false, phase);
+  }
+  assert.equal(draft.briefActionsVisible(null), false);
+  assert.equal(draft.briefActionsVisible(undefined), false);
+});
+
+test("briefReviseAllowed：brainstorming / audit_completed 仍可修订，auditing 与未知阶段不可", () => {
+  assert.equal(draft.briefReviseAllowed("clarifying"), true);
+  assert.equal(draft.briefReviseAllowed("brainstorming"), true);
+  assert.equal(draft.briefReviseAllowed("audit_completed"), true);
+  assert.equal(draft.briefReviseAllowed({ phase: "audit_completed" }), true);
+  assert.equal(draft.briefReviseAllowed("auditing"), false);
+  assert.equal(draft.briefReviseAllowed("shipped"), false);
+  // phase 未知时放行，避免旧会话/加载中被误锁
+  assert.equal(draft.briefReviseAllowed(null), true);
+});
+
+test("briefPhaseNotice：非 clarifying 阶段给出只读说明，audit_completed 显式提示阶段回退", () => {
+  assert.equal(draft.briefPhaseNotice("clarifying"), null);
+  assert.equal(draft.briefPhaseNotice(null), null);
+  const brainstorming = draft.briefPhaseNotice("brainstorming");
+  assert.ok(brainstorming.includes("脑暴阶段"));
+  const auditing = draft.briefPhaseNotice("auditing");
+  assert.ok(auditing.includes("审计进行中"));
+  const auditCompleted = draft.briefPhaseNotice("audit_completed");
+  assert.ok(auditCompleted.includes("回退到「脑暴」"));
+  assert.ok(auditCompleted.includes("重新审计"));
+  assert.ok(draft.briefPhaseNotice("shipped").includes("不允许"));
+});
+
+// --------------------------------------------------------------------------- //
+// PRD-02：已确认简报被改回 ready 时如实说明「当前阶段无确认入口」
+// --------------------------------------------------------------------------- //
+
+test("briefReconfirmNotice 只在 ready 且非 clarifying 阶段给出说明", () => {
+  const view = require("../node_modules/.cache/test-build/lib/briefDraft.js");
+  assert.match(
+    view.briefReconfirmNotice({ status: "ready", phase: "brainstorming" }) ?? "",
+    /当前阶段不提供再次确认入口/,
+  );
+  assert.match(
+    view.briefReconfirmNotice({ status: "ready", phase: "audit_completed" }) ?? "",
+    /必填字段已更新/,
+  );
+  // clarifying 阶段仍可正常点「确认」，不应出现误导说明
+  assert.equal(view.briefReconfirmNotice({ status: "ready", phase: "clarifying" }), null);
+  assert.equal(view.briefReconfirmNotice({ status: "confirmed", phase: "brainstorming" }), null);
+  assert.equal(view.briefReconfirmNotice({ status: "ready", phase: null }), null);
+});

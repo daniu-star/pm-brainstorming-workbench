@@ -60,6 +60,16 @@ cp backend/.env.example backend/.env
 # Edit backend/.env with your API key
 ```
 
+发送消息后如果界面提示「模型服务鉴权失败 / LLM_AUTH_ERROR」，先跑一次自检定位问题（不会改任何数据）：
+
+```bash
+.venv/Scripts/python.exe scripts/check_llm.py
+```
+
+自检会打印 `base_url` / `model` / 脱敏后的 key，并区分「key 无效（401/403）」「余额不足（402）」
+「模型名或地址错误（404）」「被限流（429）」「网络不可达」。改完 `backend/.env` 后执行
+`stop.bat` → `start.bat` 让 API/Worker 重新读取配置。
+
 Configure the frontend API address when it is not served from the default local backend:
 
 ```bash
@@ -216,3 +226,6 @@ cd frontend && npm run test:e2e                                             # �
 - 可复用闭环脚本：`scripts/qa-loop.workflow.js`
 - Loop Studio（v5，闭环工作台：设想→检验→开发→测试→评测）：`docs/v5-loop-studio.md`
 - Loop Studio 接口与文件归属：`docs/loop-studio-interfaces.md`
+- 多角色 Loop Engineering 运行记录（7 角色 / 8 维评分 / 逐轮发现）：`docs/loop-runs/product-loop-2026-11-19.md`
+- 可复用 Loop 技能包（可开源）：`skills/loop-engineering-product/SKILL.md`
+- 模型连通性自检：`python scripts/check_llm.py`

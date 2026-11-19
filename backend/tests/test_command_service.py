@@ -19,7 +19,9 @@ from domain.contracts import (
     Assessment,
     AuditStatus,
     BriefStatus,
+    ClaimStatus,
     CommandRequest,
+    DecisionStatus,
     EventType,
     MessageStatus,
     RunStatus,
@@ -433,6 +435,131 @@ class SyncCommandTests(CommandTestCase):
             self.assertEqual(new_state.brief.core_problem.value, "手工汇总周报耗时 40 分钟")
             self.assertGreater(new_state.version, version)
 
+    def test_revise_brief_after_audit_completed_rolls_back_with_visible_message(self):
+        """UX-D2：审计完成阶段修订必填字段会回退到 brainstorming，必须留可见消息。
+
+        否则前端只会看到阶段突变（audit_completed → brainstorming），却没有任何
+        「审计结果已过期」的解释。
+        """
+        session_id, _version = self.confirmed_session()
+        with session_scope() as db:
+            state = session_repo.get_product_state(db, session_id)
+            audit = audit_repo.create_audit(
+                db, session_id=session_id, product_version=state.version, now_iso=NOW_ISO
+            )
+            audit_repo.update_audit(db, audit, now_iso=NOW_ISO, status=AuditStatus.active)
+            session = session_repo.require_session(db, session_id, owner_email=OWNER)
+            session_repo.touch_session(
+                db,
+                session,
+                now_iso=NOW_ISO,
+                phase=SessionPhase.audit_completed,
+                current_audit_id=audit.id,
+            )
+
+        with session_scope() as db:
+            version = session_repo.get_product_state(db, session_id).version
+
+        receipt = self.submit(
+            session_id,
+            Action.revise_brief,
+            {
+                "expected_product_version": version,
+                "fields": {
+                    "core_problem": {"value": "成本核算口径不一致", "status": "proposed"},
+                },
+            },
+        )
+        self.assertEqual(receipt.status, RunStatus.succeeded.value)
+        with session_scope() as db:
+            session = session_repo.require_session(db, session_id, owner_email=OWNER)
+            self.assertEqual(session.phase, SessionPhase.brainstorming.value)
+            messages = session_repo.list_messages(db, session_id)
+            rollback = [m for m in messages if "回退到「共创」" in m.content]
+            self.assertEqual(len(rollback), 1)
+            self.assertIn("审计结果已过期", rollback[0].content)
+            self.assertIn("重新发起六维审计", rollback[0].content)
+
+    def test_revise_confirmed_brief_keeps_confirmed_without_dead_end(self):
+        """PRD-02：已确认简报在共创阶段修订必填字段后不得退回 ready。
+
+        修复前 ``brief.status`` 被降级为 ready，系统消息要求「请确认后继续」，
+        但 ``confirm_brief`` 在 brainstorming 被状态机拒绝（ACTION_PHASES），
+        用户点不到也没有入口 —— 死路。这里锁定「保持 confirmed + 文案不再要求确认」。
+        """
+        session_id, _version = self.confirmed_session()
+        with session_scope() as db:
+            version = session_repo.get_product_state(db, session_id).version
+
+        receipt = self.submit(
+            session_id,
+            Action.revise_brief,
+            {
+                "expected_product_version": version,
+                "fields": {
+                    "core_problem": {"value": "周报口径不统一，需要人工对齐", "status": "proposed"},
+                },
+            },
+        )
+        self.assertEqual(receipt.status, RunStatus.succeeded.value)
+        with session_scope() as db:
+            state = session_repo.get_product_state(db, session_id)
+            messages = session_repo.list_messages(db, session_id)
+            phase = session_repo.require_session(db, session_id, owner_email=OWNER).phase
+        self.assertEqual(phase, SessionPhase.brainstorming.value)
+        self.assertEqual(state.brief.status, BriefStatus.confirmed)
+        self.assertEqual(state.brief.core_problem.value, "周报口径不统一，需要人工对齐")
+        # 前面 fill_required_brief 也留下过一条「产品定义已更新，请确认后继续」，
+        # 这里只看本次修订追加的最后一条系统消息。
+        revise_messages = [row.content for row in messages if "产品定义已更新" in (row.content or "")]
+        self.assertGreaterEqual(len(revise_messages), 1)
+        self.assertIn("无需再次确认", revise_messages[-1])
+        self.assertNotIn("请确认后继续", revise_messages[-1])
+
+    def test_confirm_brief_after_skip_is_rejected_with_chinese_message(self):
+        """PROD-04 现状契约：跳过澄清后即使补齐必填字段，确认简报仍被状态机拒绝。
+
+        锁定「跳过后不能确认简报」是后端阶段机的决定（brainstorming 不允许
+        confirm_brief）；前端要支持「重新打开简报并确认」，必须新增动作或显式
+        放行，而不是绕过阶段校验。
+        """
+        session_id = self.make_session()
+        self.submit(session_id, Action.skip_clarification, {"reason": "先按假设推进"})
+        with session_scope() as db:
+            version = session_repo.get_product_state(db, session_id).version
+
+        receipt = self.submit(
+            session_id,
+            Action.revise_brief,
+            {
+                "expected_product_version": version,
+                "fields": {
+                    "target_users": {"value": "中小企业财务团队", "status": "proposed"},
+                    "usage_scenario": {"value": "月度预算协同与审批", "status": "proposed"},
+                    "core_problem": {"value": "预算协作靠表格来回传", "status": "proposed"},
+                    "success_criteria": {"value": "对齐时间从 2 天降到 2 小时", "status": "proposed"},
+                },
+            },
+        )
+        self.assertEqual(receipt.status, RunStatus.succeeded.value)
+        with session_scope() as db:
+            state = session_repo.get_product_state(db, session_id)
+            self.assertEqual(state.brief.status, BriefStatus.skipped)
+            self.assertEqual(len(state.brief.required_missing()), 0)
+            version = state.version
+
+        with self.assertRaises(AppError) as ctx:
+            self.submit(
+                session_id,
+                Action.confirm_brief,
+                {"expected_product_version": version, "fields": {}},
+            )
+        self.assertEqual(ctx.exception.code, ErrorCode.INVALID_REQUEST)
+        message = ctx.exception.message
+        self.assertIn("「共创」", message)
+        self.assertIn("「确认简报」", message)
+        self.assertNotIn("confirm_brief", message)
+
     def test_confirm_decision_marks_needs_review_on_revise(self):
         session_id, _version = self.confirmed_session()
         # 直接写入一条已确认决策（模拟 reducer 提交的结果）
@@ -464,11 +591,111 @@ class SyncCommandTests(CommandTestCase):
         with session_scope() as db:
             new_state = session_repo.get_product_state(db, session_id)
             self.assertTrue(new_state.decisions[0].needs_review)
-            self.assertEqual(new_state.brief.status, BriefStatus.ready)
+            # 回归 PRD-02：brainstorming/audit_completed 阶段没有 confirm_brief 入口，
+            # 已确认简报修订必填字段后必须保持 confirmed；退回 ready 会让系统消息
+            # 要求一个当前阶段无法执行的动作（死路）。
+            self.assertEqual(new_state.brief.status, BriefStatus.confirmed)
             self.assertEqual(new_state.brief.known("target_users"), True)
             self.assertEqual(
                 new_state.brief.target_users.value, "改为中小企业 HR"
             )
+
+
+    def _decision_state(self, session_id: str) -> tuple[int, str, str]:
+        """写入一条 proposed 决策与两个 proposed 方案，返回 (版本, 决策 id, 方案 id)。"""
+        with session_scope() as db:
+            session = session_repo.require_session(db, session_id, owner_email=OWNER)
+            state = session_repo.get_product_state(db, session_id)
+            from domain.contracts import DecisionItem, OptionItem
+
+            state.options = [
+                OptionItem(id="o" * 32, title="先做网页版", summary="复用现有 Web 技术栈"),
+                OptionItem(id="p" * 32, title="先做移动端", summary="优先服务外勤场景"),
+            ]
+            state.decisions = [
+                DecisionItem(id="d" * 32, status=DecisionStatus.proposed, rationale="成本更低")
+            ]
+            state.version = state.version + 1
+            session_repo.save_product_state(db, session, state, now_iso=NOW_ISO)
+            return state.version, "d" * 32, "o" * 32
+
+    def test_confirm_decision_confirms_decision_and_accepts_option(self):
+        """PROD-01 后端契约：confirm_decision 真实置 confirmed 并接受所选方案。"""
+        session_id, _ = self.confirmed_session()
+        version, decision_id, option_id = self._decision_state(session_id)
+        receipt = self.submit(
+            session_id,
+            Action.confirm_decision,
+            {
+                "expected_product_version": version,
+                "decision_id": decision_id,
+                "option_id": option_id,
+                "rationale": "先做网页版，成本更低",
+            },
+            expected_version=self.read_session(session_id).session_version,
+        )
+        self.assertEqual(receipt.status, RunStatus.succeeded)
+        with session_scope() as db:
+            state = session_repo.get_product_state(db, session_id)
+        decision = state.decisions[0]
+        self.assertEqual(decision.status, DecisionStatus.confirmed)
+        self.assertFalse(decision.needs_review)
+        self.assertEqual(decision.option_id, option_id)
+        self.assertEqual(decision.rationale, "先做网页版，成本更低")
+        self.assertEqual(decision.confirmed_by, OWNER)
+        self.assertEqual(decision.confirmed_at, NOW_ISO)
+        self.assertEqual(state.options[0].status, ClaimStatus.accepted)
+        self.assertEqual(state.options[1].status, ClaimStatus.proposed)
+        self.assertEqual(state.version, version + 1)
+
+    def test_confirm_decision_rejects_unknown_option(self):
+        """决策引用不存在的方案时必须拒绝，避免画布出现悬空 option。"""
+        session_id, _ = self.confirmed_session()
+        version, decision_id, _ = self._decision_state(session_id)
+        with self.assertRaises(AppError) as ctx:
+            self.submit(
+                session_id,
+                Action.confirm_decision,
+                {"expected_product_version": version, "decision_id": decision_id, "option_id": "f" * 32},
+            )
+        self.assertEqual(ctx.exception.code, ErrorCode.NOT_FOUND)
+        self.assertEqual(ctx.exception.message, "选项不存在")
+        self.assertEqual(ctx.exception.details["decision_id"], decision_id)
+        with session_scope() as db:
+            state = session_repo.get_product_state(db, session_id)
+        self.assertEqual(state.decisions[0].status, DecisionStatus.proposed)
+        self.assertEqual(state.version, version)
+
+    def test_confirm_decision_unknown_id_returns_not_found(self):
+        session_id, _ = self.confirmed_session()
+        version, _, _ = self._decision_state(session_id)
+        with self.assertRaises(AppError) as ctx:
+            self.submit(
+                session_id,
+                Action.confirm_decision,
+                {"expected_product_version": version, "decision_id": "e" * 32},
+            )
+        self.assertEqual(ctx.exception.code, ErrorCode.NOT_FOUND)
+        self.assertEqual(ctx.exception.message, "决策不存在")
+
+    def test_confirm_decision_during_audit_is_rejected_with_chinese_message(self):
+        """与前端 decisionActionGate 对齐：审计进行中不可确认决策，且文案不含英文动作名。"""
+        session_id, _ = self.confirmed_session()
+        version, decision_id, _ = self._decision_state(session_id)
+        with session_scope() as db:
+            session = session_repo.require_session(db, session_id, owner_email=OWNER)
+            session_repo.touch_session(db, session, now_iso=NOW_ISO, phase=SessionPhase.auditing)
+        with self.assertRaises(AppError) as ctx:
+            self.submit(
+                session_id,
+                Action.confirm_decision,
+                {"expected_product_version": version, "decision_id": decision_id},
+            )
+        self.assertEqual(ctx.exception.code, ErrorCode.INVALID_REQUEST)
+        self.assertIn("「审计中」", ctx.exception.message)
+        self.assertIn("「确认决策」", ctx.exception.message)
+        self.assertNotIn("confirm_decision", ctx.exception.message)
+        self.assertEqual(ctx.exception.details["phase"], "auditing")
 
 
 class CancelTests(CommandTestCase):

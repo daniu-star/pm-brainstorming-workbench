@@ -2,7 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSessionStore } from "@/store/sessionStore";
-import { decideBriefDraftOnServerVersion, missingRequiredBriefFields } from "@/lib/briefDraft";
+import {
+  briefActionsVisible,
+  briefPhaseNotice,
+  briefReconfirmNotice,
+  briefReviseAllowed,
+  decideBriefDraftOnServerVersion,
+  missingRequiredBriefFields,
+} from "@/lib/briefDraft";
 import {
   BRIEF_FIELDS,
   BRIEF_FIELD_LABELS,
@@ -52,6 +59,8 @@ export function BriefCard() {
     productVersion,
     sessionView,
     sessionLoading,
+    v2Phase,
+    isStreaming,
     sendCommand,
     reloadSession,
   } = useSessionStore();
@@ -128,15 +137,30 @@ export function BriefCard() {
   const statusLabel = BRIEF_STATUS_LABELS[status] ?? status;
   const statusClass = BRIEF_STATUS_CLASSES[status] ?? BRIEF_STATUS_CLASSES.draft;
   const busy = pendingAction !== null;
+  /**
+   * Run 流式期间状态机不接受 confirm/skip/revise：按钮必须同步禁用，
+   * 否则点击必被拒绝且会暴露内部阶段名（DX-04）。
+   */
+  const locked = busy || isStreaming;
   const isSkipped = status === "skipped";
   const isConfirmed = status === "confirmed";
+  /**
+   * UX-D2 阶段门控：confirm_brief / skip_clarification 只在 clarifying 阶段合法
+   * （backend/domain/state_machine.py ACTION_PHASES），非澄清阶段渲染只读说明，
+   * 避免点击必被状态机拒绝的按钮。
+   */
+  const phase = v2Phase ?? sessionView?.phase ?? null;
+  const canConfirmOrSkip = briefActionsVisible(phase);
+  const canRevise = briefReviseAllowed(phase);
+  const phaseNotice = briefPhaseNotice(phase);
+  const reconfirmNotice = briefReconfirmNotice({ status, phase });
 
   async function runCommand(
     label: string,
     action: "confirm_brief" | "skip_clarification" | "revise_brief",
     payload: Record<string, unknown>
   ) {
-    if (busy) return;
+    if (locked) return;
     setPendingAction(label);
     setErrorText(null);
     try {
@@ -145,6 +169,10 @@ export function BriefCard() {
       });
       if (action === "confirm_brief") toast.success("简报已确认");
       else if (action === "skip_clarification") toast.success("已跳过澄清");
+      else if (phase === "audit_completed")
+        // 后端 revise_brief 会把 phase 写回 brainstorming（command_service.py），
+        // 这是用户可感知的阶段回退，必须显式提示而不是静默。
+        toast.success("修订已提交，会话阶段已回退到「脑暴」，需要重新审计");
       else toast.success("修订已提交");
       setEdits({});
       setEditing(false);
@@ -208,7 +236,7 @@ export function BriefCard() {
         <button
           type="button"
           onClick={() => setEditing((value) => !value)}
-          disabled={busy || isSkipped}
+          disabled={busy || isSkipped || !canRevise}
           className="ml-auto min-h-[32px] px-2 text-[11px] text-zinc-400 hover:text-zinc-200 disabled:opacity-50"
         >
           {editing ? "收起编辑" : "编辑"}
@@ -217,7 +245,7 @@ export function BriefCard() {
 
       {isSkipped ? (
         <div className="px-3 py-3 text-xs text-zinc-400">
-          已跳过澄清，直接进入脑暴。七个字段会随着讨论自动补全。
+          已跳过澄清，直接进入脑暴。缺失字段将以假设参与后续讨论，不会回填简报。
         </div>
       ) : (
         <div className="px-3 py-2.5 space-y-1.5 max-h-64 overflow-y-auto">
@@ -272,7 +300,7 @@ export function BriefCard() {
         <div className="mx-3 mb-2 px-2.5 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-[11px] text-amber-300">
           {isSkipped ? "已按假设推进，缺失字段：" : "还缺必填字段："}
           {missingRequired.map((field) => BRIEF_FIELD_LABELS[field] ?? field).join("、")}
-          {isSkipped ? "（讨论中会自动补全）" : null}
+          {isSkipped ? "（不会回填简报）" : null}
         </div>
       ) : null}
 
@@ -306,18 +334,30 @@ export function BriefCard() {
         </div>
       ) : null}
 
-      {!isSkipped ? (
+      {reconfirmNotice ? (
+        <div className="mx-3 mb-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-relaxed text-amber-200">
+          {reconfirmNotice}
+        </div>
+      ) : null}
+
+      {phaseNotice ? (
+        <div className="mx-3 mb-2 px-2.5 py-1.5 rounded-lg border border-zinc-600/50 bg-dark-900/60 text-[11px] leading-relaxed text-zinc-400">
+          {phaseNotice}
+        </div>
+      ) : null}
+
+      {!isSkipped && (canConfirmOrSkip || (editing && canRevise)) ? (
         <div className="flex flex-wrap items-center gap-2 px-3 pb-3 pt-1">
-          {isConfirmed ? (
+          {canConfirmOrSkip && isConfirmed ? (
             <span className="text-[11px] font-medium text-emerald-300">
               {`已确认 v${version}（可编辑）`}
             </span>
-          ) : missingRequired.length > 0 ? (
+          ) : canConfirmOrSkip && missingRequired.length > 0 ? (
             <>
               <button
                 type="button"
                 onClick={handleSkip}
-                disabled={busy}
+                disabled={locked}
                 className="min-h-[40px] px-3 text-xs font-medium rounded-lg border border-amber-500/40 bg-amber-600/20 text-amber-300 hover:bg-amber-600/30 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
               >
                 {pendingAction === "skip_clarification" ? (
@@ -328,14 +368,14 @@ export function BriefCard() {
               <p className="w-full text-[11px] leading-relaxed text-zinc-500">
                 {"将带入的缺失项/假设："}
                 {missingRequired.map((field) => BRIEF_FIELD_LABELS[field] ?? field).join("、")}
-                ，后续讨论会自动补全。
+                ，以假设参与后续讨论（不会回填简报）。
               </p>
             </>
-          ) : (
+          ) : canConfirmOrSkip ? (
             <button
               type="button"
               onClick={handleConfirm}
-              disabled={busy}
+              disabled={locked}
               className="min-h-[40px] px-3 text-xs font-medium rounded-lg border border-brand-500/40 bg-brand-600/20 text-brand-300 hover:bg-brand-600/30 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
             >
               {pendingAction === "confirm_brief" ? (
@@ -343,22 +383,22 @@ export function BriefCard() {
               ) : null}
               确认简报
             </button>
-          )}
-          {editing ? (
+          ) : null}
+          {editing && canRevise ? (
             <button
               type="button"
               onClick={handleRevise}
-              disabled={busy || Object.keys(changedFields).length === 0}
+              disabled={locked || Object.keys(changedFields).length === 0}
               className="min-h-[40px] px-3 text-xs font-medium rounded-lg border border-zinc-600/60 bg-dark-800 text-zinc-300 hover:bg-dark-700 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {pendingAction === "revise_brief" ? "提交中…" : "保存修订"}
             </button>
           ) : null}
-          {!isConfirmed && missingRequired.length === 0 ? (
+          {canConfirmOrSkip && !isConfirmed && missingRequired.length === 0 ? (
             <button
               type="button"
               onClick={handleSkip}
-              disabled={busy}
+              disabled={locked}
               className="min-h-[40px] px-3 text-xs rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-dark-700/60 disabled:opacity-50"
             >
               {pendingAction === "skip_clarification" ? "跳过中…" : "跳过澄清"}

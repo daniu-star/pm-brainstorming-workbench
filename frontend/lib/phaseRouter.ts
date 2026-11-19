@@ -31,6 +31,62 @@ export function canStartAuditPhase(phase: SessionPhase | null | undefined): bool
 }
 
 // --------------------------------------------------------------------------- //
+// 画布决策确认（PROD-01 接线 + PROD-03 阶段门控）
+// --------------------------------------------------------------------------- //
+
+/**
+ * confirm_decision 允许的阶段（backend/domain/state_machine.py:42
+ * ACTION_PHASES[Action.confirm_decision] = {brainstorming, audit_completed}）。
+ */
+export function canConfirmDecisionPhase(phase: SessionPhase | null | undefined): boolean {
+  return phase === "brainstorming" || phase === "audit_completed";
+}
+
+export interface DecisionActionGateInput {
+  /** 决策节点/决策项的 status；只有 proposed 才需要确认 */
+  status?: string | null;
+  /** 会话 v2 阶段 */
+  phase?: SessionPhase | null;
+  /** 当前产品状态版本（画布投影依据） */
+  productVersion?: number | null;
+}
+
+export interface DecisionActionGate {
+  /** 是否渲染「确认决策」入口 */
+  visible: boolean;
+  /** 是否可点击 */
+  enabled: boolean;
+  /** 不可点击时展示的原因（enabled 为 true 时为 null） */
+  reason: string | null;
+}
+
+/**
+ * 画布决策节点的确认入口门控。
+ *
+ * 审计进行中（auditing）时后端会以 INVALID_REQUEST 拒绝 confirm_decision，
+ * 因此这里提前禁用并给出原因，避免「可点但必失败」。
+ */
+export function decisionActionGate(input: DecisionActionGateInput): DecisionActionGate {
+  if (input.status !== "proposed") {
+    return { visible: false, enabled: false, reason: null };
+  }
+  if (!input.phase) {
+    return { visible: true, enabled: false, reason: "会话阶段尚未加载，请稍后重试" };
+  }
+  if (!canConfirmDecisionPhase(input.phase)) {
+    return {
+      visible: true,
+      enabled: false,
+      reason: "当前阶段不能确认决策，请先进入脑暴或结束审计",
+    };
+  }
+  if (!input.productVersion || input.productVersion < 1) {
+    return { visible: true, enabled: false, reason: "产品状态尚未加载，请稍后重试" };
+  }
+  return { visible: true, enabled: true, reason: null };
+}
+
+// --------------------------------------------------------------------------- //
 // 「开始讨论」入口（M3 修复）
 // --------------------------------------------------------------------------- //
 

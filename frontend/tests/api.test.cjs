@@ -428,3 +428,51 @@ test("apiV2 调用方主动取消仍抛 AbortError（不被误判为超时）", 
     return true;
   });
 });
+
+// --------------------------------------------------------------------------- //
+// 200 但正文不是 JSON（FE-02 P1：不能返回 undefined 让调用方误判端点缺失）
+// --------------------------------------------------------------------------- //
+
+test("apiV2 200 非 JSON：抛 INVALID_RESPONSE，且不被 isEndpointUnavailable 判定为端点缺失", async () => {
+  installFetch(() => ({
+    ok: true,
+    status: 200,
+    json: async () => {
+      throw new SyntaxError("Unexpected token '<', \"<html>\" is not valid JSON");
+    },
+    text: async () => "<html>bad gateway</html>",
+  }));
+
+  let caught;
+  await assert.rejects(
+    () => getSession("s1"),
+    (error) => {
+      caught = error;
+      assert.ok(error instanceof ApiError);
+      assert.equal(error.code, "INVALID_RESPONSE");
+      assert.equal(error.status, 200);
+      assert.equal(error.retryable, true);
+      assert.equal(error.message, CODE_MESSAGES.INVALID_RESPONSE);
+      return true;
+    },
+  );
+  // 关键：200 不在 [404,405,501] 内，绝不能触发 legacy 静默降级；
+  // 否则审计/Loop/简报入口会整体消失且没有错误提示。
+  assert.equal(isEndpointUnavailable(caught), false);
+});
+
+test("apiV2 204 无正文仍正常返回 undefined（与解析失败区分）", async () => {
+  installFetch(() => ({
+    ok: true,
+    status: 204,
+    json: async () => {
+      throw new SyntaxError("no body");
+    },
+    text: async () => "",
+  }));
+
+  await assert.doesNotReject(async () => {
+    const result = await getSession("s1");
+    assert.equal(result, undefined);
+  });
+});

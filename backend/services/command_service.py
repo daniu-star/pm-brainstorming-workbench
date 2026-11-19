@@ -775,6 +775,50 @@ def _submit_loop_start(
     )
 
 
+def _confirm_loop_decisions(
+    db,
+    *,
+    session: SessionRow,
+    loop: Any,
+    owner_email: str,
+    now_iso: str,
+) -> ProductState | None:
+    """交付收口：把本闭环各轮生成、仍为 proposed 的决策置为 confirmed。
+
+    Loop 决策建议带 ``source_run_id``（轮次 Run）。用户 ship 即代表对闭环产物
+    签字交付，若产品状态里的决策仍停在 proposed，画布会继续要求「确认决策」，
+    与「已交付」自相矛盾。这里只改本闭环轮次生成的决策，不碰其他来源的决策；
+    没有任何可收口决策时返回 ``None``（不 bump 版本）。
+    """
+
+    run_ids = {row.run_id for row in loop_repo.list_rounds(db, loop.id) if row.run_id}
+    if loop.latest_run_id:
+        run_ids.add(loop.latest_run_id)
+    if not run_ids:
+        return None
+    state = session_repo.get_product_state(db, session.id)
+    decisions: list[C.DecisionItem] = []
+    changed = False
+    for item in state.decisions:
+        if item.status is C.DecisionStatus.proposed and item.source_run_id in run_ids:
+            changed = True
+            decisions.append(
+                item.model_copy(
+                    update={
+                        "status": C.DecisionStatus.confirmed,
+                        "needs_review": False,
+                        "confirmed_by": owner_email,
+                        "confirmed_at": now_iso,
+                    }
+                )
+            )
+        else:
+            decisions.append(item)
+    if not changed:
+        return None
+    return _bump_state(state, decisions=decisions)
+
+
 def _submit_loop_decision(
     db,
     *,
@@ -845,6 +889,17 @@ def _submit_loop_decision(
     )
     session_repo.touch_session(db, session, now_iso=now_iso, active_run_id=run.id)
 
+    # ship 时同步收口本闭环生成的决策，避免「已交付」后画布仍显示「确认决策」。
+    shipping_state: ProductState | None = None
+    if target_status is C.LoopStatus.shipped:
+        shipping_state = _confirm_loop_decisions(
+            db,
+            session=session,
+            loop=loop,
+            owner_email=owner_email,
+            now_iso=now_iso,
+        )
+
     text = "闭环已标记为可交付，产物已归档。" if decision is C.LoopDecisionKind.ship else "闭环已停止，已保留现有产物。"
     messages = [
         OutgoingMessage(
@@ -870,7 +925,7 @@ def _submit_loop_decision(
 
     outcome = RunOutcome(
         status=RunStatus.succeeded,
-        product_state=None,
+        product_state=shipping_state,
         messages=messages,
         events=[_loop_event(loop)],
         session_phase=None,
@@ -1142,10 +1197,31 @@ def _submit_sync(
         )
 
     elif action is Action.revise_brief:
+        previous_phase = SessionPhase(session.phase)
         new_state, session_phase, brief_status = _apply_revise_brief(
             db, session, state, parsed, now_iso=now_iso
         )
-        messages.append(["产品定义已更新，请确认后继续。", MessageStage.system, SenderKind.system, None])
+        # 已确认简报在非 clarifying 阶段没有 confirm_brief 入口：修订必填字段后
+        # 保持 confirmed，系统消息不能再要求「请确认后继续」（PRD-02 死路）。
+        if brief_status is BriefStatus.confirmed:
+            revise_text = "产品定义已更新（保持已确认状态，无需再次确认）。"
+        elif brief_status is BriefStatus.skipped:
+            revise_text = "产品定义已更新（简报仍为已跳过确认状态）。"
+        else:
+            revise_text = "产品定义已更新，请确认后继续。"
+        messages.append([revise_text, MessageStage.system, SenderKind.system, None])
+        if session_phase is not None and session_phase is not previous_phase:
+            # UX-D2：审计完成后修订简报会把阶段回退到共创，必须让用户看见，
+            # 否则前端只看到阶段突变却没有任何解释。
+            messages.append(
+                [
+                    "产品定义已更新。审计结果已过期：会话阶段已从「审计完成」回退到「共创」，"
+                    "需要重新发起六维审计。",
+                    MessageStage.system,
+                    SenderKind.system,
+                    None,
+                ]
+            )
 
     elif action is Action.add_evidence:
         evidence = session_repo.add_evidence(
@@ -1323,9 +1399,9 @@ def _apply_revise_brief(
             protected_touched = True
 
     was_confirmed = brief.status == BriefStatus.confirmed
-    if was_confirmed and protected_touched:
-        brief = brief.model_copy(update={"status": BriefStatus.ready})
-    elif was_confirmed:
+    if was_confirmed:
+        # 已确认简报在 brainstorming/audit_completed 阶段没有 confirm_brief 入口，
+        # 修订必填字段若退回 ready 会让系统消息要求一个无法执行的动作（PRD-02）。
         brief = brief.model_copy(update={"status": BriefStatus.confirmed})
     status = brief.status
     new_state = _bump_state(state, brief=brief)
@@ -1386,9 +1462,19 @@ def _apply_confirm_decision(
     options = list(state.options)
     chosen = parsed.payload.get("option_id")
     if chosen:
+        matched = False
         for index, option in enumerate(options):
             if option.id == chosen:
+                matched = True
                 options[index] = option.model_copy(update={"status": C.ClaimStatus.accepted})
+        if not matched:
+            # 决策必须指向真实存在的方案，否则画布会引用悬空的 option
+            # （canvas_projector._decision_node 直接透出 decision.option_id）。
+            raise AppError(
+                ErrorCode.NOT_FOUND,
+                "选项不存在",
+                details={"decision_id": decision_id, "option_id": chosen},
+            )
     return _bump_state(state, decisions=decisions, options=options)
 
 
@@ -2306,6 +2392,39 @@ def retry_run(
             },
         )
 
+    # 闭环轮次 Run 的重试必须回到闭环里：子 Run 继承 loop_id，并把被重试的这一轮
+    # 重新置为 running（排队超时/执行失败都会把 loop 收口为 failed）。否则子 Run
+    # 在闭环之外执行，取消它也不会收口闭环（run.loop_id=None → _abort_loop_for_run 失效）。
+    loop = None
+    loop_id = getattr(original, "loop_id", None)
+    if loop_id:
+        loop = loop_repo.get_loop(db, loop_id)
+        if loop is None:  # pragma: no cover - 外键保证
+            raise AppError(
+                ErrorCode.NOT_FOUND,
+                "闭环不存在，不能重试该轮次",
+                details={"loop_id": loop_id},
+            )
+        if loop.latest_run_id != original.id:
+            raise AppError(
+                ErrorCode.INVALID_REQUEST,
+                "该轮次已被后续轮次取代，不能重试",
+                details={"loop_id": loop.id, "latest_run_id": loop.latest_run_id},
+            )
+        if C.LoopStatus(loop.status) not in (C.LoopStatus.running, C.LoopStatus.failed):
+            raise AppError(
+                ErrorCode.INVALID_REQUEST,
+                "闭环已结束，不能重试该轮次",
+                details={"loop_id": loop.id, "status": loop.status},
+            )
+        other = loop_repo.active_loop_for_session(db, session.id)
+        if other is not None and other.id != loop.id:
+            raise AppError(
+                ErrorCode.SESSION_BUSY,
+                "当前会话有正在进行中的闭环",
+                details={"loop_id": other.id},
+            )
+
     parsed_input_hash = input_hash(
         original.action, f"session:{session.id}", {"retry_of": original.id}, session.session_version
     )
@@ -2316,6 +2435,7 @@ def retry_run(
         for step in run_repo.list_steps(db, original.id)
         if StepStatus(step.status) is not StepStatus.succeeded
     ]
+    child_id = new_id()
     child = run_repo.create_run(
         db,
         session_id=session.id,
@@ -2333,8 +2453,37 @@ def retry_run(
         failed_steps=failed_steps,
         audit_id=original.audit_id,
         base_audit_version=original.base_audit_version,
-        run_id=new_id(),
+        loop_id=loop.id if loop is not None else None,
+        run_id=child_id,
     )
+    if loop is not None:
+        loop = loop_repo.touch_loop(
+            db,
+            loop,
+            status=C.LoopStatus.running,
+            current_round=int(loop.current_round or 1),
+            latest_run_id=child.id,
+            closed_at=None,
+            loop_version=int(loop.loop_version or 1) + 1,
+            now_iso=now_iso,
+        )
+        round_row = loop_repo.get_round(db, loop_id=loop.id, ordinal=int(loop.current_round or 1))
+        if round_row is not None:
+            loop_repo.update_round(
+                db,
+                round_row,
+                status=C.LoopRoundStatus.running,
+                run_id=child.id,
+                finished_at=None,
+            )
+        run_repo.append_event(
+            db,
+            session_id=session.id,
+            run_id=child.id,
+            type=EventType.loop_updated,
+            payload=_loop_event(loop)["payload"],
+            now_iso=now_iso,
+        )
     session_repo.touch_session(db, session, now_iso=now_iso, active_run_id=child.id)
     session_repo.bump_session_version(db, session)
     receipt = _receipt(child, session)

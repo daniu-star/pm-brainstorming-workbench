@@ -31,6 +31,7 @@ from domain.contracts import (
     DimensionState,
     EndReason,
     OriginKind,
+    RunStatus,
     canonical_json,
     new_id,
 )
@@ -41,6 +42,7 @@ from repositories.database import (
     AuditReportRevisionRow,
     AuditRow,
     ControlIntentRow,
+    RunRow,
     SessionRow,
 )
 
@@ -576,7 +578,9 @@ def list_report_revisions(db: Session, audit_id: str) -> list[AuditReportRevisio
 def audit_to_snapshot(db: Session, audit: AuditRow) -> AuditSnapshot:
     """把审计行组装为 ``AuditSnapshot``（dimension_states + 可选报告）。
 
-    ``db`` 保留在签名中以匹配接口契约；组装只依赖审计行本身，避免额外查询。
+    审计失败时额外查询该审计最近一次 failed Run，把 ``error_code`` /
+    ``error_message`` 透出到快照（PRD-03：失败原因不能只留在 Run 上）。
+    非 failed 状态不查询，保持常规读取路径的查询次数不变。
     """
 
     dimensions: list[DimensionState] = []
@@ -597,6 +601,22 @@ def audit_to_snapshot(db: Session, audit: AuditRow) -> AuditSnapshot:
         except ValueError:
             logger.warning("审计报告 JSON 校验失败，快照降级为无报告（audit=%s）", audit.id)
 
+    last_error_code: str | None = None
+    last_error_message: str | None = None
+    if AuditStatus(audit.status) is AuditStatus.failed:
+        latest_failed = db.execute(
+            select(RunRow)
+            .where(
+                RunRow.audit_id == audit.id,
+                RunRow.status == RunStatus.failed.value,
+            )
+            .order_by(RunRow.created_at.desc(), RunRow.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if latest_failed is not None:
+            last_error_code = latest_failed.error_code
+            last_error_message = latest_failed.error_message
+
     return AuditSnapshot(
         id=audit.id,
         session_id=audit.session_id,
@@ -611,6 +631,8 @@ def audit_to_snapshot(db: Session, audit: AuditRow) -> AuditSnapshot:
         closing_control_id=audit.closing_control_id,
         dimension_states=dimensions,
         report=report,
+        last_error_code=last_error_code,
+        last_error_message=last_error_message,
         created_at=audit.created_at,
         updated_at=audit.updated_at,
     )

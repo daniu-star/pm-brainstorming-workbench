@@ -61,6 +61,8 @@ CI 配置见 `.github/workflows/ci.yml`（backend：安装依赖 → 全量测�
 - **`next build` 与 `next dev` 共用 `frontend/.next`**：开发服务器运行时执行生产构建会破坏其路由缓存（动态路由全 500）。验证构建前先 `stop.bat`，构建后 `start.bat` 重新拉起。
 - Loop Studio（v5）的「测试执行」是模拟执行：产物 `simulated=true` 且必须注明「未实际执行」，否则确定性校验记 P0 阻塞并把总分压到 70；真实沙箱执行尚未实现。
 - Loop Studio 原型产物是文件内容 + 启动命令，不在服务端构建；`requires_human_build=true` 时由用户自行落地。
+- **模型鉴权失败会以 `LLM_AUTH_ERROR` 明确失败**（401/403，不可重试），错误信息直接提示更新 `backend/.env` 的 `LLM_API_KEY` 并重启服务；排查用 `.venv/Scripts/python.exe scripts/check_llm.py`。
+- 旧 SQLite 库缺新列时由 `repositories/database.py::_additive_schema_upgrade()` 在启动时自动补列（当前覆盖 `runs.failed_steps_json`、`runs.loop_id`、`steps.created_at`）。缺列曾导致「发消息一律失败（INTERNAL / no such column: steps.created_at）」，已在 `backend/tests/test_schema_upgrade.py` 固化回归。
 
 ## 6. 本机验证的临时产物约定
 

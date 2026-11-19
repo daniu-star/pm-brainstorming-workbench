@@ -195,6 +195,11 @@ function emptyCanvas(): CanvasState {
 interface FailedSend {
   content: string;
   targetRole: Role | "all";
+  /**
+   * 首次发送时的幂等 request_id：ChatPanel 点「重试」必须复用同一个值，
+   * 否则响应丢失后重试会让后端再执行一次命令（FE-03）。
+   */
+  requestId?: string;
 }
 
 interface LegacySessionPayload {
@@ -208,6 +213,10 @@ interface LegacySessionPayload {
 export interface SendCommandOptions {
   expectedSessionVersion?: number | null;
   expectedProductVersion?: number | null;
+  /** 幂等 request_id（重试时复用首次的值） */
+  requestId?: string;
+  /** 本次命令对应的本地乐观消息 id：成功后绑定 Run，失败时精确回滚 */
+  localId?: string;
 }
 
 /** 闭环快照读取失败记录：notFound 用于区分「确认 404」与「网络/服务端错误」 */
@@ -295,7 +304,11 @@ interface SessionState {
 
   // ---- 旧 action ----
   loadSession: (id: string) => Promise<void>;
-  sendMessage: (content: string, targetRole: Role | "all") => void;
+  sendMessage: (
+    content: string,
+    targetRole: Role | "all",
+    options?: { requestId?: string }
+  ) => void;
   sendToCoach: (content: string) => void;
   skipCoach: () => void;
   startInterview: () => void;
@@ -324,9 +337,19 @@ interface SessionState {
   loadEarlierMessages: () => Promise<void>;
   subscribeRun: (runId: string) => void;
   unsubscribe: () => void;
+  /**
+   * 恢复当前会话运行中 Run 的事件订阅（UX-D1）。
+   * 工作台卸载会 abortStream + unsubscribe，客户端路由跳转到审计页时
+   * 不会重新挂载工作台，需要由目标页显式调用本方法续订。
+   */
+  resumeRunSubscription: () => void;
   cancelRun: (runId?: string) => Promise<void>;
   retryFailedRun: (runId?: string) => Promise<void>;
-  refreshCanvas: (productVersion?: number) => Promise<void>;
+  /**
+   * 重取画布投影。返回 true 表示确实应用了新投影；失败/丢弃旧版本返回 false，
+   * 便于调用方只在成功时提示「已刷新」（PROD-06）。
+   */
+  refreshCanvas: (productVersion?: number) => Promise<boolean>;
   /** 拉取审计快照并写入 `audits`；返回 false 表示读取失败（错误同时记入 `auditErrors`） */
   hydrateAuditById: (auditId: string) => Promise<boolean>;
   /** 写入一份已归一化的闭环快照（例如 run snapshot 里自带的 loop） */
@@ -387,7 +410,19 @@ export const useSessionStore = create<SessionState>((set, get) => {
    * 只有服务端回执里出现同内容的 human 消息时才删除对应那一条，
    * 避免 `role.output.updated` 等流式事件把用户输入整条抹掉。
    */
-  const pendingOptimistic = new Map<string, { sessionId: string; content: string }>();
+  const pendingOptimistic = new Map<
+    string,
+    {
+      sessionId: string;
+      content: string;
+      /** 定向角色：失败后写入 lastFailedSend，重试时不能变成群发（DX-05） */
+      targetRole: Role | "all";
+      /** 首次发送的幂等键，重试必须复用（FE-03） */
+      requestId: string;
+      /** 回执里的 run_id；null = 请求仍在途或未拿到回执 */
+      runId: string | null;
+    }
+  >();
 
   function capture(): SessionGuard {
     const state = get();
@@ -403,6 +438,18 @@ export const useSessionStore = create<SessionState>((set, get) => {
     set((state) => ({
       stateWarnings: [...state.stateWarnings, warning].slice(-MAX_WARNINGS),
     }));
+  }
+
+  /**
+   * 只清掉某一类已恢复的告警（FE-05）：stateWarnings 只会 push，没有生命周期，
+   * 画布重试成功后仍会挂旧错误，用户以为还没恢复。
+   */
+  function clearWarningsMatching(match: (warning: string) => boolean): void {
+    set((state) => {
+      const next = state.stateWarnings.filter((warning) => !match(warning));
+      if (next.length === state.stateWarnings.length) return {};
+      return { stateWarnings: next };
+    });
   }
 
   function setError(message: string | null): void {
@@ -482,12 +529,15 @@ export const useSessionStore = create<SessionState>((set, get) => {
   }
 
   /**
-   * Run 收尾兜底：仍未收到服务端回执的本地乐观消息视为「发送未确认」。
-   * 删除占位（避免刷新后重复出现）并把内容写入 lastFailedSend，由 ChatPanel 提供「重试」。
+   * Run 收尾兜底：绑定到该 Run、直到 Run 结束仍未收到服务端回执的本地乐观消息
+   * 视为「发送未确认」。删除占位（避免刷新后重复出现）并写入 lastFailedSend。
+   *
+   * 只处理已绑定到本 Run 的条目：发送失败的条目在 dispatchCommand 的 catch 里
+   * 已经精确回滚，未绑定 Run 的条目说明请求仍在途，不能被其它 Run 的收尾误删。
    */
-  function settlePendingOptimistic(sessionId: string): void {
+  function settlePendingOptimistic(sessionId: string, runId: string): void {
     const stale = [...pendingOptimistic.entries()].filter(
-      ([, item]) => item.sessionId === sessionId
+      ([, item]) => item.sessionId === sessionId && item.runId === runId
     );
     if (stale.length === 0) return;
     const staleIds = new Set(stale.map(([id]) => id));
@@ -503,8 +553,34 @@ export const useSessionStore = create<SessionState>((set, get) => {
     });
     if (get().currentSessionId === sessionId) syncLegacyMessages(sessionId);
     const last = stale[stale.length - 1][1];
-    set({ lastFailedSend: { content: last.content, targetRole: "all" } });
+    set({
+      lastFailedSend: {
+        content: last.content,
+        targetRole: last.targetRole,
+        requestId: last.requestId,
+      },
+    });
     setError("消息发送未确认，请重试");
+  }
+
+  /** 发送失败：精确删除这条本地乐观消息（不能等 Run 收尾按内容对账，会误删同内容的重试）。 */
+  function rollbackOptimisticMessage(sessionId: string, localId: string): void {
+    pendingOptimistic.delete(localId);
+    set((state) => ({
+      messagesBySession: {
+        ...state.messagesBySession,
+        [sessionId]: (state.messagesBySession[sessionId] ?? []).filter(
+          (view) => view.id !== localId
+        ),
+      },
+    }));
+    if (get().currentSessionId === sessionId) syncLegacyMessages(sessionId);
+  }
+
+  /** 收到 Run 回执：把本地乐观消息绑定到该 Run，供收尾时判断「是否真的没送到」。 */
+  function bindOptimisticRun(localId: string, runId: string): void {
+    const entry = pendingOptimistic.get(localId);
+    if (entry) pendingOptimistic.set(localId, { ...entry, runId });
   }
 
   function nextSeq(sessionId: string): number {
@@ -531,8 +607,13 @@ export const useSessionStore = create<SessionState>((set, get) => {
     return (get().messagesBySession[sessionId] ?? []).find((view) => view.id === messageId);
   }
 
-  /** 追加本地乐观用户消息，返回 localId（服务端回执确认前一直保留） */
-  function appendOptimisticUserMessage(sessionId: string, content: string): string {
+  /** 追加本地乐观用户消息，返回 localId 与本次幂等 requestId（服务端回执确认前一直保留） */
+  function appendOptimisticUserMessage(
+    sessionId: string,
+    content: string,
+    targetRole: Role | "all" = "all",
+    requestId: string = newRequestId()
+  ): { localId: string; requestId: string } {
     const state = get();
     const localId = `${LOCAL_MESSAGE_PREFIX}${newRequestId()}`;
     const view: MessageView = {
@@ -549,17 +630,23 @@ export const useSessionStore = create<SessionState>((set, get) => {
       created_at: new Date().toISOString(),
     };
     mergeMessages(sessionId, [view]);
-    pendingOptimistic.set(localId, { sessionId, content });
+    pendingOptimistic.set(localId, {
+      sessionId,
+      content,
+      targetRole,
+      requestId,
+      runId: null,
+    });
     set({ streamingContent: "", error: null });
-    return localId;
+    return { localId, requestId };
   }
 
   // ---- 产品状态 / 画布 ---------------------------------------------------- //
 
-  async function refreshCanvas(productVersion?: number): Promise<void> {
+  async function refreshCanvas(productVersion?: number): Promise<boolean> {
     const state = get();
     const sessionId = state.currentSessionId;
-    if (!sessionId) return;
+    if (!sessionId) return false;
     const captured: SessionGuard = { sessionId, generation: state.generation };
     // 版本 0 不是合法产品版本（服务端从 1 起），当成「未知」处理：否则会拼出
     // product_version=0 触发后端 400，画布重试永久失败（QA 第 5 轮 P1）。
@@ -595,13 +682,23 @@ export const useSessionStore = create<SessionState>((set, get) => {
         if (get().currentSessionId === captured.sessionId) {
           set({ canvasLoading: false, isGeneratingCanvas: false });
         }
-        return;
+        return false;
       }
       const previousVersion = get().canvas?.productVersion ?? 0;
       if (projection.product_version < previousVersion) {
         pushWarning(`丢弃旧画布版本 ${projection.product_version}（当前 ${previousVersion}）`);
-        set({ canvasLoading: false, isGeneratingCanvas: false });
-        return;
+        // 丢弃旧投影后必须退出 generating：否则 CanvasPanel 徽标永久停在「生成中」，重试入口也被隐藏（DX-03）
+        set((current) => ({
+          canvas: {
+            projection: current.canvas?.projection ?? null,
+            productVersion: current.canvas?.productVersion ?? null,
+            status: current.canvas?.projection ? "stale" : "error",
+            error: "画布版本落后于当前投影，已丢弃本次结果",
+          },
+          canvasLoading: false,
+          isGeneratingCanvas: false,
+        }));
+        return false;
       }
       const nextCanvas: CanvasState = {
         projection,
@@ -615,13 +712,21 @@ export const useSessionStore = create<SessionState>((set, get) => {
         isGeneratingCanvas: false,
         canvasLoading: false,
       }));
+      // 刷新成功：清掉与画布相关的旧告警，琥珀条不应继续挂旧错误（FE-05）
+      clearWarningsMatching(
+        (warning) =>
+          warning.startsWith("丢弃旧画布版本") ||
+          warning.startsWith("画布加载失败") ||
+          warning.startsWith("忽略非法 product_version"),
+      );
+      return true;
     } catch (error) {
       if (!assertCurrent(captured)) {
         // 过期请求：同会话时复位加载态，避免 loading 卡死
         if (get().currentSessionId === captured.sessionId) {
           set({ canvasLoading: false, isGeneratingCanvas: false });
         }
-        return;
+        return false;
       }
       const message = errorMessage(error);
       set((current) => {
@@ -639,6 +744,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
         };
       });
       pushWarning(`画布加载失败：${message}`);
+      return false;
     }
   }
 
@@ -668,6 +774,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
           productStates: { ...state.productStates, [sessionId]: productState as ProductState },
         }));
         canvasVersion = acceptance.version;
+        clearWarningsMatching((warning) => warning.startsWith("丢弃旧版本 product_version"));
       } else {
         pushWarning(acceptance.warning);
       }
@@ -693,6 +800,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
         productVersion: acceptance.version,
         productStates: { ...current.productStates, [sessionId]: state },
       }));
+      clearWarningsMatching((warning) => warning.startsWith("丢弃旧版本 product_version"));
     } catch {
       // 产品状态刷新失败：保留版本号，画布徽标会提示重试
     }
@@ -1101,7 +1209,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
       if (!assertCurrent(captured)) return;
 
       // 收尾兜底：Run 已结束仍未被服务端回执确认的本地乐观消息 → 提示发送失败
-      settlePendingOptimistic(sessionId);
+      settlePendingOptimistic(sessionId, runId);
 
       // 闭环轮次结束后刷新工作室快照：优先用 run snapshot 里自带的 loop（省一次请求），
       // 否则按 run.loop_id / session.current_loop_id 兜底拉取（契约 §6）。
@@ -1182,8 +1290,8 @@ export const useSessionStore = create<SessionState>((set, get) => {
         onClose: (reason) => {
           if (reason === "terminal") {
             void finalizeRun(runId, captured);
-          } else if (reason === "eof") {
-            // 断线重连：沿用已记录的重连次数，避免每次都从第 1 次重来导致无限重连
+          } else if (reason === "eof" || reason === "idle") {
+            // 断线/空闲超时重连：沿用已记录的重连次数，避免每次都从第 1 次重来导致无限重连
             const nextAttempt = (reconnectAttempts.get(runId) ?? 0) + 1;
             void reconnectRun(runId, captured, nextAttempt);
           }
@@ -1250,6 +1358,9 @@ export const useSessionStore = create<SessionState>((set, get) => {
         isStreaming: true,
         error: null,
         lastFailedRunId: null,
+        // 回执到位 = 这条命令已被后端接受，旧的「发送失败」重试条必须失效，
+        // 否则用户再点一次重试会重复发送（FE-01）
+        lastFailedSend: null,
         sessionView: current.sessionView
           ? {
               ...current.sessionView,
@@ -1282,15 +1393,24 @@ export const useSessionStore = create<SessionState>((set, get) => {
     try {
       const receipt = await apiSendCommand(sessionId, action, payload as never, {
         expectedSessionVersion: expected,
+        requestId: options.requestId,
       });
       if (!assertCurrent(captured)) return receipt;
       applyReceipt(receipt);
+      // 回执到了：把乐观消息绑定到本次 Run；收尾时只有「已绑定但未确认」才算发送失败
+      if (options.localId && isRunReceipt(receipt)) {
+        bindOptimisticRun(options.localId, receipt.run_id);
+      }
       return receipt;
     } catch (error) {
       if (assertCurrent(captured)) {
+        // 发送失败必须立刻精确回滚这条草稿，否则重试成功后会残留一条同内容占位，
+        // 被 Run 收尾的按内容对账误判成「消息发送未确认」（FE-01）。
+        if (options.localId) rollbackOptimisticMessage(sessionId, options.localId);
         setError(errorMessage(error));
         set({ isStreaming: false });
-        if (lastSent) set({ lastFailedSend: lastSent });
+        // 只有聊天发送失败才挂出「重试」条：普通命令失败不能复用上一条聊天内容重发
+        if (options.localId && lastSent) set({ lastFailedSend: lastSent });
       }
       throw error;
     }
@@ -1613,6 +1733,10 @@ export const useSessionStore = create<SessionState>((set, get) => {
         // 会话级重置：sessionView / 画布 / 产品状态属于上一个会话，必须清空
         // （canvases / productStates 是按 sessionId 键的缓存，保留以便切回时复用）
         sessionView: null,
+        // messages 是「当前会话」的旧组件投影（syncLegacyMessages 写入）：必须一起清空，
+        // 否则切会话时会先渲染上一个会话的消息（UX-D4）
+        messages: [],
+        stateWarnings: [],
         canvas: null,
         canvasLoading: false,
         isGeneratingCanvas: false,
@@ -1644,10 +1768,18 @@ export const useSessionStore = create<SessionState>((set, get) => {
       }
     },
 
-    sendMessage: (content: string, targetRole: Role | "all") => {
+    sendMessage: (content: string, targetRole: Role | "all", options?: { requestId?: string }) => {
       const state = get();
       if (!state.sessionId) return;
-      lastSent = { content, targetRole };
+      // 重试复用首次的 request_id：响应丢失后重试不会让后端重复执行命令（FE-03）
+      const retryRequestId =
+        state.lastFailedSend &&
+        state.lastFailedSend.content === content &&
+        state.lastFailedSend.targetRole === targetRole
+          ? state.lastFailedSend.requestId
+          : undefined;
+      const requestId = options?.requestId ?? retryRequestId ?? newRequestId();
+      lastSent = { content, targetRole, requestId };
 
       if (state.legacyMode) {
         startLegacyStream(
@@ -1660,7 +1792,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
 
       const sessionId = state.currentSessionId;
       if (!sessionId) return;
-      appendOptimisticUserMessage(sessionId, content);
+      const optimistic = appendOptimisticUserMessage(sessionId, content, targetRole, requestId);
       set({
         isStreaming: true,
         error: null,
@@ -1680,7 +1812,10 @@ export const useSessionStore = create<SessionState>((set, get) => {
         action === "clarify"
           ? { content }
           : { content, target: mapTargetRole(targetRole) };
-      void dispatchCommand(action, payload, captured).catch(() => undefined);
+      void dispatchCommand(action, payload, captured, {
+        requestId: optimistic.requestId,
+        localId: optimistic.localId,
+      }).catch(() => undefined);
     },
 
     sendToCoach: (content: string) => {
@@ -1706,9 +1841,12 @@ export const useSessionStore = create<SessionState>((set, get) => {
           view.content === content
       );
       if (duplicated) return;
-      appendOptimisticUserMessage(sessionId, content);
+      const optimistic = appendOptimisticUserMessage(sessionId, content);
       set({ isStreaming: true, error: null, streamingContent: "", streamingRole: null });
-      void dispatchCommand("clarify", { content }, capture()).catch(() => undefined);
+      void dispatchCommand("clarify", { content }, capture(), {
+        requestId: optimistic.requestId,
+        localId: optimistic.localId,
+      }).catch(() => undefined);
     },
 
     skipCoach: () => {
@@ -1769,13 +1907,14 @@ export const useSessionStore = create<SessionState>((set, get) => {
         setError("当前没有待回答的审计问题");
         return false;
       }
-      appendOptimisticUserMessage(sessionId, answer);
       set({ isStreaming: true, error: null });
+      const optimistic = appendOptimisticUserMessage(sessionId, answer);
       try {
         await dispatchCommand(
           "answer_audit",
           { audit_id: audit.id, question_id: activeQuestionId, answer },
-          captured
+          captured,
+          { requestId: optimistic.requestId, localId: optimistic.localId }
         );
         return true;
       } catch (error) {
@@ -1805,8 +1944,9 @@ export const useSessionStore = create<SessionState>((set, get) => {
         return;
       }
       // v2：画布由 ProductState 确定性派生，这里只重取投影（不触发模型调用）
-      await get().refreshCanvas();
-      toast.success("画布已刷新");
+      const refreshed = await get().refreshCanvas();
+      // 失败时 refreshCanvas 已 pushWarning（画布加载失败：…），不能再弹成功 toast
+      if (refreshed) toast.success("画布已刷新");
     },
 
     setPhase: (phase) => set({ phase }),
@@ -1927,6 +2067,15 @@ export const useSessionStore = create<SessionState>((set, get) => {
       set({ subscribingRunId: null });
     },
 
+    resumeRunSubscription: () => {
+      const state = get();
+      const runId = state.sessionView?.active_run_id ?? state.activeRunId ?? null;
+      if (!runId) return;
+      if (state.subscribingRunId === runId) return;
+      // subscribeRun 内部会取消旧订阅并打开新流；不调用 cancel run API（服务端任务继续跑）
+      get().subscribeRun(runId);
+    },
+
     cancelRun: async (runId?: string) => {
       const state = get();
       const targetId = runId ?? state.activeRunId ?? state.sessionView?.active_run_id ?? null;
@@ -1962,7 +2111,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
     },
 
     refreshCanvas: async (productVersion?: number) => {
-      await refreshCanvas(productVersion);
+      return refreshCanvas(productVersion);
     },
 
     hydrateAuditById: async (auditId: string) => {

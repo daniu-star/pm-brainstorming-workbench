@@ -56,6 +56,7 @@ import type {
   MvpFeature,
   PrototypeFile,
   PrototypeSpec,
+  SessionPhase,
   ValidationCheck,
 } from "./contracts.generated";
 
@@ -858,10 +859,16 @@ export interface DecisionAvailability {
 /**
  * 三个决策按钮的可用性：
  * - 只有 `awaiting_decision` 才能决策；
+ * - 会话阶段必须是 brainstorming / audit_completed（与后端
+ *   backend/domain/state_machine.py:42 的 ACTION_PHASES[loop_decision] 对齐），
+ *   审计进行中时按钮禁用并给出原因，避免「可点但必被 INVALID_REQUEST」；
  * - `iterate` 还要求 current_round < max_rounds（与后端 LOOP_ROUNDS_EXHAUSTED 对齐）；
- * - ship / stop 在等待决策时始终可点。
+ * - ship / stop 在等待决策且阶段允许时始终可点。
  */
-export function decisionAvailability(snapshot: LoopSnapshot | null | undefined): DecisionAvailability {
+export function decisionAvailability(
+  snapshot: LoopSnapshot | null | undefined,
+  phase?: SessionPhase | null
+): DecisionAvailability {
   if (!snapshot) {
     const reason = "闭环尚未启动";
     return {
@@ -884,6 +891,18 @@ export function decisionAvailability(snapshot: LoopSnapshot | null | undefined):
     };
   }
   const exhausted = snapshot.current_round >= snapshot.max_rounds;
+  if (phase && !(LOOP_PHASES as readonly string[]).includes(phase)) {
+    const reason =
+      phase === "auditing"
+        ? "审计进行中，请先在审计页结束审计，再继续迭代/交付/停止"
+        : "当前阶段不能决策，请回到脑暴或结束审计";
+    return {
+      awaiting: true,
+      iterate: { enabled: false, reason },
+      ship: { enabled: false, reason },
+      stop: { enabled: false, reason },
+    };
+  }
   return {
     awaiting: true,
     iterate: exhausted
@@ -925,6 +944,7 @@ const LOOP_ERROR_TEXT: Record<string, string> = {
   LOOP_ROUNDS_EXHAUSTED: "轮次已用尽，只能交付或停止",
   LOOP_CLAIMED: "该轮闭环已被其他任务领取，请稍后刷新",
   LOOP_VERSION_CONFLICT: "闭环状态已在别处更新，请刷新后重试",
+  INVALID_REQUEST: "当前阶段不能执行该决策，请先结束审计或回到脑暴阶段",
   VERSION_CONFLICT: "内容已在别处更新，请刷新后重试",
   NOT_FOUND: "闭环不存在或已删除",
   FORBIDDEN: "没有权限查看该闭环",
@@ -1070,6 +1090,16 @@ export function shouldShowLoopEntry(input: {
 
 export interface LoopEntryInput {
   sessionLoading: boolean;
+  /**
+   * 会话快照是否已加载（DX-02）。缺省视为 true（保持旧调用语义）；
+   * 显式 false 表示「会话已读完但仍然没有快照」——这是读取失败，不是阶段不满足。
+   */
+  sessionLoaded?: boolean;
+  /**
+   * 会话读取失败：sessionSettled && !sessionView && !sessionLoading（DX-R3-03）。
+   * 与 sessionLoaded 拆开，避免把「加载中」也误判成读取失败。
+   */
+  sessionLoadFailed?: boolean;
   sessionPhase?: string | null;
   legacyMode: boolean;
   loop: LoopSnapshot | null;
@@ -1113,6 +1143,16 @@ export function resolveLoopEntryState(input: LoopEntryInput): LoopEntryState {
   // 会话尚未加载时 phase 一定是 null，不能据此判定「阶段不允许」；
   // 否则首屏会先闪一块「暂不可用」，文案却还是「正在加载会话…」。
   if (input.sessionLoading) return loading;
+  // 会话数据缺失 ≠ 阶段不满足：读取失败时必须给「重试」入口，否则用户永远无法恢复（DX-02）
+  // DX-R3-03：优先用显式的 sessionLoadFailed；旧调用仍兼容 sessionLoaded === false
+  if (input.sessionLoadFailed ?? input.sessionLoaded === false) {
+    return {
+      ...loading,
+      showLoading: false,
+      showLoadError: true,
+      loadErrorText: "会话状态读取失败，请重试",
+    };
+  }
   if (!canStartLoopPhase(input.sessionPhase ?? null)) {
     return {
       ...loading,
@@ -1144,6 +1184,17 @@ export function resolveLoopEntryState(input: LoopEntryInput): LoopEntryState {
 export function loopStatusText(snapshot: LoopSnapshot | null | undefined): string {
   if (!snapshot) return "未启动";
   return statusLabel(snapshot.status);
+}
+
+/**
+ * 轮次失败后是否可重试本轮（PRD-07）。
+ * 后端 retry_run 只接受 loop.status ∈ {running, failed} 且 loop.latest_run_id 指向失败 Run
+ * （backend/services/command_service.py retry_run），因此这里必须同时满足两个条件。
+ */
+export function canRetryLoopRound(snapshot: LoopSnapshot | null | undefined): boolean {
+  if (!snapshot) return false;
+  if (snapshot.status !== "failed") return false;
+  return Boolean(snapshot.latest_run_id);
 }
 
 /** 评分卡 verdict 展示文案；没有评分卡时明确「未评级」。 */

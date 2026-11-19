@@ -22,3 +22,5 @@ backend/audit-test-*/
 
 # exported standalone repos
 dist/
+*TMP_TESTS_EVAL*
+*tmp_tests_eval*

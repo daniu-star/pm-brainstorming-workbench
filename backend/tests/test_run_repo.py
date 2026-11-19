@@ -227,6 +227,28 @@ class QueueExpiryTests(RunRepoTestCase):
             self.assertEqual(run_repo.expire_queued_runs(db, now_epoch=self.now + 601), [])
             self.assertEqual(run_repo.get_run(db, run_id).status, RunStatus.running.value)
 
+    def test_expiry_releases_session_active_run(self):
+        """排队超时是终结态：必须释放 ``session.active_run_id`` 并推进会话版本。
+
+        否则页面仍以为有任务在跑（输入框禁用/SSE 等 Run），刷新后也拿不到可恢复态。
+        """
+
+        run_id = self._create_run()
+        with session_scope() as db:
+            session = session_repo.require_session(
+                db, self.session_id, owner_email="a@example.com"
+            )
+            session_repo.touch_session(db, session, active_run_id=run_id)
+            before = int(session.session_version)
+        with session_scope() as db:
+            expired = run_repo.expire_queued_runs(db, now_epoch=self.now + 601)
+            self.assertEqual(expired, [run_id])
+            session = session_repo.require_session(
+                db, self.session_id, owner_email="a@example.com"
+            )
+            self.assertIsNone(session.active_run_id)
+            self.assertEqual(int(session.session_version), before + 1)
+
 
 class StepTests(RunRepoTestCase):
     def test_ensure_step_is_idempotent(self):

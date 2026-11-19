@@ -4,7 +4,7 @@
 * 原生 usage 优先 / 缺失时 ``usage_source="estimated"`` 的保守估算；
 * SDK 内部重试必须为 0（PRD FR-08）；
 * 错误映射：429 → 限流（可重试）、超时/5xx → 不可用（可重试）、
-  400/401 → 请求错误（不可重试）；
+  400/404 → 请求错误（不可重试）、401/403 → 鉴权失败（不可重试但提示改配置）；
 * ``json_schema`` 不被支持时降级为 ``json_object``，两次调用都计入 attempts；
 * ``complete_json`` 返回 ``(parsed, LLMResult)``，非法 JSON 抛可重试的
   ``LLMOutputInvalidError``；
@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core import llm_client as llm  # noqa: E402
 from core.llm_client import (  # noqa: E402
+    LLMAuthError,
     LLMClient,
     LLMOutputInvalidError,
     LLMRateLimitedError,
@@ -209,7 +210,7 @@ class LLMClientCompleteTests(unittest.TestCase):
                 self.assertEqual(ctx.exception.code, "LLM_UNAVAILABLE")
 
     def test_client_errors_are_not_retryable(self) -> None:
-        for status in (400, 401, 404):
+        for status in (400, 404):
             with self.subTest(status=status):
                 client = LLMClient(sdk_client=FakeSDK(FakeStatusError(status)), model="fake-model")
                 with self.assertRaises(LLMRequestError) as ctx:
@@ -223,6 +224,27 @@ class LLMClientCompleteTests(unittest.TestCase):
                     )
                 self.assertFalse(ctx.exception.retryable)
                 self.assertEqual(ctx.exception.code, "LLM_REQUEST_ERROR")
+
+    def test_auth_errors_are_distinguished_and_actionable(self) -> None:
+        """401/403 是「改配置才能恢复」的错误，必须给出可执行的修复提示（LLM_AUTH_ERROR）。"""
+
+        for status in (401, 403):
+            with self.subTest(status=status):
+                client = LLMClient(sdk_client=FakeSDK(FakeStatusError(status)), model="fake-model")
+                with self.assertRaises(LLMAuthError) as ctx:
+                    _run(
+                        client.complete(
+                            messages=MESSAGES,
+                            max_output_tokens=10,
+                            timeout_seconds=3,
+                            purpose="test.auth",
+                        )
+                    )
+                self.assertFalse(ctx.exception.retryable)
+                self.assertEqual(ctx.exception.code, "LLM_AUTH_ERROR")
+                self.assertIn("LLM_API_KEY", str(ctx.exception))
+                # 同时仍是 LLMRequestError 的子类，旧调用方按父类捕获不会漏
+                self.assertIsInstance(ctx.exception, LLMRequestError)
 
 
 class LLMClientJsonTests(unittest.TestCase):

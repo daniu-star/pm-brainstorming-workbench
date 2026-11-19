@@ -88,9 +88,20 @@ class LLMUnavailableError(LLMError):
 
 
 class LLMRequestError(LLMError):
-    """请求本身有问题（400/401/403/404 等），不可重试。"""
+    """请求本身有问题（400/404 等），不可重试。"""
 
     code = "LLM_REQUEST_ERROR"
+    retryable = False
+
+
+class LLMAuthError(LLMRequestError):
+    """鉴权失败（401/403）：API Key 无效、过期或无权限。
+
+    与普通 4xx 分开，是因为它属于「人工改配置才能恢复」的错误：重试永远不会成功，
+    但错误信息必须直接告诉使用者去更新 ``LLM_API_KEY``，否则界面上只剩一句失败。
+    """
+
+    code = "LLM_AUTH_ERROR"
     retryable = False
 
 
@@ -210,6 +221,12 @@ def _translate_exception(exc: Exception) -> LLMError:
 
     if status == 429:
         return LLMRateLimitedError("LLM 请求过于频繁，请稍后重试", status_code=status)
+    if status in (401, 403):
+        return LLMAuthError(
+            "模型服务鉴权失败（API Key 无效、已过期或无权限）："
+            "请更新 backend/.env 的 LLM_API_KEY 后重启服务（start.bat / stop.bat）",
+            status_code=status,
+        )
     if status is not None and 500 <= status < 600:
         return LLMUnavailableError(f"LLM 服务暂时不可用（HTTP {status}）", status_code=status)
     if isinstance(exc, (APITimeoutError, APIConnectionError, TimeoutError, asyncio.TimeoutError)):

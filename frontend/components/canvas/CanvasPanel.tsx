@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useSessionStore } from "@/store/sessionStore";
 import { CanvasToolbar } from "./CanvasToolbar";
 import { PipelineView } from "./PipelineView";
@@ -16,7 +16,10 @@ import {
   UserIcon,
   ArrowRightIcon,
 } from "@/components/icons";
-import type { CanvasBranch, CanvasNode } from "@/lib/contracts.generated";
+import { errorMessage, isApiError } from "@/lib/api";
+import { decisionActionGate } from "@/lib/phaseRouter";
+import { toast } from "@/components/Toast";
+import type { CanvasBranch, CanvasNode, DecisionItem } from "@/lib/contracts.generated";
 
 // --------------------------------------------------------------------------- //
 // 节点类型元数据（画布投影只做确定性渲染，不调用模型）
@@ -80,6 +83,112 @@ function sourceCount(node: CanvasNode): number {
   );
 }
 
+/**
+ * PROD-01：画布决策节点的确认入口。
+ *
+ * 画布投影里决策节点自带 decision_ids（backend/services/canvas_projector.py:207-229，
+ * id=`decision:{decision.id}`、status=决策状态），这里按 id 从 productState.decisions
+ * 取回完整决策，经 confirm_decision 提交（backend/services/command_service.py:1350）。
+ */
+function DecisionNodeAction({ node }: { node: CanvasNode }) {
+  const { productState, productVersion, v2Phase, sessionView, sendCommand, reloadSession } =
+    useSessionStore();
+  const [pending, setPending] = useState(false);
+  const [errorText, setErrorText] = useState<string | null>(null);
+  const [optionId, setOptionId] = useState("");
+
+  const decisionIds = node.decision_ids ?? [];
+  const decisions = (productState?.decisions ?? []).filter((item) => decisionIds.includes(item.id));
+  const decision: DecisionItem | null =
+    decisions.find((item) => item.status === "proposed") ?? null;
+  const phase = v2Phase ?? sessionView?.phase ?? null;
+  const version = productState?.version ?? productVersion;
+  const gate = decisionActionGate({
+    status: decision?.status ?? node.status ?? null,
+    phase,
+    productVersion: version,
+  });
+
+  const options = productState?.options ?? [];
+  const preferred = decision?.option_id ?? null;
+  const currentOption = optionId || preferred || "";
+
+  if (!decision || !gate.visible) return null;
+
+  const decisionId = decision.id;
+  const sessionVersion = sessionView?.session_version ?? null;
+
+  async function handleConfirm() {
+    if (!gate.enabled || pending) return;
+    setPending(true);
+    setErrorText(null);
+    try {
+      await sendCommand(
+        "confirm_decision",
+        {
+          expected_product_version: version,
+          decision_id: decisionId,
+          option_id: currentOption || undefined,
+        },
+        { expectedSessionVersion: sessionVersion }
+      );
+      toast.success("决策已确认");
+    } catch (error) {
+      if (isApiError(error) && error.code === "VERSION_CONFLICT") {
+        toast.error("内容已在别处更新，已刷新");
+        await reloadSession();
+        return;
+      }
+      const message = errorMessage(error);
+      setErrorText(message);
+      toast.error(message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="mt-2 flex flex-col gap-1.5">
+      {options.length > 1 ? (
+        <label className="flex items-center gap-2 text-[11px] text-zinc-500">
+          采用方案
+          <select
+            value={currentOption}
+            onChange={(event) => setOptionId(event.target.value)}
+            disabled={pending || !gate.enabled}
+            className="min-h-[32px] min-w-0 flex-1 rounded-md border border-zinc-700/60 bg-dark-900/70 px-2 py-1 text-[11px] text-zinc-200 focus:border-brand-500/60 focus:outline-none disabled:opacity-60"
+          >
+            <option value="">不指定具体方案</option>
+            {options.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.title}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => void handleConfirm()}
+          disabled={!gate.enabled || pending}
+          title={gate.reason ?? undefined}
+          className="min-h-[36px] px-3 text-xs font-medium rounded-lg border border-orange-500/40 bg-orange-600/20 text-orange-200 hover:bg-orange-600/30 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+        >
+          {pending ? (
+            <span className="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
+          ) : null}
+          确认决策
+        </button>
+        {gate.reason ? (
+          <span className="text-[11px] leading-relaxed text-amber-300">{gate.reason}</span>
+        ) : null}
+      </div>
+      {errorText ? <div className="text-[11px] text-red-300">{errorText}</div> : null}
+    </div>
+  );
+}
+
 function CanvasNodeCard({ node, root = false }: { node: CanvasNode; root?: boolean }) {
   const meta = NODE_KIND_META[node.kind] ?? {
     label: node.kind,
@@ -132,6 +241,7 @@ function CanvasNodeCard({ node, root = false }: { node: CanvasNode; root?: boole
               <div className="mt-2 text-[10px] text-zinc-500">消息 {node.source_message_ids.length}</div>
             ) : null}
           </>
+          {node.kind === "decision" ? <DecisionNodeAction node={node} /> : null}
         </div>
       </div>
     </div>
@@ -166,8 +276,15 @@ function CanvasBranchColumn({ branch }: { branch: CanvasBranch }) {
 // --------------------------------------------------------------------------- //
 
 function CanvasV2() {
-  const { canvas, canvasLoading, productVersion, isStreaming, refreshCanvas, stateWarnings } =
-    useSessionStore();
+  const {
+    canvas,
+    canvasLoading,
+    productVersion,
+    isStreaming,
+    refreshCanvas,
+    stateWarnings,
+    clearStateWarnings,
+  } = useSessionStore();
 
   const status = canvas?.status ?? (canvasLoading ? "generating" : "latest");
   const projection = canvas?.projection ?? null;
@@ -213,8 +330,16 @@ function CanvasV2() {
       </div>
 
       {stateWarnings.length > 0 ? (
-        <div className="shrink-0 mx-3 mt-2 px-3 py-1.5 bg-amber-900/20 border border-amber-800/40 rounded-lg text-[11px] text-amber-300">
-          {stateWarnings[stateWarnings.length - 1]}
+        <div className="shrink-0 mx-3 mt-2 flex items-start gap-2 px-3 py-1.5 bg-amber-900/20 border border-amber-800/40 rounded-lg text-[11px] text-amber-300">
+          <span className="min-w-0 flex-1">{stateWarnings[stateWarnings.length - 1]}</span>
+          <button
+            type="button"
+            onClick={clearStateWarnings}
+            className="shrink-0 rounded px-1 text-amber-200/80 hover:text-amber-100"
+            aria-label="关闭告警"
+          >
+            关闭
+          </button>
         </div>
       ) : null}
 

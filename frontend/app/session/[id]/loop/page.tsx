@@ -29,10 +29,12 @@ import type {
   LoopTestReport,
   LoopValidation,
   PrototypeSpec,
+  SessionPhase,
   ValidationCheck,
   MvpFeature,
 } from "@/lib/contracts.generated";
 import {
+  canRetryLoopRound,
   NOT_GENERATED,
   SCOPE_LABELS,
   artifactTabs,
@@ -773,6 +775,8 @@ function StartLoopBar({
 
 function DecisionBar({
   snapshot,
+  phase,
+  sessionId,
   busy,
   abortBusy,
   note,
@@ -781,6 +785,9 @@ function DecisionBar({
   onAbort,
 }: {
   snapshot: LoopSnapshot;
+  /** 会话 v2 阶段：审计进行中时三键必须禁用（backend ACTION_PHASES 只允许 brainstorming/audit_completed） */
+  phase: SessionPhase | null;
+  sessionId: string;
   busy: LoopDecisionKind | null;
   abortBusy: boolean;
   note: string;
@@ -788,13 +795,28 @@ function DecisionBar({
   onDecide: (decision: LoopDecisionKind) => void;
   onAbort: () => void;
 }) {
-  const availability = decisionAvailability(snapshot);
+  const availability = decisionAvailability(snapshot, phase);
   const iterateReason = availability.iterate.reason;
+  // 阶段门控时三键全禁：给一条明确原因 + 「去结束审计」入口
+  const phaseBlocked = availability.awaiting && !availability.stop.enabled;
   return (
     <Section
       title="本轮决策"
       extra={<Badge text={loopStatusText(snapshot)} tone={loopStatusTone(snapshot.status)} />}
     >
+      {phaseBlocked ? (
+        <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] leading-relaxed text-amber-300">
+          <span>{availability.stop.reason}</span>
+          {phase === "auditing" ? (
+            <Link
+              href={`/session/${sessionId}/audit`}
+              className="ml-2 font-medium text-amber-200 underline underline-offset-2 hover:text-amber-100"
+            >
+              去结束审计
+            </Link>
+          ) : null}
+        </div>
+      ) : null}
       {availability.awaiting ? (
         <>
           <p className="mb-2 text-[11px] leading-relaxed text-zinc-400">
@@ -893,6 +915,7 @@ function LoopPageContent() {
   const sessionId = params?.id ?? null;
 
   const sessionView = useSessionStore((state) => state.sessionView);
+  const v2Phase = useSessionStore((state) => state.v2Phase);
   const sessionLoading = useSessionStore((state) => state.sessionLoading);
   const legacyMode = useSessionStore((state) => state.legacyMode);
   const loadSession = useSessionStore((state) => state.loadSession);
@@ -901,16 +924,22 @@ function LoopPageContent() {
   const startLoop = useSessionStore((state) => state.startLoop);
   const decideLoopAction = useSessionStore((state) => state.decideLoop);
   const cancelRun = useSessionStore((state) => state.cancelRun);
+  const retryFailedRun = useSessionStore((state) => state.retryFailedRun);
   const loops = useSessionStore((state) => state.loops);
+  const runs = useSessionStore((state) => state.runs);
   const loopId = useSessionStore((state) => state.loopId);
   const loopLoading = useSessionStore((state) => state.loopLoading);
   const loopErrors = useSessionStore((state) => state.loopErrors);
   const stateWarnings = useSessionStore((state) => state.stateWarnings);
+  const clearStateWarnings = useSessionStore((state) => state.clearStateWarnings);
 
   const [startBusy, setStartBusy] = useState(false);
   const [decideBusy, setDecideBusy] = useState<LoopDecisionKind | null>(null);
   const [abortBusy, setAbortBusy] = useState(false);
+  const [retryBusy, setRetryBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  /** 首次会话读取是否已结束：区分「还没开始读」与「读完仍无快照」（DX-02） */
+  const [sessionSettled, setSessionSettled] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [decisionNote, setDecisionNote] = useState("");
@@ -918,7 +947,14 @@ function LoopPageContent() {
 
   useEffect(() => {
     if (!sessionId) return;
-    void loadSession(sessionId);
+    let cancelled = false;
+    setSessionSettled(false);
+    void loadSession(sessionId).finally(() => {
+      if (!cancelled) setSessionSettled(true);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [sessionId, loadSession]);
 
   const currentLoopId = loopId ?? sessionView?.current_loop_id ?? null;
@@ -941,6 +977,10 @@ function LoopPageContent() {
 
   const entry = resolveLoopEntryState({
     sessionLoading,
+    // 会话快照是否已加载：只有拿到 sessionView 才算已加载（DX-R3-03）
+    sessionLoaded: Boolean(sessionView),
+    // 读完仍没有 sessionView 且不在加载中 = 读取失败，必须给「重试」而不是阶段门文案
+    sessionLoadFailed: sessionSettled && !sessionView && !sessionLoading,
     sessionPhase: sessionView?.phase ?? null,
     legacyMode,
     loop: currentLoop,
@@ -949,11 +989,11 @@ function LoopPageContent() {
   });
 
   const refresh = useCallback(async () => {
-    if (!currentLoopId) return;
     setRefreshing(true);
     setActionError(null);
     try {
-      await hydrateLoopById(currentLoopId);
+      // 没有 loop 时（会话读取失败 / 尚未启动）也要能重试：退化为重读会话（DX-02）
+      if (currentLoopId) await hydrateLoopById(currentLoopId);
       await reloadSession();
     } finally {
       setRefreshing(false);
@@ -1047,6 +1087,11 @@ function LoopPageContent() {
     ? currentLoop.status === "shipped" || currentLoop.status === "stopped" || currentLoop.status === "failed"
     : false;
 
+  // 失败 Run 的真实错误文案（RunState.errorMessage），比只给错误码更能指导恢复（PRD-07）
+  const failedRunError = currentLoop?.latest_run_id
+    ? runs[currentLoop.latest_run_id]?.errorMessage ?? null
+    : null;
+
   const handleAbort = useCallback(async () => {
     if (!currentLoop) return;
     const runId = currentLoop.latest_run_id;
@@ -1066,6 +1111,26 @@ function LoopPageContent() {
       setAbortBusy(false);
     }
   }, [currentLoop, cancelRun, hydrateLoopById]);
+
+  // 轮次失败后的「重试本轮」：后端 retry_run 支持 loop 子 Run（PRD-07）
+  const handleRetryRound = useCallback(async () => {
+    if (!currentLoop?.latest_run_id) {
+      setActionError("当前没有可重试的运行");
+      return;
+    }
+    setRetryBusy(true);
+    setActionError(null);
+    setNotice(null);
+    try {
+      await retryFailedRun(currentLoop.latest_run_id);
+      setNotice("已重新提交本轮，正在刷新状态…");
+      await hydrateLoopById(currentLoop.loop_id);
+    } catch (error) {
+      setActionError(isApiError(error) ? loopErrorText(error.code, error.message) : "重试本轮失败，请稍后重试");
+    } finally {
+      setRetryBusy(false);
+    }
+  }, [currentLoop, retryFailedRun, hydrateLoopById]);
 
   return (
     <div className="min-h-screen bg-dark-900 bg-mesh">
@@ -1098,7 +1163,7 @@ function LoopPageContent() {
         <button
           type="button"
           onClick={() => void refresh()}
-          disabled={refreshing || !currentLoopId}
+          disabled={refreshing}
           className="ml-auto inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-zinc-700/60 px-2.5 text-[11px] text-zinc-400 transition-colors hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {refreshing ? <Spinner /> : null}
@@ -1118,8 +1183,16 @@ function LoopPageContent() {
           </div>
         ) : null}
         {stateWarnings.length > 0 ? (
-          <div className="rounded-xl border border-amber-700/40 bg-amber-900/20 px-3 py-2 text-xs text-amber-300">
-            {stateWarnings[stateWarnings.length - 1]}
+          <div className="flex items-start gap-2 rounded-xl border border-amber-700/40 bg-amber-900/20 px-3 py-2 text-xs text-amber-300">
+            <span className="min-w-0 flex-1">{stateWarnings[stateWarnings.length - 1]}</span>
+            <button
+              type="button"
+              onClick={clearStateWarnings}
+              className="shrink-0 text-amber-200/80 hover:text-amber-100"
+              aria-label="关闭告警"
+            >
+              关闭
+            </button>
           </div>
         ) : null}
 
@@ -1134,6 +1207,14 @@ function LoopPageContent() {
         {entry.showGate ? (
           <Section title="暂不可用">
             <p className="text-[11px] leading-relaxed text-zinc-400">{entry.gateText}</p>
+            <button
+              type="button"
+              className={`${BTN_SECONDARY} mt-3`}
+              disabled={refreshing}
+              onClick={() => void refresh()}
+            >
+              {refreshing ? "刷新中…" : "刷新状态"}
+            </button>
           </Section>
         ) : null}
 
@@ -1157,6 +1238,8 @@ function LoopPageContent() {
             <ArtifactPanel snapshot={currentLoop} round={currentRound} />
             <DecisionBar
               snapshot={currentLoop}
+              phase={v2Phase ?? sessionView?.phase ?? null}
+              sessionId={sessionId ?? ""}
               busy={decideBusy}
               abortBusy={abortBusy}
               note={decisionNote}
@@ -1164,6 +1247,26 @@ function LoopPageContent() {
               onDecide={(decision) => void handleDecide(decision)}
               onAbort={() => void handleAbort()}
             />
+            {canRetryLoopRound(currentLoop) ? (
+              <Section title="本轮失败" extra={<Badge text="可恢复" />}>
+                <p className="mb-3 text-[11px] leading-relaxed text-red-400">
+                  本轮运行失败，已生成的部分产物会保留。可以直接重试本轮（后端 retry_run 支持 loop 子 Run）。
+                </p>
+                {failedRunError ? (
+                  <p className="mb-3 break-words rounded-lg border border-red-700/40 bg-red-900/20 px-2.5 py-2 text-[11px] leading-relaxed text-red-300">
+                    {`失败原因：${failedRunError}`}
+                  </p>
+                ) : null}
+                <button
+                  type="button"
+                  className={BTN_SECONDARY}
+                  disabled={retryBusy}
+                  onClick={() => void handleRetryRound()}
+                >
+                  {retryBusy ? "重试中…" : "重试本轮"}
+                </button>
+              </Section>
+            ) : null}
             {finished ? (
               <Section title="开启新闭环" extra={<Badge text="可选" />}>
                 {newLoopOpen ? (

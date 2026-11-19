@@ -104,3 +104,66 @@ test("shouldShowStartDiscussion：brainstorm 产物是持久证据，刷新后�
     true
   );
 });
+
+// ---------------------------------------------------------------------------
+// PROD-01 / PROD-03：画布决策确认的阶段门控
+// ---------------------------------------------------------------------------
+
+test("canConfirmDecisionPhase：只有 brainstorming / audit_completed 允许 confirm_decision", () => {
+  assert.equal(router.canConfirmDecisionPhase("brainstorming"), true);
+  assert.equal(router.canConfirmDecisionPhase("audit_completed"), true);
+  assert.equal(router.canConfirmDecisionPhase("auditing"), false);
+  assert.equal(router.canConfirmDecisionPhase("clarifying"), false);
+  assert.equal(router.canConfirmDecisionPhase(null), false);
+  assert.equal(router.canConfirmDecisionPhase(undefined), false);
+});
+
+test("decisionActionGate：proposed + brainstorming + 有效版本才可点", () => {
+  const gate = router.decisionActionGate({
+    status: "proposed",
+    phase: "brainstorming",
+    productVersion: 3,
+  });
+  assert.deepEqual(gate, { visible: true, enabled: true, reason: null });
+  assert.equal(
+    router.decisionActionGate({ status: "proposed", phase: "audit_completed", productVersion: 1 }).enabled,
+    true
+  );
+});
+
+test("decisionActionGate：已确认/已否决的决策不再渲染入口", () => {
+  for (const status of ["confirmed", "rejected", "superseded"]) {
+    assert.equal(
+      router.decisionActionGate({ status, phase: "brainstorming", productVersion: 2 }).visible,
+      false,
+      status
+    );
+  }
+  assert.equal(router.decisionActionGate({ status: null, phase: "brainstorming", productVersion: 2 }).visible, false);
+});
+
+test("decisionActionGate：auditing 阶段禁用并给出「先结束审计」原因（后端必 INVALID_REQUEST）", () => {
+  const gate = router.decisionActionGate({
+    status: "proposed",
+    phase: "auditing",
+    productVersion: 2,
+  });
+  assert.equal(gate.visible, true);
+  assert.equal(gate.enabled, false);
+  assert.ok(gate.reason.includes("当前阶段不能确认决策"));
+  assert.equal(
+    router.decisionActionGate({ status: "proposed", phase: "clarifying", productVersion: 2 }).enabled,
+    false
+  );
+});
+
+test("decisionActionGate：阶段或产品版本未加载时禁用而非隐藏，给用户可读原因", () => {
+  const noPhase = router.decisionActionGate({ status: "proposed", phase: null, productVersion: 2 });
+  assert.equal(noPhase.visible, true);
+  assert.equal(noPhase.enabled, false);
+  assert.ok(noPhase.reason.includes("会话阶段尚未加载"));
+
+  const noVersion = router.decisionActionGate({ status: "proposed", phase: "brainstorming", productVersion: 0 });
+  assert.equal(noVersion.enabled, false);
+  assert.ok(noVersion.reason.includes("产品状态尚未加载"));
+});

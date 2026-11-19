@@ -317,6 +317,26 @@ def _clip(text: Any, limit: int) -> str:
     return value[: limit - 1] + "…"
 
 
+def _dedupe_text(text: Any) -> str:
+    """判重键：折叠空白、忽略大小写（与 reducer 的 ``_norm_text`` 一致）。"""
+
+    return " ".join(str(text or "").split()).casefold()
+
+
+def _append_new(existing: list[Any], incoming: list[Any], key: Any) -> list[Any]:
+    """以既有条目为基底追加本轮新条目，按 ``key`` 去重且保留旧条目顺序。"""
+
+    merged = list(existing)
+    seen = {key(item) for item in merged}
+    for item in incoming:
+        item_key = key(item)
+        if item_key in seen:
+            continue
+        seen.add(item_key)
+        merged.append(item)
+    return merged
+
+
 def _output_invalid_error() -> type[BaseException]:
     from core.llm_client import LLMOutputInvalidError
 
@@ -798,6 +818,22 @@ async def _run_stage(
             error_message=run.error,
         )
         return run
+    except AppError as exc:
+        # 阶段级失败（超时/预算/上下文等）也要落盘，前端「阶段时间线」才能定位到失败阶段；
+        # 落盘后重新抛出，由调用方统一走 _failed_outcome（round/loop 置 failed）。
+        run.error = str(exc.message)[:1000]
+        _finish_stage(
+            ctx,
+            step_id=run.step_id,
+            stage=stage,
+            params=params,
+            parsed=None,
+            blockers=[run.error] if run.error else [],
+            summary=f"{_STAGE_LABELS[stage]}阶段执行失败",
+            error_code=exc.code,
+            error_message=run.error,
+        )
+        raise
 
     run.calls = calls
     if stage is LoopStage.evaluate:
@@ -940,7 +976,30 @@ def _build_product_state(
             status=DecisionStatus.proposed,
             needs_review=False,
             origin=OriginKind.model,
+            source_run_id=run_id,
         )
+    )
+
+    # 契约 docs/loop-studio-interfaces.md:97：本轮产物是**追加**到既有产品状态，
+    # 而不是整体覆盖——上一轮/脑暴期的 claims、options、已确认决策与未决事项
+    # 必须保留（整体覆盖会丢失用户已签字确认的决策并造成悬空引用）。
+    merged_claims = _append_new(
+        list(state.claims),
+        claims,
+        lambda item: (str(getattr(item.kind, "value", item.kind)), _dedupe_text(item.text)),
+    )
+    merged_options = _append_new(
+        list(state.options), options, lambda item: _dedupe_text(item.title)
+    )
+    merged_decisions = _append_new(
+        list(state.decisions),
+        decisions,
+        lambda item: (item.option_id or "", _dedupe_text(item.rationale)),
+    )
+    merged_issues = _append_new(
+        list(state.unresolved_issues),
+        issues,
+        lambda item: (str(item.kind), _dedupe_text(item.text)),
     )
 
     payload = state.model_dump(mode="json")
@@ -950,10 +1009,10 @@ def _build_product_state(
             "created_at": utc_now_iso(),
             "source_run_id": run_id,
             "schema_version": SCHEMA_VERSION,
-            "claims": [claim.model_dump(mode="json") for claim in claims],
-            "options": [option.model_dump(mode="json") for option in options],
-            "decisions": [decision.model_dump(mode="json") for decision in decisions],
-            "unresolved_issues": [issue.model_dump(mode="json") for issue in issues],
+            "claims": [claim.model_dump(mode="json") for claim in merged_claims],
+            "options": [option.model_dump(mode="json") for option in merged_options],
+            "decisions": [decision.model_dump(mode="json") for decision in merged_decisions],
+            "unresolved_issues": [issue.model_dump(mode="json") for issue in merged_issues],
         }
     )
     return ProductState.model_validate(payload)

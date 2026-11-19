@@ -82,6 +82,8 @@ export const CODE_MESSAGES: Record<string, string> = {
   FEATURE_NOT_READY: "该功能尚未开放",
   INTERNAL: "服务内部错误，请稍后重试",
   TIMEOUT: "请求超时，请稍后重试",
+  // 200 但正文不是 JSON（网关错误页 / 代理注入 HTML）：不能静默降级 legacy。
+  INVALID_RESPONSE: "服务返回了无法解析的内容，请重试",
 };
 
 export class ApiError extends Error {
@@ -388,7 +390,19 @@ export async function apiV2<T>(path: string, options: V2RequestOptions = {}): Pr
   try {
     return (await res.json()) as T;
   } catch {
-    return undefined as T;
+    // 200 但正文无法解析（网关错误页 / 代理注入 HTML）时必须抛 ApiError：
+    // 旧实现 `return undefined as T` 会让调用方读 view.phase 抛 TypeError，
+    // 而 isEndpointUnavailable 把 TypeError 当作「v2 端点不存在」→ 静默降级
+    // legacy，工作台的审计/Loop/简报入口整体消失且无任何提示（FE-02 P1）。
+    throw new ApiError(
+      "INVALID_RESPONSE",
+      CODE_MESSAGES.INVALID_RESPONSE,
+      res.status,
+      true,
+      null,
+      requestId ?? null,
+      null
+    );
   }
 }
 

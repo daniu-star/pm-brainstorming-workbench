@@ -279,6 +279,90 @@ class LoopCommandTests(unittest.TestCase):
             messages = session_repo.list_messages(db, sid)
             self.assertTrue(any("可交付" in (row.content or "") for row in messages))
 
+    def _seed_loop_decision(self, session_id: str, run_id: str) -> int:
+        """写入一条与该闭环轮次关联的 proposed 决策，返回新的产品状态版本。"""
+
+        with session_scope() as db:
+            session = session_repo.require_session(db, session_id, owner_email=OWNER)
+            state = session_repo.get_product_state(db, session_id)
+            state.decisions = [
+                *state.decisions,
+                C.DecisionItem(
+                    id=C.new_id(),
+                    rationale="第 1 轮闭环评分 88 ≥ 85，建议按主流程交付",
+                    status=C.DecisionStatus.proposed,
+                    source_run_id=run_id,
+                ),
+            ]
+            state.version = state.version + 1
+            session_repo.save_product_state(db, session, state, now_iso=NOW_ISO)
+            return state.version
+
+    def test_ship_decision_confirms_loop_decisions_and_bumps_product_version(self):
+        """PRD-04：交付即签字，本闭环轮次生成的 proposed 决策必须收口为 confirmed。
+
+        修复前 ship 返回 ``product_state=None``：产品状态不 bump、决策仍 proposed，
+        画布继续显示「确认决策」，与「闭环已交付」自相矛盾。
+        """
+        sid = self._new_session()
+        self._advance_to_brainstorming(sid)
+        receipt = self._start_loop(sid)
+        self._release_active(receipt.run_id)
+        seeded_version = self._seed_loop_decision(sid, receipt.run_id)
+        with session_scope() as db:
+            loop = loop_repo.get_loop(db, receipt.loop_id)
+            assert loop is not None
+            loop_repo.touch_loop(db, loop, status=LoopStatus.awaiting_decision)
+            loop_version = int(loop.loop_version)
+
+        decision = self._submit(
+            sid,
+            Action.loop_decision,
+            {"loop_id": receipt.loop_id, "expected_loop_version": loop_version, "decision": "ship"},
+        )
+        self.assertEqual(decision.status, C.RunStatus.succeeded)
+
+        with session_scope() as db:
+            session = session_repo.require_session(db, sid, owner_email=OWNER)
+            state = session_repo.get_product_state(db, sid)
+        self.assertEqual(session.current_product_version, seeded_version + 1)
+        self.assertEqual(state.version, seeded_version + 1)
+        seeded = [item for item in state.decisions if item.source_run_id == receipt.run_id]
+        self.assertEqual(len(seeded), 1)
+        self.assertEqual(seeded[0].status, C.DecisionStatus.confirmed)
+        self.assertFalse(seeded[0].needs_review)
+        self.assertEqual(seeded[0].confirmed_by, OWNER)
+        self.assertIsNotNone(seeded[0].confirmed_at)
+
+    def test_stop_decision_does_not_confirm_loop_decisions(self):
+        """停止闭环不等于签字交付：proposed 决策保持 proposed，产品状态不 bump。"""
+
+        sid = self._new_session()
+        self._advance_to_brainstorming(sid)
+        receipt = self._start_loop(sid)
+        self._release_active(receipt.run_id)
+        seeded_version = self._seed_loop_decision(sid, receipt.run_id)
+        with session_scope() as db:
+            loop = loop_repo.get_loop(db, receipt.loop_id)
+            assert loop is not None
+            loop_repo.touch_loop(db, loop, status=LoopStatus.awaiting_decision)
+            loop_version = int(loop.loop_version)
+
+        self._submit(
+            sid,
+            Action.loop_decision,
+            {"loop_id": receipt.loop_id, "expected_loop_version": loop_version, "decision": "stop"},
+        )
+
+        with session_scope() as db:
+            session = session_repo.require_session(db, sid, owner_email=OWNER)
+            state = session_repo.get_product_state(db, sid)
+        self.assertEqual(session.current_product_version, seeded_version)
+        seeded = [item for item in state.decisions if item.source_run_id == receipt.run_id]
+        self.assertEqual(len(seeded), 1)
+        self.assertEqual(seeded[0].status, C.DecisionStatus.proposed)
+        self.assertIsNone(seeded[0].confirmed_by)
+
     def test_stop_decision_closes_loop(self):
         sid = self._new_session()
         self._advance_to_brainstorming(sid)
@@ -549,6 +633,115 @@ class LoopCommandTests(unittest.TestCase):
         self.assertEqual(types.count(C.EventType.run_cancelled.value), 1)
         self.assertIn(C.EventType.run_cancelled.value, types)
         self.assertNotIn(C.EventType.audit_updated.value, types)
+
+    # ------------------------------------------------------- 排队超时（P1 回归）
+
+    def test_queue_timeout_closes_loop_and_allows_restart(self):
+        """P1 回归：排队超时是终结态，必须同步收口闭环与会话占位。
+
+        修复前 ``expire_queued_runs`` 只把 Run 置 failed：``loop.status`` 仍
+        running、``round.status`` 仍 running、``session.active_run_id`` 仍指向
+        失败 Run，于是 ``start_loop`` → 409 LOOP_ACTIVE、``loop_decision`` →
+        409 LOOP_NOT_AWAITING_DECISION，闭环永久死锁。
+        """
+        sid = self._new_session()
+        self._advance_to_brainstorming(sid)
+        first = self._start_loop(sid)
+        with session_scope() as db:
+            run = run_repo.get_run(db, first.run_id)
+            assert run is not None
+            run.queue_deadline_at = NOW_EPOCH - 1
+            db.flush()
+            expired = run_repo.expire_queued_runs(db, now_epoch=NOW_EPOCH, now_iso=NOW_ISO)
+            self.assertEqual(expired, [first.run_id])
+            failed = run_repo.get_run(db, first.run_id)
+            self.assertEqual(failed.status, RunStatus.failed.value)
+            self.assertEqual(failed.error_code, ErrorCode.QUEUE_WAIT_EXCEEDED)
+            types = [event.type for event in run_repo.events_after(db, first.run_id)]
+            self.assertIn(C.EventType.run_failed.value, types)
+            self.assertIn(C.EventType.loop_updated.value, types)
+
+        loop = self._loop_row(first.loop_id)
+        self.assertEqual(loop.status, LoopStatus.failed.value)
+        self.assertIsNotNone(loop.closed_at, "闭环收口必须写 closed_at")
+        rounds = self._rounds(first.loop_id)
+        self.assertEqual(rounds[0].status, "failed")
+        with session_scope() as db:
+            session = session_repo.require_session(db, sid, owner_email=OWNER)
+            self.assertIsNone(session.active_run_id)
+            self.assertIsNone(run_repo.active_run_for_session(db, sid))
+            self.assertIsNone(loop_repo.active_loop_for_session(db, sid))
+
+        # 用户可恢复：直接开启新闭环（不再 409 LOOP_ACTIVE）。
+        second = self._start_loop(sid)
+        self.assertNotEqual(second.loop_id, first.loop_id)
+
+    def test_retry_failed_loop_run_inherits_loop_and_reopens_round(self):
+        """P1 回归：重试闭环轮次 Run 必须回到闭环内，且能重新收口。
+
+        修复前子 Run 的 ``loop_id=None``：取消子 Run 时 ``_abort_loop_for_run``
+        找不到闭环，闭环/轮次永远停在 running。
+        """
+        sid = self._new_session()
+        self._advance_to_brainstorming(sid)
+        first = self._start_loop(sid)
+        with session_scope() as db:
+            run = run_repo.get_run(db, first.run_id)
+            assert run is not None
+            run.status = RunStatus.running.value
+            run.started_at = NOW_ISO
+            db.flush()
+            session = session_repo.require_session(db, sid, owner_email=OWNER)
+            command_service._commit_outcome(
+                db,
+                run=run,
+                session=session,
+                outcome=command_service.RunOutcome(
+                    status=RunStatus.failed,
+                    error_code=ErrorCode.MODEL_OUTPUT_INVALID,
+                    error_message="阶段执行失败",
+                ),
+                now_iso=NOW_ISO,
+                lease_required=False,
+            )
+        self.assertEqual(self._loop_row(first.loop_id).status, LoopStatus.failed.value)
+
+        with session_scope() as db:
+            receipt = command_service.retry_run(
+                db,
+                owner_email=OWNER,
+                run_id=first.run_id,
+                request_id=C.new_request_id(),
+                now_iso=NOW_ISO,
+                now_epoch=CLOCK["epoch"],
+            )
+            self.assertEqual(receipt.loop_id, first.loop_id)
+            child = run_repo.get_run(db, receipt.run_id)
+            self.assertEqual(child.loop_id, first.loop_id)
+            self.assertEqual(child.parent_run_id, first.run_id)
+            session = session_repo.require_session(db, sid, owner_email=OWNER)
+            self.assertEqual(session.active_run_id, child.id)
+            types = [event.type for event in run_repo.events_after(db, child.id)]
+            self.assertIn(C.EventType.loop_updated.value, types)
+
+        loop = self._loop_row(first.loop_id)
+        self.assertEqual(loop.status, LoopStatus.running.value)
+        self.assertIsNone(loop.closed_at)
+        self.assertEqual(loop.latest_run_id, receipt.run_id)
+        rounds = self._rounds(first.loop_id)
+        self.assertEqual(rounds[0].status, "running")
+        self.assertEqual(rounds[0].run_id, receipt.run_id)
+
+        # 重试后的子 Run 是 latest_run_id：取消它能再次收口闭环（原缺陷闭环仍 running）。
+        with session_scope() as db:
+            command_service.cancel_run(
+                db, owner_email=OWNER, run_id=receipt.run_id, now_iso=NOW_ISO
+            )
+        loop = self._loop_row(first.loop_id)
+        self.assertEqual(loop.status, LoopStatus.failed.value)
+        self.assertIsNotNone(loop.closed_at)
+        rounds = self._rounds(first.loop_id)
+        self.assertEqual(rounds[0].status, "failed")
 
 
 if __name__ == "__main__":
