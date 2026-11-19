@@ -93,7 +93,8 @@ loop-engineering-product/
 │   ├── rubric.md                 # 评分锚点与硬上限裁定流程
 │   └── protocol.md               # 轮次协议、发现项格式、证据纪律、僵局处理
 ├── scripts/
-│   └── loop-workflow.js          # 可直接执行的闭环脚本
+│   ├── loop-workflow.js          # 可直接执行的闭环脚本
+│   └── verify_write_scopes.py    # H3 写权限隔离校验（越界即 FAIL）
 └── assets/
     └── report-template.md        # 逐轮 / 汇总报告模板
 ```
