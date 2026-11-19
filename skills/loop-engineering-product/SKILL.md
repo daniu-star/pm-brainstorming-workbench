@@ -90,8 +90,24 @@ workflow({
 3. 每轮结束看 `rounds[i].score` 与 `rounds[i].retest`；收尾看 `releases` 建议与 `openItems`。
 4. 结果归档：`docs/loop-runs/round-N.md` + 汇总 `docs/loop-runs/README.md`（模板见 `assets/report-template.md`）。
 
+## Harness 契约（健壮性的来源）
+
+Loop 本身只是「流程」，真正让它不塌的是 Harness 强制的 10 条约束（详见 `references/harness.md`）：
+
+1. **结构化产出**：每个角色返回必须过 schema（`additionalProperties: false`），分数/P0 数是数字字段。
+2. **阶段门禁**：`score ≥ target 且 p0 == 0` 由脚本判定，agent 无权宣布可交付。
+3. **写权限隔离**：客户端只改 `frontend/**`、服务端只改 `backend/**`；越界即回滚。
+4. **证据强制**：评测组 verdict 必须含真实命令输出片段，测试组必须报真实数字。
+5. **修复可回滚**：每轮记录 git baseline，复测劣化即回滚并记录原因。
+6. **预算与超时**：单轮调用数与单 agent 超时受限，超预算显式失败、不静默降配。
+7. **幂等可恢复**：发现 id 稳定、轮次状态可序列化、支持断点续跑。
+8. **可观测**：阶段可轮询，进度日志写真实分数（`Round 2: 84/100（P0=0 P1=2）`）。
+9. **并发与竞争**：审计并行、修复写域互斥、评测永远在复测之后。
+10. **诚实性检查**：删用例/改期望/skip/恒真断言 → 该轮上限 60 并要求回退。
+
 ## 参考文件
 
+- `references/harness.md`：Harness 10 条契约、最小可用清单、anti-false-green 检查表。
 - `references/roles.md`：7 个角色的正式职责书、prompt 要点、禁止事项。
 - `references/rubric.md`：8 维评分卡的 0/60/80/95 分锚点与硬上限裁定流程。
 - `references/protocol.md`：轮次协议、发现项格式、证据纪律、僵局处理、产物清单。

@@ -88,6 +88,7 @@ workflow({
 loop-engineering-product/
 ├── SKILL.md                      # skill 入口（何时用 + 流程 + 评分卡）
 ├── references/
+│   ├── harness.md                # Harness 10 条契约（schema/gate/scope/证据/回滚…）
 │   ├── roles.md                  # 7 个角色的职责书与禁止事项
 │   ├── rubric.md                 # 评分锚点与硬上限裁定流程
 │   └── protocol.md               # 轮次协议、发现项格式、证据纪律、僵局处理
