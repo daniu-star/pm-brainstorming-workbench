@@ -138,41 +138,67 @@ if (-not (Test-Path (Join-Path $Backend '.env'))) {
 
 if (-not (Test-Path $RunDir)) { New-Item -ItemType Directory -Path $RunDir | Out-Null }
 
-# ------------------------------------------------- already running? (idempotent)
+# ------------------------------------------------- already running? (per-service, idempotent)
 $apiPidFile = Join-Path $RunDir 'api.pid'
 $webPidFile = Join-Path $RunDir 'web.pid'
+$workerPidFile = Join-Path $RunDir 'worker.pid'
 $apiPortFile = Join-Path $RunDir 'api.port'
 $webPortFile = Join-Path $RunDir 'web.port'
-$runningApiPid = Get-AlivePid $apiPidFile
-$runningWebPid = Get-AlivePid $webPidFile
 
-if (-not $Force -and $runningApiPid -gt 0) {
-    $knownApiPort = 8000
-    if (Test-Path $apiPortFile) { $knownApiPort = [int]((Get-Content $apiPortFile -Raw).Trim()) }
-    if (Test-PortBusy $knownApiPort) {
-        Write-Ok ('Already running: API pid ' + $runningApiPid + ' on port ' + $knownApiPort)
-        if ($webEnabled -and $runningWebPid -gt 0) {
-            $knownWebPort = 3000
-            if (Test-Path $webPortFile) { $knownWebPort = [int]((Get-Content $webPortFile -Raw).Trim()) }
-            Write-Ok ('Already running: Web pid ' + $runningWebPid + ' on port ' + $knownWebPort)
-            if (-not $NoBrowser) { Start-Process ('http://127.0.0.1:' + $knownWebPort) }
-        }
-        Write-Host ''
-        Write-Host ('  Open    : http://127.0.0.1:' + $knownWebPort) -ForegroundColor White
-        Write-Host ('  API doc : http://127.0.0.1:' + $knownApiPort + '/docs') -ForegroundColor White
-        Write-Host '  Stop it : stop.bat' -ForegroundColor DarkGray
-        exit 0
-    }
-    Write-Warn2 'Stale pid file found but the recorded port is closed - starting fresh.'
+$knownApiPort = 8000
+if (Test-Path $apiPortFile) { $knownApiPort = [int]((Get-Content $apiPortFile -Raw).Trim()) }
+$knownWebPort = 3000
+if (Test-Path $webPortFile) { $knownWebPort = [int]((Get-Content $webPortFile -Raw).Trim()) }
+
+$skipApiStart = $false
+$skipWorkerStart = $false
+$skipWebStart = $false
+
+$runningApiPid = Get-AlivePid $apiPidFile
+if (-not $Force -and $runningApiPid -gt 0 -and (Test-PortBusy $knownApiPort)) {
+    Write-Ok ('API already running: pid ' + $runningApiPid + ' on port ' + $knownApiPort)
+    $ApiPort = $knownApiPort
+    $skipApiStart = $true
+}
+
+$runningWorkerPid = Get-AlivePid $workerPidFile
+if (-not $Force -and -not $SkipWorker -and $runningWorkerPid -gt 0) {
+    Write-Ok ('Worker already running: pid ' + $runningWorkerPid)
+    $skipWorkerStart = $true
+}
+
+$runningWebPid = Get-AlivePid $webPidFile
+if (-not $Force -and $webEnabled -and $runningWebPid -gt 0 -and (Test-PortBusy $knownWebPort)) {
+    Write-Ok ('Web already running: pid ' + $runningWebPid + ' on port ' + $knownWebPort)
+    $WebPort = $knownWebPort
+    $skipWebStart = $true
+}
+
+# 全部就绪才直接退出；只要有一个服务缺失就继续启动缺失的那部分（原实现只要 API 在跑就 exit，
+# 导致「Web 挂了但 API 还在」时永远拉不起前端，且打印空端口）。
+$allUp = $skipApiStart -and $skipWebStart -and ($skipWorkerStart -or $SkipWorker)
+if ($allUp) {
+    if ($webEnabled -and -not $NoBrowser) { Start-Process ('http://127.0.0.1:' + $WebPort) }
+    Write-Host ''
+    Write-Host ('  Frontend : http://127.0.0.1:' + $WebPort) -ForegroundColor White
+    Write-Host ('  API      : http://127.0.0.1:' + $ApiPort + '/health') -ForegroundColor White
+    Write-Host ('  API docs : http://127.0.0.1:' + $ApiPort + '/docs') -ForegroundColor White
+    Write-Host '  Stop it  : stop.bat' -ForegroundColor DarkGray
+    exit 0
+}
+
+if ($skipApiStart -or $skipWebStart -or $skipWorkerStart) {
+    Write-Warn2 'Partial restart: only the services that are missing will be started.'
 }
 
 # ---------------------------------------------------------------- ports
-if (Test-PortBusy $ApiPort) {
+# 已在运行的服务保留其既有端口；只给「需要新启动」的服务做占用顺延。
+if (-not $skipApiStart -and (Test-PortBusy $ApiPort)) {
     $free = Find-FreePort ($ApiPort + 1)
     Write-Warn2 ('Port ' + $ApiPort + ' is in use by another program - API will use ' + $free + ' instead.')
     $ApiPort = $free
 }
-if ($webEnabled -and (Test-PortBusy $WebPort)) {
+if ($webEnabled -and -not $skipWebStart -and (Test-PortBusy $WebPort)) {
     $freeWeb = Find-FreePort ($WebPort + 1)
     Write-Warn2 ('Port ' + $WebPort + ' is in use by another program - Web will use ' + $freeWeb + ' instead.')
     $WebPort = $freeWeb
@@ -210,19 +236,21 @@ if ($webEnabled) {
 }
 
 # ---------------------------------------------------------------- start
-Write-Step ('Starting API on 127.0.0.1:' + $ApiPort + ' ...')
-$apiProc = Start-ServiceWindow -Launcher $apiLauncher -WorkDir $Backend
-Set-Content -Path $apiPidFile -Value $apiProc.Id -Encoding ASCII
-Set-Content -Path $apiPortFile -Value $ApiPort -Encoding ASCII
+if (-not $skipApiStart) {
+    Write-Step ('Starting API on 127.0.0.1:' + $ApiPort + ' ...')
+    $apiProc = Start-ServiceWindow -Launcher $apiLauncher -WorkDir $Backend
+    Set-Content -Path $apiPidFile -Value $apiProc.Id -Encoding ASCII
+    Set-Content -Path $apiPortFile -Value $ApiPort -Encoding ASCII
+}
 
-if (-not $SkipWorker) {
+if (-not $SkipWorker -and -not $skipWorkerStart) {
     Write-Step 'Starting Worker ...'
     $workerProc = Start-ServiceWindow -Launcher $workerLauncher -WorkDir $Backend
     Set-Content -Path (Join-Path $RunDir 'worker.pid') -Value $workerProc.Id -Encoding ASCII
     Set-Content -Path (Join-Path $RunDir 'worker.port') -Value 0 -Encoding ASCII
 }
 
-if ($webEnabled) {
+if ($webEnabled -and -not $skipWebStart) {
     Write-Step ('Starting Web on 127.0.0.1:' + $WebPort + ' ...')
     $webProc = Start-ServiceWindow -Launcher $webLauncher -WorkDir $Frontend
     Set-Content -Path $webPidFile -Value $webProc.Id -Encoding ASCII
@@ -240,7 +268,7 @@ if (-not $apiReady) {
 }
 Write-Ok ('API ready  -  http://127.0.0.1:' + $ApiPort + '/health')
 
-if ($webEnabled) {
+if ($webEnabled -and -not $skipWebStart) {
     Write-Step 'Waiting for Web (first Next.js compile can take a while) ...'
     $webReady = Wait-Http -Url ('http://127.0.0.1:' + $WebPort + '/') -TimeoutSeconds 180
     if (-not $webReady) {
