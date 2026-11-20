@@ -9,8 +9,9 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test:build": "tsc -p tsconfig.test.json",
-    "test": "tsc -p tsconfig.test.json && node --test \"tests/*.test.cjs\"",
-    "test:e2e": "node --test tests/e2e/*.test.cjs"
+    "test": "tsc -p tsconfig.test.json && tsc -p tsconfig.render.json && node --test \"tests/*.test.cjs\"",
+    "test:e2e": "node --test tests/e2e/*.test.cjs",
+    "test:render": "tsc -p tsconfig.render.json"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.17",

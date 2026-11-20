@@ -1,0 +1,35 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "outDir": "node_modules/.cache/render-build",
+    "rootDir": ".",
+    "declaration": false,
+    "sourceMap": false,
+    "incremental": false,
+    "isolatedModules": false,
+    "jsx": "react-jsx",
+    "allowJs": false
+  },
+  "include": [],
+  "files": [
+    "lib/contracts.generated.ts",
+    "lib/api.ts",
+    "lib/types.ts",
+    "lib/briefDraft.ts",
+    "lib/loopView.ts",
+    "lib/auditView.ts",
+    "lib/phaseRouter.ts",
+    "lib/stateGuards.ts",
+    "lib/sse.ts",
+    "store/sessionStore.ts",
+    "components/chat/MessageList.tsx",
+    "components/chat/MessageBubble.tsx",
+    "components/brief/BriefCard.tsx",
+    "components/canvas/CanvasPanel.tsx",
+    "components/Toast.tsx",
+    "components/icons/index.tsx"
+  ]
+}
