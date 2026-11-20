@@ -66,6 +66,27 @@ def list_sessions(request: Request, cursor: str | None = None, limit: int | None
     return {"items": items, "next_cursor": next_cursor}
 
 
+@router.get("/sessions/{session_id}/runs")
+def list_session_runs(
+    session_id: str,
+    request: Request,
+    status: str | None = None,
+    limit: int | None = None,
+):
+    """列出会话任务（默认最近 10 条），供「上次任务失败」这类界面读取。"""
+
+    owner_email = common.require_user(request)
+    page_limit = common.clamp_limit(limit, default=10, maximum=50)
+    statuses = [item.strip() for item in (status or "").split(",") if item.strip()]
+    with common.open_db() as db:
+        session = common.require_owned_session(db, session_id, owner_email)
+        rows = common.repo("run_repo").list_session_runs(
+            db, session.id, statuses=statuses or None, limit=page_limit
+        )
+        items = [common.run_view(row).model_dump(mode="json") for row in rows]
+    return {"items": items, "next_cursor": None}
+
+
 @router.get("/sessions/{session_id}")
 def get_session(session_id: str, request: Request):
     owner_email = common.require_user(request)

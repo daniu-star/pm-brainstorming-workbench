@@ -1191,6 +1191,40 @@ test("loadSession 切换会话时清空闭环缓存（避免跨会话串数据�
   }
 });
 
+test("loadSession 刷新后恢复上一次失败任务（runs + lastFailedRunId）", async () => {
+  prime({ lastFailedRunId: null, runs: {} });
+  const failedRun = {
+    id: "run_failed_1",
+    session_id: "s1",
+    action: "brainstorm",
+    status: "failed",
+    request_id: "req_1",
+    base_session_version: 1,
+    base_product_version: 1,
+    result_product_version: null,
+    error_code: "LLM_AUTH_ERROR",
+    error_message: "模型服务鉴权失败（API Key 无效、已过期或无权限）",
+    created_at: "2026-11-20T03:00:00Z",
+  };
+  const calls = stubFetch((url) => {
+    if (url.includes("/sessions/s1/runs")) return { items: [failedRun], next_cursor: null };
+    if (url.includes("/sessions/s1/product-state")) return { version: 2 };
+    if (url.includes("/sessions/s1/canvas")) return { product_version: 2, nodes: [], edges: [] };
+    if (url.includes("/sessions/s1/messages")) return { items: [], next_cursor: null };
+    return { ...SESSION_VIEW };
+  });
+
+  await useSessionStore.getState().loadSession("s1");
+  await waitFor(() => calls.some((call) => call.url.includes("/sessions/s1/runs")));
+
+  const state = useSessionStore.getState();
+  assert.match(calls.find((call) => call.url.includes("/sessions/s1/runs")).url, /status=failed%2Cpartial_succeeded|status=failed,partial_succeeded/);
+  assert.equal(state.lastFailedRunId, "run_failed_1");
+  assert.equal(state.runs.run_failed_1.status, "failed");
+  assert.equal(state.runs.run_failed_1.action, "brainstorm");
+  assert.match(state.runs.run_failed_1.errorMessage, /鉴权失败/);
+});
+
 test.after(() => {
   if (realFetch) global.fetch = realFetch;
   else delete global.fetch;

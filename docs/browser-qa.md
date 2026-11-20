@@ -60,6 +60,12 @@ print(create_session_token('qa.browser@example.com'))
 7. **审计页**：进 `/session/<id>/audit` → 预期：显示「开始审计」与六维说明，
    并标注审计锚定的产品状态版本（v2）。
 
+8. **刷新后的失败可见性（CHAT-03）**：在聊天页按 F5 刷新，store 的内存态全部丢失，
+   预期仍能看到「模型服务鉴权失败…」错误条与「重试上一步」按钮（原因是
+   `loadSession → hydrateFailedRun` 从 `GET /sessions/{id}/runs?status=failed,partial_succeeded`
+   恢复了最近一条**对话类**失败任务，闭环/审计的失败不会挤进群聊）；
+   点「重试上一步」应创建一个 `parent_run_id` 非空的子 Run，并再次给出可见失败原因。
+
 ## 3. 本次实测记录（2026-11-20）
 
 | 步骤 | 观察结果 | 证据 |
@@ -71,6 +77,7 @@ print(create_session_token('qa.browser@example.com'))
 | 5 | `brainstorm` Run `failed / LLM_AUTH_ERROR`，出现「重试上一步」 | 同上 |
 | 6 | 闭环 `start_loop` Run `failed / LLM_AUTH_ERROR`，loop `status=failed`、`loop_version=3`，页面展示失败原因与两个恢复入口 | `browser-loop-failed-round.png` |
 | 7 | 审计页正常渲染，标注「基于当前产品状态（v2）」 | `browser-audit-page.png` |
+| 8 | 刷新后仍显示失败原因 + 「重试上一步」；点击后新建 `parent_run_id` 子 Run 并再次可见失败 | `browser-reclaimed-failure.png`；库中 `runs` 出现 child=1 的 `brainstorm` |
 
 库侧交叉验证（`backend/data/app.db`，同一会话）：
 

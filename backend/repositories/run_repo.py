@@ -142,6 +142,23 @@ def active_run_for_session(db, session_id: str) -> RunRow | None:
     ).scalar_one_or_none()
 
 
+def list_session_runs(
+    db,
+    session_id: str,
+    *,
+    statuses: Sequence[str] | None = None,
+    limit: int = 10,
+) -> list[RunRow]:
+    """按 (created_at DESC, id DESC) 列出会话任务，供「上次任务失败」类界面读取。"""
+
+    limit = max(1, min(int(limit), 50))
+    stmt = select(RunRow).where(RunRow.session_id == session_id)
+    if statuses:
+        stmt = stmt.where(RunRow.status.in_(tuple(statuses)))
+    stmt = stmt.order_by(RunRow.created_at.desc(), RunRow.id.desc()).limit(limit)
+    return list(db.execute(stmt).scalars().all())
+
+
 def claim_next_run(
     db, *, worker_id: str, now_epoch: int, lease_seconds: int = 30, attempts: int = 3
 ) -> RunRow | None:

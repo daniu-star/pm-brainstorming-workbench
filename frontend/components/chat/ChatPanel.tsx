@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useSessionStore } from "@/store/sessionStore";
+import { displayChatError, latestChatFailure } from "@/lib/chatNotices";
 import { shouldShowStartDiscussion } from "@/lib/phaseRouter";
 import { MessageList } from "./MessageList";
 import { RoleSelector } from "./RoleSelector";
@@ -58,11 +59,11 @@ export function ChatPanel() {
     (run) => run.sessionId === currentSessionId && run.action === "brainstorm" && run.status !== "failed"
   );
   // 脑暴 Run 失败：错误条给「重试上一步」，复用 store.retryFailedRun（backend retry_run 支持）
+  const chatFailure = latestChatFailure(runs, currentSessionId);
   const failedBrainstormRunId = (() => {
-    if (!lastFailedRunId) return null;
-    const run = runs[lastFailedRunId];
-    if (!run || run.status !== "failed") return null;
-    return run.action === "brainstorm" ? lastFailedRunId : null;
+    if (!chatFailure) return null;
+    const run = runs[chatFailure.runId];
+    return run?.action === "brainstorm" ? chatFailure.runId : null;
   })();
   const retryBrainstorm = async () => {
     if (!failedBrainstormRunId || isStreaming) return;
@@ -106,6 +107,10 @@ export function ChatPanel() {
         ? "产品教练 · 思路梳理"
         : "产品脑暴群聊";
 
+  // 刷新后 store.error 已经清空，但失败原因可以从后端恢复（见 store.hydrateFailedRun）：
+  // 同一条错误条渲染「上次任务失败原因」，否则用户只看到消息没有回复（CHAT-03）。
+  const displayError = displayChatError(error, runs, currentSessionId);
+
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Chat header — group name */}
@@ -118,12 +123,12 @@ export function ChatPanel() {
         </span>
       </div>
 
-      {error && (
+      {displayError && (
         <div
           role="alert"
           className="mx-3 mt-2 px-3 py-2 bg-red-900/20 border border-red-800/40 rounded-xl text-red-400 text-sm flex justify-between items-center gap-2"
         >
-          <span className="min-w-0 flex-1 break-words">{error}</span>
+          <span className="min-w-0 flex-1 break-words">{displayError}</span>
           <span className="flex shrink-0 items-center gap-1">
             {failedBrainstormRunId ? (
               <button

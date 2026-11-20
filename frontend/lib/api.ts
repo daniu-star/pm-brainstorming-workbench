@@ -467,6 +467,20 @@ export function listMessages(
   });
 }
 
+export interface RunListPage {
+  items: RunView[];
+  next_cursor: string | null;
+}
+
+export function listSessionRuns(
+  sessionId: string,
+  params: { status?: string; limit?: number } = {}
+): Promise<RunListPage> {
+  return apiV2<RunListPage>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/runs`, {
+    query: { status: params.status, limit: params.limit },
+  });
+}
+
 export function getMessage(messageId: string): Promise<MessageView> {
   return apiV2<MessageView>(`/api/v2/messages/${encodeURIComponent(messageId)}`);
 }

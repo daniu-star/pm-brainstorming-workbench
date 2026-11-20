@@ -33,6 +33,7 @@ import {
   isApiError,
   isEndpointUnavailable,
   listMessages,
+  listSessionRuns,
   newRequestId,
   retryFailed as apiRetryFailed,
   runEventsUrl,
@@ -187,6 +188,8 @@ export interface RunState {
   lastEventSeq: number;
   errorCode: string | null;
   errorMessage: string | null;
+  /** 任务创建时间（列表恢复的失败任务用它判断「最近一条」） */
+  createdAt?: string;
 }
 
 function emptyCanvas(): CanvasState {
@@ -1606,6 +1609,46 @@ export const useSessionStore = create<SessionState>((set, get) => {
 
   // ---- 会话加载 ---------------------------------------------------------- //
 
+  /**
+   * 恢复「上一次任务失败」：store 的 lastFailedRunId 只活在内存里，
+   * 刷新 / 重进页面后就丢，用户会看到「消息发出去却没有回复」而没有任何解释。
+   * 这里从后端最近任务里挑出失败的 Run，写回 runs[runId] + lastFailedRunId，
+   * ChatPanel 的错误条据此渲染失败原因与「重试上一步」。
+   */
+  async function hydrateFailedRun(sessionId: string, captured: SessionGuard): Promise<void> {
+    try {
+      const page = await listSessionRuns(sessionId, {
+        status: "failed,partial_succeeded",
+        limit: 5,
+      });
+      if (!assertCurrent(captured)) return;
+      const items = page.items ?? [];
+      if (items.length === 0) return;
+      const newest = items.reduce((acc, item) =>
+        item.created_at > acc.created_at ? item : acc
+      );
+      const restored: Record<string, RunState> = {};
+      for (const item of items) {
+        restored[item.id] = {
+          runId: item.id,
+          sessionId: item.session_id,
+          status: item.status,
+          action: item.action,
+          lastEventSeq: get().lastEventSeq[item.id] ?? 0,
+          errorCode: item.error_code ?? null,
+          errorMessage: item.error_message ?? null,
+          createdAt: item.created_at,
+        };
+      }
+      set((state) => ({
+        runs: { ...state.runs, ...restored },
+        lastFailedRunId: newest.id,
+      }));
+    } catch {
+      // 仅用于恢复入口：读取失败不阻塞主流程（阶段判断仍以 sessionView 为准）
+    }
+  }
+
   async function hydrateV2(sessionId: string, captured: SessionGuard): Promise<void> {
     const view = await getSession(sessionId);
     if (!assertCurrent(captured)) return;
@@ -1623,6 +1666,8 @@ export const useSessionStore = create<SessionState>((set, get) => {
       productVersion: view.current_product_version,
       canvasVersion: view.current_product_version,
     });
+    if (!assertCurrent(captured)) return;
+    await hydrateFailedRun(sessionId, captured);
     if (!assertCurrent(captured)) return;
     if (view.current_audit_id) void hydrateAudit(view.current_audit_id, captured);
     if (view.current_loop_id) void get().hydrateLoopById(view.current_loop_id);
