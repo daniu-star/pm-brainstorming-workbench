@@ -37,13 +37,13 @@
 
 | 修复 | 证据 | 验证 |
 | --- | --- | --- |
-| SRV-02 步骤成功与结果提交原子化 | `backend/workflows/runner.py` 的 `_attach_step_success_hook` + `requeue_uncommitted_step` | `tests/test_runner.py::ReplayTests` 2 例；后端全量 628 OK |
+| SRV-02 步骤成功与结果提交原子化 | `backend/workflows/runner.py` 的 `_attach_step_success_hook` + `requeue_uncommitted_step` | `tests/test_runner.py::ReplayTests` 2 例 + `tests/test_crash_atomicity.py`（真子进程在「步骤成功」flush 处 `os._exit`，验证事务回滚且恢复后只写一条消息）；后端全量 629 OK |
 | FE-DX-02 闭环不跨会话串数据 | `store.loadSession` 清空 `loops`；`lib/loopView.ts::selectLoopChoices` 过滤 `session_id` | `tests/loop-view.test.cjs` 2 例 + `tests/session-store.test.cjs` 1 例；前端 231 pass |
 | scope 真正进入提示词 | `backend/core/loop_prompts.py` 的「本轮范围」行 | `tests/test_loop_commands.py::test_scope_is_injected_into_stage_prompt` |
 | 硬性封顶有解释 | `lib/loopView.ts::scoreCapNotice` + 评分卡头部提示 | `tests/loop-view.test.cjs` 1 例 |
 | 决策事件反映决策后状态 | `command_service._loop_event(status=…, loop_version=…)` | `test_ship_decision_closes_loop_synchronously` 断言 payload |
 
-仍未闭合：SRV-02 只在单进程验证（跨进程崩溃注入未做）；页面 .tsx 仍无真实渲染覆盖（TST-01 仅结构化 wiring 断言）；决策条仍在首屏之下（P2，未做吸底）。
+仍未闭合：页面 .tsx 仍无真实渲染覆盖（TST-01 仅结构化 wiring 断言 + 纯函数测试）；决策条仍在首屏之下（P2，未做吸底）。SRV-02 已由 `backend/tests/test_crash_atomicity.py` 用真子进程崩溃注入补齐（不再是单进程模拟）。
 
 ## 运行方式
 
