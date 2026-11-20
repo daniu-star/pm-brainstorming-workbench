@@ -274,6 +274,12 @@ class LoopCommandTests(unittest.TestCase):
             self.assertEqual(types[0], C.EventType.run_queued.value)
             self.assertIn(C.EventType.loop_updated.value, types)
             self.assertEqual(len([t for t in types if t in C.TERMINAL_EVENT_TYPES]), 1)
+            # 决策事件必须反映“决策之后”的状态与版本，否则前端版本守卫会丢弃它（P2）
+            loop_events = [e for e in events if e.type == C.EventType.loop_updated.value]
+            payload = json.loads(loop_events[-1].payload_json)
+            self.assertEqual(payload["status"], LoopStatus.shipped.value)
+            self.assertEqual(int(payload["loop_version"]), version + 1)
+            self.assertEqual(payload["current_round"], int(loop.current_round))
             session = session_repo.require_session(db, sid, owner_email=OWNER)
             self.assertIsNone(session.active_run_id)
             messages = session_repo.list_messages(db, sid)
@@ -450,6 +456,23 @@ class LoopCommandTests(unittest.TestCase):
         ctx.evidence = None
         messages = build_stage_messages(ctx, stage=C.LoopStage.ideate, prior={})
         self.assertIn(note, messages[1].content)
+
+    def test_scope_is_injected_into_stage_prompt(self):
+        from core.loop_prompts import build_stage_messages
+
+        class _Ctx:
+            pass
+
+        ctx = _Ctx()
+        ctx.budget = {"loop_scope": "optimize", "loop_focus": "留存"}
+        ctx.product_state = None
+        ctx.evidence = None
+        messages = build_stage_messages(ctx, stage=C.LoopStage.ideate, prior={})
+        self.assertIn("既有产品优化", messages[1].content, "scope 必须真正影响提示词")
+
+        ctx.budget = {"loop_scope": "", "loop_focus": ""}
+        messages = build_stage_messages(ctx, stage=C.LoopStage.ideate, prior={})
+        self.assertNotIn("本轮范围", messages[1].content)
 
     def test_iterate_beyond_max_rounds_is_rejected(self):
         sid = self._new_session()

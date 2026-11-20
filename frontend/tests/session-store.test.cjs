@@ -1157,6 +1157,40 @@ test("startLoop 收到回执后立即把 current_loop_id 指向新闭环", async
   }
 });
 
+test("loadSession 切换会话时清空闭环缓存（避免跨会话串数据，FE-DX-02）", async () => {
+  prime({
+    loops: {
+      lp_old: loopSnapshot({ loop_id: "lp_old", session_id: "s_prev" }),
+    },
+    loopId: "lp_old",
+  });
+  global.fetch = async (url) => {
+    const href = String(url);
+    const payload = href.includes("/api/v2/loops/")
+      ? loopSnapshot({ loop_id: "lp_old", session_id: "s_prev" })
+      : href.includes("/messages")
+        ? { items: [], next_before_seq: null }
+        : {};
+    return {
+      ok: true,
+      status: 200,
+      json: async () => payload,
+      text: async () => JSON.stringify(payload),
+      headers: { get: () => "application/json" },
+    };
+  };
+
+  try {
+    await useSessionStore.getState().loadSession("s2");
+    const state = useSessionStore.getState();
+    assert.equal(state.sessionId, "s2");
+    assert.deepEqual(state.loops, {}, "切会话后不能保留上一个会话的闭环快照");
+    assert.equal(state.loopId, null);
+  } finally {
+    global.fetch = realFetch;
+  }
+});
+
 test.after(() => {
   if (realFetch) global.fetch = realFetch;
   else delete global.fetch;

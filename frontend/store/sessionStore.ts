@@ -1743,10 +1743,13 @@ export const useSessionStore = create<SessionState>((set, get) => {
         isGeneratingCanvas: false,
         productVersion: 0,
         productState: null,
-        // 闭环是会话级视图：切会话时清空当前闭环指针与加载态（loops 缓存按 loop_id 保留）
+        // 闭环是会话级视图：切会话时清空指针、加载态与快照缓存。
+        // 闭环快照内嵌 MVP 规格/评分卡/产物，跨会话复用只会把别人的闭环显示成
+        // 本会话历史（FE-DX-02）。
         loopId: null,
         loopLoading: false,
         loopErrors: {},
+        loops: {},
       });
 
       try {

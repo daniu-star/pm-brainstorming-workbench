@@ -693,3 +693,53 @@ test("compareRounds 给出分差、结论变化、七维分差与产物索引差
   assert.equal(empty.scoreDeltaText, "");
   assert.deepEqual(empty.dimensionRows, []);
 });
+
+// --------------------------------------------------------------------------- //
+// 第 5 轮回归（续）：闭环下拉不得跨会话串数据（FE-DX-02）
+// --------------------------------------------------------------------------- //
+
+test("selectLoopChoices 只保留当前会话的闭环（历史列表与缓存都过滤）", () => {
+  const mine = snapshot({ loop_id: "lp_mine", session_id: "s1", created_at: "2026-01-02T00:00:00Z" });
+  const other = snapshot({ loop_id: "lp_other", session_id: "s2", created_at: "2026-01-03T00:00:00Z" });
+
+  const choices = view.selectLoopChoices([mine, other], { lp_other: other, lp_mine: mine }, "s1");
+  assert.deepEqual(
+    choices.map((item) => item.loop_id),
+    ["lp_mine"],
+    "别的会话的闭环绝不允许进入下拉",
+  );
+
+  // 无 sessionId（尚未加载会话）时不静态过滤，但也不应崩
+  const unfiltered = view.selectLoopChoices([mine, other], {}, null);
+  assert.equal(unfiltered.length, 2);
+});
+
+test("selectLoopChoices 按 loop_id 去重、按创建时间倒序、缓存覆盖历史", () => {
+  const older = snapshot({ loop_id: "lp1", session_id: "s1", created_at: "2026-01-01T00:00:00Z", status: "shipped" });
+  const newer = snapshot({ loop_id: "lp2", session_id: "s1", created_at: "2026-01-05T00:00:00Z" });
+  const cachedNewer = { ...newer, status: "awaiting_decision" };
+
+  const choices = view.selectLoopChoices([newer, older], { lp2: cachedNewer }, "s1");
+  assert.deepEqual(choices.map((item) => item.loop_id), ["lp2", "lp1"]);
+  assert.equal(choices[0].status, "awaiting_decision", "缓存中的最新快照覆盖历史列表");
+
+  assert.deepEqual(view.selectLoopChoices(null, null, "s1"), []);
+});
+
+test("scoreCapNotice 为硬性封顶给出可执行解释", () => {
+  assert.equal(view.scoreCapNotice(null), "");
+  assert.equal(view.scoreCapNotice({ hard_capped: false, blockers: [], verdict: "pass" }), "");
+
+  const withBlockers = view.scoreCapNotice({
+    hard_capped: true,
+    verdict: "iterate",
+    blockers: ["缺少回滚方案", "无权限校验"],
+  });
+  assert.match(withBlockers, /2 条阻塞项/);
+
+  const p0 = view.scoreCapNotice({ hard_capped: true, verdict: "fail", blockers: [] });
+  assert.match(p0, /封顶/);
+
+  const generic = view.scoreCapNotice({ hard_capped: true, verdict: "pass", blockers: [] });
+  assert.match(generic, /硬性规则/);
+});

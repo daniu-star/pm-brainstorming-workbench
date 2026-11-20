@@ -581,6 +581,39 @@ def start_step(db, step: StepRow, *, now_iso: str | None = None) -> StepRow:
     return step
 
 
+def requeue_uncommitted_step(
+    db, step: StepRow, *, error_code: str = "RECOVERED_UNCOMMITTED", now_iso: str | None = None
+) -> bool:
+    """复位「步骤已成功但结果未提交」的旧版本残留（SRV-02）。
+
+    :func:`workflows.runner` 现在把步骤成功与结果提交放在同一事务里，正常情况下
+    不会再出现 ``succeeded`` 而 Run 未终结的状态。历史数据库可能残留这种行：
+    此时 ``output_json`` 里没有 ``committed`` 标记（没有真正提交过结果），允许
+    复位为 ``failed`` 让工作流重跑一次；若带 ``committed`` 标记则拒绝复位。
+    """
+
+    now_iso = now_iso or utc_now_iso()
+    if StepStatus(step.status) is not StepStatus.succeeded:
+        return False
+    try:
+        output = json.loads(step.output_json or "{}")
+    except ValueError:  # pragma: no cover - 手工改坏的数据
+        output = {}
+    if isinstance(output, dict) and output.get("committed"):
+        raise AppError(
+            ErrorCode.INVALID_REQUEST,
+            "该步骤已提交过结果，禁止重复执行",
+            details={"step_id": step.id},
+        )
+    step.status = StepStatus.failed.value
+    step.error_code = error_code
+    step.error_message = "步骤已成功但结果未提交，已复位重跑"
+    step.finished_at = now_iso
+    step.output_json = None
+    db.flush()
+    return True
+
+
 def finish_step(
     db,
     step: StepRow,

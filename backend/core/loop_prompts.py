@@ -313,12 +313,19 @@ def build_stage_messages(
     focus = str(_budget_value(ctx, "loop_focus") or "").strip()
     decision_note = str(_budget_value(ctx, "loop_decision_note") or "").strip()
 
+    scope = str(_budget_value(ctx, "loop_scope") or "").strip()
+    scope_line = {
+        "mvp": "最小可用产品（MVP）：先做一条能跑通的主路径，宁窄勿全",
+        "prototype": "可交互原型：重点是可演示的关键交互与状态，不做真实后端",
+        "optimize": "既有产品优化：在现有能力上做增量改进，明确前后对比",
+    }.get(scope, "")
     user_lines = ["产品定义（来自已确认的产品状态）："]
     user_lines.extend(_brief_lines(state))
     user_lines.extend(
         [
             "",
             f"本轮 focus：{_clip(focus, 500) if focus else '（未指定，聚焦最小可交付闭环）'}",
+            *([f"本轮范围：{scope_line}"] if scope_line else []),
         ]
     )
     if decision_note:

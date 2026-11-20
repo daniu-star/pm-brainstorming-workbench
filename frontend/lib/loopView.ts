@@ -881,6 +881,32 @@ function signedDelta(delta: number): string {
  * 「对比上一轮」：总分、七维分差、verdict 变化、产物索引差异。
  * 没有上一轮时 hasPrevious=false，页面不渲染对比条（不编造对比数据）。
  */
+/**
+ * 闭环下拉候选：当前会话的历史列表 + 已缓存快照，按 loop_id 去重、按创建时间倒序。
+ *
+ * 缓存（store.loops）是跨会话保留的，若不过滤会把别的会话的闭环显示成本会话历史
+ * （FE-DX-02）。因此这里只接受 `session_id` 与当前会话一致的缓存条目。
+ */
+export function selectLoopChoices(
+  history: LoopSnapshot[] | null | undefined,
+  cached: Record<string, LoopSnapshot> | null | undefined,
+  sessionId: string | null | undefined,
+): LoopSnapshot[] {
+  const map = new Map<string, LoopSnapshot>();
+  for (const item of history ?? []) {
+    if (!item) continue;
+    if (sessionId && item.session_id !== sessionId) continue;
+    map.set(item.loop_id, item);
+  }
+  for (const item of Object.values(cached ?? {})) {
+    if (!item) continue;
+    if (sessionId && item.session_id !== sessionId) continue;
+    map.set(item.loop_id, item);
+  }
+  return [...map.values()].sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
+}
+
+
 export function compareRounds(
   previous: LoopRoundView | null | undefined,
   current: LoopRoundView | null | undefined,
@@ -1381,6 +1407,23 @@ export function canRetryLoopRound(snapshot: LoopSnapshot | null | undefined): bo
 }
 
 /** 评分卡 verdict 展示文案；没有评分卡时明确「未评级」。 */
+/**
+ * 硬性封顶的解释文案：只有「硬性封顶」徽标而没有原因，用户无法判断该修什么（P2）。
+ * 返回空串表示没有封顶或没有评分卡。
+ */
+export function scoreCapNotice(card: LoopScoreCard | null | undefined): string {
+  if (!card || !card.hard_capped) return "";
+  const blockers = (card.blockers ?? []).filter((item) => String(item ?? "").trim().length > 0);
+  const verdict = String(card.verdict ?? "");
+  if (blockers.length > 0) {
+    return `因存在 ${blockers.length} 条阻塞项，总分按规则封顶（未达目标分不代表可交付）`;
+  }
+  if (verdict === "blocked" || verdict === "fail") {
+    return "因存在未解决的阻塞项 / 致命问题，总分按规则封顶";
+  }
+  return "评分命中硬性规则（阻塞项或 P0 问题），总分被封顶";
+}
+
 export function scoreVerdictText(snapshot: LoopSnapshot | null | undefined): string {
   if (!snapshot || !snapshot.scorecard) return VERDICT_LABELS.pending;
   return verdictLabel(snapshot.scorecard.verdict);

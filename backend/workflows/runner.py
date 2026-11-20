@@ -1096,6 +1096,56 @@ def _finish_step(
         return False
 
 
+def _attach_step_success_hook(
+    outcome: Any,
+    *,
+    run_id: str,
+    logical_key: str,
+) -> None:
+    """把「步骤成功」并入结果提交事务（SRV-02）。
+
+    旧实现先写 ``step=succeeded``、再提交结果：若进程在两者之间崩溃，重放分支会
+    用空 outcome 提交，得到「Run succeeded 但没有消息 / 产品状态 / 事件」的空成功。
+    这里改为把步骤成功写进 :func:`services.command_service.apply_outcome` 的提交
+    事务（``RunOutcome.apply`` 钩子），两步原子生效；提交失败则整体回滚，步骤保持
+    ``running`` 交给恢复流程重跑（最多 ``MAX_STEP_ATTEMPTS`` 次）。
+    """
+
+    run_repo, _ = _repositories()
+    previous = getattr(outcome, "apply", None)
+    output = {
+        "event_types": [
+            str(event.get("type")) for event in getattr(outcome, "events", []) or []
+            if isinstance(event, dict)
+        ],
+        "message_count": len(getattr(outcome, "messages", []) or []),
+        "committed": True,
+    }
+
+    def _apply(db: Any) -> None:
+        if previous is not None:
+            previous(db)
+        run = run_repo.get_run(db, run_id)
+        if run is None:  # pragma: no cover - 会话/任务被外部删除
+            return
+        step = run_repo.get_step_by_key(db, run_id, logical_key)
+        if step is None:  # pragma: no cover - 步骤缺失说明数据被外部改写
+            logger.warning("提交钩子找不到步骤 run=%s key=%s", run_id, logical_key)
+            return
+        status = (
+            StepStatus.cancelled
+            if RunStatus(run.status) is RunStatus.cancelled
+            else StepStatus.succeeded
+        )
+        # 写失败必须让整个提交事务回滚：宁可重跑，也不能留下「成功但无结果」。
+        run_repo.finish_step(db, step, status=status, output=output, now_iso=_now_iso())
+
+    try:
+        outcome.apply = _apply
+    except Exception:  # pragma: no cover - RunOutcome 为 dataclass，正常可写
+        logger.exception("挂载步骤提交钩子失败 run=%s key=%s", run_id, logical_key)
+
+
 def _persist_budget(
     *,
     run_id: str,
@@ -1507,37 +1557,27 @@ def _drive_run(
             )
             return
 
-        # 已成功的步骤：幂等重放，不重复调用模型/写消息。
+        # 已成功的步骤：新执行顺序下“步骤成功”与结果提交同事务，Run 必已终结
+        # （execute_run 的早退已覆盖）。若仍遇到 succeeded 且 Run 未终结，只可能是
+        # 旧版本崩溃残留（步骤成功但结果未落库）→ 必须重新执行，禁止用空 outcome
+        # 伪造成功（SRV-02）。
         if step_status is StepStatus.succeeded:
-            logger.info("步骤已成功，幂等重放 run=%s key=%s", run_id, logical_key)
-            outcome = _make_outcome(
-                status=RunStatus.succeeded,
-                warnings=list(budget.warnings) + ["RECOVERED_FROM_DURABLE_STEP"],
-                usage=budget.as_dict(),
+            logger.warning(
+                "发现步骤成功但结果未提交（旧版本残留），重新执行 run=%s key=%s",
+                run_id,
+                logical_key,
             )
-            result = _submit_outcome(
-                run_id=run_id,
-                worker_id=worker_id,
-                lease_epoch=lease_epoch,
-                outcome=outcome,
-                now=now,
-            )
-            logger.info("幂等重放终结 run=%s commit=%s", run_id, result)
-            if result == "session_deleted":
-                _terminate_session_deleted(
-                    run_id=run_id, worker_id=worker_id, lease_epoch=lease_epoch
-                )
-            elif result == "error":
-                _force_terminal(
-                    run_id=run_id,
-                    worker_id=worker_id,
-                    lease_epoch=lease_epoch,
-                    status=RunStatus.failed,
-                    error_code=ErrorCode.INTERNAL,
-                    error_message="幂等重放终结失败",
-                    bump_session_version=True,
-                )
-            return
+            run_repo, _ = _repositories()
+            try:
+                with _database().session_scope() as db:
+                    step = run_repo.get_step_by_key(db, run_id, logical_key)
+                    if step is not None:
+                        run_repo.requeue_uncommitted_step(db, step, now_iso=_now_iso())
+            except AppError:
+                raise
+            except Exception:  # pragma: no cover - 复位失败则交给下方正常失败路径
+                logger.exception("复位未提交步骤失败 run=%s key=%s", run_id, logical_key)
+            step_status = StepStatus.failed
 
         # 尝试次数已耗尽（含崩溃边界已启动过的尝试）→ 直接失败。
         if attempt_count >= MAX_STEP_ATTEMPTS:
@@ -1756,23 +1796,11 @@ def _drive_run(
             )
             return
 
-        # ---------- 7) 写步骤成功 + 提交结果 ---------- #
-        _finish_step(
-            run_id=run_id,
-            logical_key=logical_key,
-            status=StepStatus.succeeded,
-            output={
-                "event_types": [
-                    str(event.get("type")) for event in getattr(outcome, "events", []) or []
-                    if isinstance(event, dict)
-                ],
-                "message_count": len(getattr(outcome, "messages", []) or []),
-            },
-            worker_id=worker_id,
-            lease_epoch=lease_epoch,
-        )
+        # ---------- 7) 提交结果（步骤成功与结果同事务写入，SRV-02） ---------- #
+        # 注意：这里不再先写 step=succeeded。步骤成功由 _attach_step_success_hook
+        # 塞进 apply_outcome 的提交事务，避免“步骤已成功但结果未落库”的空成功。
 
-        # 步骤成功即落盘账本：接管者据此继续累计（跨 epoch 预算）。
+        # 步骤账本先落盘：接管者据此继续累计（跨 epoch 预算）。
         _persist_budget(
             run_id=run_id,
             worker_id=worker_id,
@@ -1796,6 +1824,8 @@ def _drive_run(
         except Exception:  # pragma: no cover
             pass
 
+        _attach_step_success_hook(outcome, run_id=run_id, logical_key=logical_key)
+
         result = _submit_outcome(
             run_id=run_id,
             worker_id=worker_id,
@@ -1804,14 +1834,32 @@ def _drive_run(
             now=now,
         )
         logger.info("运行结果提交 run=%s status=%s commit=%s", run_id, outcome.status, result)
-        if result in ("applied", "already_terminal", "lease_lost", "missing"):
+        if result in ("applied", "already_terminal"):
             return
+        if result in ("lease_lost", "missing"):
+            # 结果未落库：步骤保持 running，由恢复流程重跑（≤ MAX_STEP_ATTEMPTS 次）。
+            logger.warning(
+                "结果未提交，步骤留待重跑 run=%s key=%s commit=%s", run_id, logical_key, result
+            )
+            return
+        # session_deleted / error：步骤与 Run 都必须显式失败，绝不留下“成功但无结果”。
+        _finish_step(
+            run_id=run_id,
+            logical_key=logical_key,
+            status=StepStatus.failed,
+            error_code=(
+                ErrorCode.NOT_FOUND if result == "session_deleted" else ErrorCode.INTERNAL
+            ),
+            error_message=f"结果提交失败（{result}）",
+            worker_id=worker_id,
+            lease_epoch=lease_epoch,
+        )
         if result == "session_deleted":
             _terminate_session_deleted(
                 run_id=run_id, worker_id=worker_id, lease_epoch=lease_epoch
             )
             return
-        # apply_outcome 异常：保留步骤成功但无法提交 → 兜底失败终结（不留下 running）
+        # apply_outcome 异常：步骤已显式失败 → 兜底失败终结（不留下 running）
         _force_terminal(
             run_id=run_id,
             worker_id=worker_id,

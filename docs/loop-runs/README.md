@@ -33,6 +33,18 @@
 
 硬上限：存在未修 P0 → 总分 ≤70；存在 ≥3 条未修 P1 → 总分 ≤85；发现测试被削弱 → ≤60 且要求回退。
 
+## 第 6 批热修（第 5 轮评分后，2026-11-20）
+
+| 修复 | 证据 | 验证 |
+| --- | --- | --- |
+| SRV-02 步骤成功与结果提交原子化 | `backend/workflows/runner.py` 的 `_attach_step_success_hook` + `requeue_uncommitted_step` | `tests/test_runner.py::ReplayTests` 2 例；后端全量 628 OK |
+| FE-DX-02 闭环不跨会话串数据 | `store.loadSession` 清空 `loops`；`lib/loopView.ts::selectLoopChoices` 过滤 `session_id` | `tests/loop-view.test.cjs` 2 例 + `tests/session-store.test.cjs` 1 例；前端 231 pass |
+| scope 真正进入提示词 | `backend/core/loop_prompts.py` 的「本轮范围」行 | `tests/test_loop_commands.py::test_scope_is_injected_into_stage_prompt` |
+| 硬性封顶有解释 | `lib/loopView.ts::scoreCapNotice` + 评分卡头部提示 | `tests/loop-view.test.cjs` 1 例 |
+| 决策事件反映决策后状态 | `command_service._loop_event(status=…, loop_version=…)` | `test_ship_decision_closes_loop_synchronously` 断言 payload |
+
+仍未闭合：SRV-02 只在单进程验证（跨进程崩溃注入未做）；页面 .tsx 仍无真实渲染覆盖（TST-01 仅结构化 wiring 断言）；决策条仍在首屏之下（P2，未做吸底）。
+
 ## 运行方式
 
 ```bash

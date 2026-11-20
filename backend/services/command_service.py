@@ -673,14 +673,24 @@ def _loop_budget(loop, *, decision_note: str = "") -> dict[str, Any]:
     return budget
 
 
-def _loop_event(loop) -> dict[str, Any]:
-    payload = C.LoopUpdatedPayload(
-        loop_id=loop.id,
-        status=C.LoopStatus(loop.status),
-        current_round=int(loop.current_round or 1),
-        loop_version=int(loop.loop_version or 1),
-    )
-    return {"type": EventType.loop_updated, "payload": payload.model_dump(mode="json")}
+def _loop_event(loop, *, status=None, loop_version=None) -> dict[str, Any]:
+    """闭环状态事件。
+
+    ``status`` / ``loop_version`` 允许覆盖：决策类命令在 ``apply`` 钩子里才真正
+    ``close_loop``（会再 +1 版本），而事件在 apply 之前写库；若不做覆盖，客户端
+    会收到「awaiting_decision + 旧版本」的事件并被自身版本守卫丢弃（P2）。
+    """
+    return {
+        "type": EventType.loop_updated,
+        "payload": C.LoopUpdatedPayload(
+            loop_id=loop.id,
+            status=C.LoopStatus(status if status is not None else loop.status),
+            current_round=int(loop.current_round or 1),
+            loop_version=int(
+                loop_version if loop_version is not None else (loop.loop_version or 1)
+            ),
+        ).model_dump(mode="json"),
+    }
 
 
 def _start_loop_round_run(
@@ -927,7 +937,13 @@ def _submit_loop_decision(
         status=RunStatus.succeeded,
         product_state=shipping_state,
         messages=messages,
-        events=[_loop_event(loop)],
+        events=[
+            _loop_event(
+                loop,
+                status=target_status,
+                loop_version=int(loop.loop_version or 1) + 1,
+            )
+        ],
         session_phase=None,
         brief_status=None,
         apply=_apply,

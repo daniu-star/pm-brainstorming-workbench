@@ -33,50 +33,7 @@ import type {
   ValidationCheck,
   MvpFeature,
 } from "@/lib/contracts.generated";
-import {
-  canRetryLoopRound,
-  NOT_GENERATED,
-  SCOPE_LABELS,
-  artifactTabs,
-  artifactTitle,
-  blockerList,
-  checkResultLabel,
-  checkResultTone,
-  compareRounds,
-  comparisonTone,
-  currentStageKey,
-  decisionAvailability,
-  defaultArtifactTab,
-  effortLabel,
-  formatBytes,
-  formatRound,
-  formatScore,
-  formatTimestamp,
-  loopErrorText,
-  loopStatusText,
-  loopStatusTone,
-  normalizeMvpSpec,
-  normalizePrototype,
-  normalizeScoreCard,
-  normalizeTestReport,
-  normalizeValidation,
-  priorityLabel,
-  resolveLoopEntryState,
-  roundProgress,
-  roundScoreText,
-  roundSwitcherOptions,
-  scoreDimensionRows,
-  scoreVerdictText,
-  selectRound,
-  stageProgress,
-  testReportStats,
-  validateStartForm,
-  verdictLabel,
-  verdictTone,
-  type RoundComparison,
-  type RoundSwitcherOption,
-  type Tone,
-} from "@/lib/loopView";
+import { NOT_GENERATED, SCOPE_LABELS, artifactTabs, artifactTitle, blockerList, canRetryLoopRound, checkResultLabel, checkResultTone, compareRounds, comparisonTone, currentStageKey, decisionAvailability, defaultArtifactTab, effortLabel, formatBytes, formatRound, formatScore, formatTimestamp, loopErrorText, loopStatusText, loopStatusTone, normalizeMvpSpec, normalizePrototype, normalizeScoreCard, normalizeTestReport, normalizeValidation, priorityLabel, resolveLoopEntryState, roundProgress, roundScoreText, roundSwitcherOptions, scoreCapNotice, scoreDimensionRows, scoreVerdictText, selectLoopChoices, selectRound, stageProgress, testReportStats, type RoundComparison, type RoundSwitcherOption, type Tone, validateStartForm, verdictLabel, verdictTone } from "@/lib/loopView";
 
 // --------------------------------------------------------------------------- //
 // Tailwind 色板映射（类名必须是字面量，Tailwind content 扫描才认）
@@ -690,6 +647,9 @@ function ScorecardView({ card }: { card: LoopScoreCard | null }) {
         </span>
         {card.hard_capped ? <Badge text="硬性封顶" tone="red" /> : null}
       </div>
+      {scoreCapNotice(card) ? (
+        <p className="text-[11px] leading-relaxed text-amber-300/90">{scoreCapNotice(card)}</p>
+      ) : null}
       {rows.length === 0 ? (
         <EmptyHint text="没有维度评分" />
       ) : (
@@ -1262,12 +1222,11 @@ function LoopPageContent() {
     () => compareRounds(previousRound, selectedRound, comparisonCards.previous, comparisonCards.current),
     [previousRound, selectedRound, comparisonCards]
   );
-  const loopChoices = useMemo(() => {
-    const map = new Map<string, LoopSnapshot>();
-    for (const item of historyLoops ?? []) map.set(item.loop_id, item);
-    for (const item of Object.values(loops)) map.set(item.loop_id, item);
-    return [...map.values()].sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
-  }, [historyLoops, loops]);
+  const loopChoices = useMemo(
+    // 只保留当前会话的闭环：缓存跨会话保留，不过滤会把别人的闭环显示成本会话历史（FE-DX-02）
+    () => selectLoopChoices(historyLoops, loops, sessionId),
+    [historyLoops, loops, sessionId],
+  );
 
   useEffect(() => {
     // 切换闭环时回到「当前轮」，避免把上一闭环的 ordinal 带过来

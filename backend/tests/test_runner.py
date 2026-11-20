@@ -333,11 +333,44 @@ class BudgetTests(RunnerTestCase):
 
 
 class ReplayTests(RunnerTestCase):
-    def test_succeeded_step_is_skipped_without_model_call(self) -> None:
+    """SRV-02：步骤成功必须与结果提交原子生效；旧版本残留只能重跑，不能伪造成功。"""
+
+    def test_successful_run_marks_step_committed_inside_the_commit(self) -> None:
         session_id, run_id = self.create_run()
         self.claim(run_id)
 
-        # 模拟“崩溃前步骤已成功提交”的状态。
+        calls: list[str] = []
+
+        def dispatch(ctx):
+            calls.append("called")
+            return _success_outcome("澄清问题一")
+
+        runner.WORKFLOW_DISPATCH[TaskKind.clarify] = dispatch
+        self.run_once(run_id)
+
+        run = self.get_run(run_id)
+        self.assertEqual(run.status, RunStatus.succeeded.value)
+        step = self.get_step(run_id)
+        self.assertIsNotNone(step)
+        self.assertEqual(step.status, StepStatus.succeeded.value)
+        output = json.loads(step.output_json or "{}")
+        self.assertTrue(output.get("committed"), "步骤成功必须由提交事务写入（committed=true）")
+        self.assertEqual(output.get("message_count"), 1)
+        self.assertEqual(len(calls), 1)
+
+        # 终态 Run 重复执行：不重调模型、不重复写消息、仍只有一个终结事件（AC-09）。
+        messages = self.message_count(session_id)
+        self.run_once(run_id)
+        self.assertEqual(len(calls), 1, "终态 Run 不得再次调用工作流")
+        self.assertEqual(self.message_count(session_id), messages)
+        self.assertEqual(len(self.terminal_events(run_id)), 1)
+
+    def test_legacy_succeeded_step_without_result_is_reexecuted(self) -> None:
+        """旧版本崩溃残留（step=succeeded 但 Run 未终结）必须重跑而非空成功（SRV-02）。"""
+
+        session_id, run_id = self.create_run()
+        self.claim(run_id)
+
         with database.session_scope() as db:
             run = run_repo.get_run(db, run_id)
             step = run_repo.ensure_step(
@@ -350,18 +383,18 @@ class ReplayTests(RunnerTestCase):
 
         calls: list[str] = []
 
-        def dispatch(ctx):  # pragma: no cover - 不应被调用
+        def dispatch(ctx):
             calls.append("called")
-            return _success_outcome("重复消息")
+            return _success_outcome("重新执行后的真实回复")
 
         runner.WORKFLOW_DISPATCH[TaskKind.clarify] = dispatch
         self.run_once(run_id)
 
+        self.assertEqual(calls, ["called"], "旧残留必须重跑工作流，不能提交空 outcome")
         run = self.get_run(run_id)
         self.assertEqual(run.status, RunStatus.succeeded.value)
-        self.assertEqual(calls, [], "已 succeeded 的步骤必须跳过（AC-09）")
-        self.assertEqual(int(self.get_step(run_id).attempt_count), 1)
-        self.assertEqual(self.message_count(session_id), 1, "重放不得重复写消息")
+        self.assertEqual(self.message_count(session_id), 2, "必须真的写入 assistant 消息")
+        self.assertEqual(self.get_step(run_id).status, StepStatus.succeeded.value)
         self.assertEqual(len(self.terminal_events(run_id)), 1)
 
 
