@@ -1,7 +1,7 @@
 # V4.0 发布就绪清单（WP-10）
 
 - 分支：`feat/prd-v4-m1`；对应 PRD：`docs/superpowers/specs/2026-11-18-pm-brainstorm-agent-architecture-prd-v4.md`
-- 验收记录：`docs/v4-acceptance-report.md`（629 后端用例 / 238 前端用例 / 跨进程 4 + 崩溃注入 1 / 真 Worker E2E 30 项 + Loop 闭环 29 项 / 迁移演练；QA Loop 记录见 docs/qa-loop-runs/README.md，多角色 Loop 记录见 docs/loop-runs/README.md）
+- 验收记录：`docs/v4-acceptance-report.md`（629 后端用例 / 238 前端用例 / 跨进程 4 + 崩溃注入 1 / 真 Worker E2E 30 项 + Loop 闭环 29 项 / 迁移演练 / 浏览器交互验收（docs/browser-qa.md，3 张归档截图）；QA Loop 记录见 docs/qa-loop-runs/README.md，多角色 Loop 记录见 docs/loop-runs/README.md）
 
 ## 1. 发布前必须通过的命令
 
@@ -50,6 +50,8 @@ CI 配置见 `.github/workflows/ci.yml`（backend：安装依赖 → 全量测�
 - 代码回滚：`git checkout <上一个发布 tag>`，重新构建前端、重启 API 与 Worker。
 - 数据兼容：v2 表结构为新增，旧 JSON 写路径已退役；回滚到 v1 代码需同时恢复 `backend/data/sessions/`（迁移器未修改源文件，仍可直接使用）。
 - 迁移记录：`migration_records` 保留每个源文件的 `source_hash`；回滚后重新迁移同一源会 `skipped`，不会重复导入。
+
+- 浏览器交互验收（`docs/browser-qa.md`）需要本机铸造登录 Cookie（验证码只存哈希、不可反推），且当前 `LLM_API_KEY` 为 401 失效状态，因此该流程验证的是「失败可见 + 状态一致 + 恢复入口」。
 
 ## 5. 已知行为（非缺陷，交接给运维/客服）
 

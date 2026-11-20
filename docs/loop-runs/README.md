@@ -44,7 +44,7 @@
 | 硬性封顶有解释 | `lib/loopView.ts::scoreCapNotice` + 评分卡头部提示 | `tests/loop-view.test.cjs` 1 例 |
 | 决策事件反映决策后状态 | `command_service._loop_event(status=…, loop_version=…)` | `test_ship_decision_closes_loop_synchronously` 断言 payload |
 
-仍未闭合：页面级真实**交互**（点击/输入/路由）仍无浏览器自动化覆盖（本机装不了 jsdom/RTL，`components-render` 只做服务端静态渲染）；决策条仍在首屏之下（P2，未做吸底）。SRV-02 已由 `backend/tests/test_crash_atomicity.py` 用真子进程崩溃注入补齐（不再是单进程模拟），TST-01 由 `tests/components-render.test.cjs` 补上真实渲染断言。
+仍未闭合：浏览器交互验收是**人工/半自动协议**（`docs/browser-qa.md` + `docs/loop-runs/evidence/` 三张截图），未进 CI；决策条仍在首屏之下（P2，未做吸底）。SRV-02 已由 `backend/tests/test_crash_atomicity.py` 用真子进程崩溃注入补齐（不再是单进程模拟），TST-01 由 `tests/components-render.test.cjs` 补上真实渲染断言。
 
 ## 运行方式
 
