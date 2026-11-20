@@ -1,7 +1,7 @@
 # V4.0 发布就绪清单（WP-10）
 
 - 分支：`feat/prd-v4-m1`；对应 PRD：`docs/superpowers/specs/2026-11-18-pm-brainstorm-agent-architecture-prd-v4.md`
-- 验收记录：`docs/v4-acceptance-report.md`（632 后端用例 / 245 前端用例 / 跨进程 4 + 崩溃注入 1 / 真 Worker E2E 30 项 + Loop 闭环 29 项 / 迁移演练 / 浏览器交互验收（docs/browser-qa.md，3 张归档截图）；QA Loop 记录见 docs/qa-loop-runs/README.md，多角色 Loop 记录见 docs/loop-runs/README.md）
+- 验收记录：`docs/v4-acceptance-report.md`（646 后端用例 / 245 前端用例 / 契约 parity 13 / 跨进程 4 + 崩溃注入 1 / 真 Worker E2E 30 项 + Loop 闭环 29 项 / 迁移演练 / 浏览器交互验收（docs/browser-qa.md，6 张归档截图）；QA Loop 记录见 docs/qa-loop-runs/README.md，多角色 Loop 记录见 docs/loop-runs/README.md）
 
 ## 1. 发布前必须通过的命令
 

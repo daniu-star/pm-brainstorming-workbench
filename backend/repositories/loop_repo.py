@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+import logging
+from typing import Any, TypeVar
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -15,6 +16,10 @@ from domain.errors import AppError, ErrorCode
 
 from .database import LoopArtifactRow, LoopRoundRow, LoopRow, LoopStageResultRow
 from .session_repo import UNSET
+
+logger = logging.getLogger(__name__)
+
+_ModelT = TypeVar("_ModelT")
 
 __all__ = [
     "create_loop",
@@ -455,6 +460,29 @@ def _payload_of(row: LoopArtifactRow | None) -> dict:
     return _loads(row.payload_json) if row is not None else {}
 
 
+def _validate_or_none(model_cls: type[_ModelT], row: LoopArtifactRow | None) -> _ModelT | None:
+    """把产物行的 JSON 反序列化成模型；单条损坏时降级为 None 并记日志。
+
+    为什么不是直接抛：快照是只读聚合接口，一条历史脏数据不该让整个闭环页面
+    500（前端只能显示「读取失败」，用户无从恢复）。损坏行仍保留在库里，
+    便于用 `GET /loops/{id}/artifacts/{aid}` 取原始载荷排查。
+    """
+
+    if row is None:
+        return None
+    try:
+        return model_cls.model_validate(_payload_of(row))
+    except Exception as exc:  # noqa: BLE001 - 任何反序列化失败都应降级
+        logger.warning(
+            "闭环产物反序列化失败，已跳过：loop_id=%s artifact_id=%s kind=%s error=%s",
+            row.loop_id,
+            row.id,
+            row.kind,
+            exc,
+        )
+        return None
+
+
 def loop_round_to_view(db, row: LoopRoundRow) -> C.LoopRoundView:
     stages = [stage_to_view(item) for item in list_stages(db, loop_id=row.loop_id, ordinal=row.ordinal)]
     artifacts = [_artifact_view(item) for item in list_artifacts(db, loop_id=row.loop_id, ordinal=row.ordinal)]
@@ -511,16 +539,14 @@ def loop_to_snapshot(db, row: LoopRow, *, include_rounds: bool = True) -> C.Loop
     report_row = current_of(C.LoopArtifactKind.test_report)
     score_row = current_of(C.LoopArtifactKind.scorecard)
 
-    if spec_row is not None:
-        snapshot.mvp_spec = C.LoopMvpSpec.model_validate(_payload_of(spec_row))
-    if validation_row is not None:
-        snapshot.validation = C.LoopValidation.model_validate(_payload_of(validation_row))
-    if prototype_row is not None:
-        snapshot.prototype = C.PrototypeSpec.model_validate(_payload_of(prototype_row))
-    if report_row is not None:
-        snapshot.test_report = C.LoopTestReport.model_validate(_payload_of(report_row))
-    if score_row is not None:
-        snapshot.scorecard = C.LoopScoreCard.model_validate(_payload_of(score_row))
+    # 产物是「历史 JSON」：模型升级（字段改名 / 收紧类型）后旧行可能校验失败。
+    # 这里**逐条降级**——单条损坏只丢该产物并记日志，绝不因为一条脏数据让整个
+    # 快照 500（否则用户会看到「闭环读取失败」，且没有任何自助恢复路径）。
+    snapshot.mvp_spec = _validate_or_none(C.LoopMvpSpec, spec_row)
+    snapshot.validation = _validate_or_none(C.LoopValidation, validation_row)
+    snapshot.prototype = _validate_or_none(C.PrototypeSpec, prototype_row)
+    snapshot.test_report = _validate_or_none(C.LoopTestReport, report_row)
+    snapshot.scorecard = _validate_or_none(C.LoopScoreCard, score_row)
 
     if include_rounds:
         snapshot.rounds = [loop_round_to_view(db, item) for item in rounds_rows]

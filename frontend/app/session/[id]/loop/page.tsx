@@ -100,13 +100,25 @@ function Section({
   title,
   extra,
   children,
+  sticky = false,
 }: {
   title: string;
   extra?: React.ReactNode;
   children: React.ReactNode;
+  /** 吸底：决策条在长页面里必须始终可见（否则用户要滚到最底部才能做决策） */
+  sticky?: boolean;
 }) {
   return (
-    <section className="rounded-xl border border-zinc-700/40 bg-dark-800/40 p-4">
+    <section
+      className={[
+        "rounded-xl border border-zinc-700/40 bg-dark-800/40 p-4",
+        sticky
+          ? "sticky bottom-2 z-20 border-zinc-600/60 bg-dark-900/95 shadow-[0_-10px_28px_-14px_rgba(0,0,0,0.9)] backdrop-blur"
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
       <div className="mb-2 flex items-center gap-2">
         <h3 className="text-xs font-semibold tracking-wide text-zinc-400">{title}</h3>
         {extra ? <div className="ml-auto flex items-center gap-2">{extra}</div> : null}
@@ -1032,6 +1044,7 @@ function DecisionBar({
   return (
     <Section
       title="本轮决策"
+      sticky={availability.awaiting}
       extra={<Badge text={loopStatusText(snapshot)} tone={loopStatusTone(snapshot.status)} />}
     >
       {phaseBlocked ? (

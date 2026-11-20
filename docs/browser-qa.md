@@ -66,6 +66,26 @@ print(create_session_token('qa.browser@example.com'))
    恢复了最近一条**对话类**失败任务，闭环/审计的失败不会挤进群聊）；
    点「重试上一步」应创建一个 `parent_run_id` 非空的子 Run，并再次给出可见失败原因。
 
+9. **决策条吸底（长页面可决策）**：在 `/session/<id>/loop` 且闭环处于
+   `awaiting_decision` 时，滚动页面 → 预期「本轮决策」卡片始终贴在视口底部
+   （`position: sticky` + `bottom: 8px` + `z-index: 20`），三个按钮
+   「继续迭代 / 交付 / 停止」均可用（未审计中、非历史闭环）。
+   验收口径（控制台执行）：
+   ```js
+   const s = [...document.querySelectorAll("section")].find((el) => el.textContent.includes("本轮决策"));
+   getComputedStyle(s).position;                         // "sticky"
+   getComputedStyle(s).bottom;                           // "8px"
+   [...s.querySelectorAll("button")].map((b) => [b.textContent.trim(), b.disabled]);
+   // [["继续迭代", false], ["交付", false], ["停止", false]]
+   ```
+   证据：`docs/loop-runs/evidence/browser-loop-sticky-decision.png`。
+
+10. **产物损坏不炸页面（降级）**：把某条 `loop_artifacts.payload_json` 改成非法载荷
+    （例如 `prototype.limitations` 写成数组），刷新闭环页 → 预期页面仍 200、
+    该产物显示「未生成」，其余产物照常渲染，服务端日志出现
+    `闭环产物反序列化失败，已跳过：loop_id=… artifact_id=… kind=prototype`。
+    对应回归：`backend/tests/test_loop_artifact_degrade.py`。
+
 ## 3. 本次实测记录（2026-11-20）
 
 | 步骤 | 观察结果 | 证据 |

@@ -138,6 +138,9 @@ export const ACTIONS = [
   "revise_brief",
   "add_evidence",
   "brainstorm",
+  // 内部动作：brainstorm 成功后由工作流自动排入 synthesis 子 Run，
+  // 用户不可提交，但 `RunView.action` 会返回该值，故必须纳入联合类型。
+  "synthesis",
   "confirm_decision",
   "start_audit",
   "answer_audit",
@@ -147,6 +150,8 @@ export const ACTIONS = [
   "cancel_audit",
   "start_loop",
   "loop_decision",
+  // 内部动作：loop 轮次由 loop_round 驱动，同样不可由用户提交。
+  "loop_round",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 /** backend: NORMAL_ACTIONS（返回 RunReceipt 202） */
@@ -880,6 +885,11 @@ export type CommandPayloadMap = {
   cancel_audit: CancelAuditPayload;
   start_loop: StartLoopPayload;
   loop_decision: LoopDecisionPayload;
+  // 内部动作：由工作流自动排入（brainstorm → synthesis、loop 轮次 → loop_round），
+  // 前端**不可提交**（backend `parse_command` 会以 UNKNOWN_ACTION 拒绝），
+  // 这里声明为空 payload 只是为了让 `CommandPayloadMap` 覆盖完整的 `Action` 联合。
+  synthesis: Record<string, never>;
+  loop_round: Record<string, never>;
 };
 
 export interface RunReceipt {

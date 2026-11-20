@@ -25,9 +25,9 @@
 ## 2. 实际执行的验证命令与结果
 
 ```bash
-# 后端全量（512 用例，含 M2/M3 + QA Loop 收口新增用例）
+# 后端全量（646 用例，含 M2/M3 + QA Loop 收口 + 闭环热修新增用例）
 cd backend && ../.venv/Scripts/python.exe -m unittest discover -s tests
-# → Ran 512 tests / OK / exit 0（含 tests/test_audit_runner.py 的 3 个真 runner 审计用例）
+# → Ran 646 tests / OK / exit 0（含 tests/test_audit_runner.py 的 3 个真 runner 审计用例）
 
 # 跨进程（真 subprocess + 共享 SQLite）
 cd backend && ../.venv/Scripts/python.exe -m unittest tests.test_run_repo tests.test_cross_process
@@ -127,7 +127,7 @@ cd frontend && npm run test:e2e      # 1 pass（真起 uvicorn，401/404 语义�
 ## 6. 结论
 
 - M1（WP-00～05）、M2（WP-06～08）、M3（WP-09）与 WP-10 的发布件（CI、迁移演练、健康诊断、前端 e2e 冒烟）均已交付。
-- 真实执行结果：后端 **512 用例 OK**、前端 **123 用例 pass** + `tsc` 0 错 + `build` 成功、`test:e2e` 1 pass、跨进程 4 用例 OK、真 Worker 审计端到端 **30 项 ALL PASS**、迁移演练 **DRILL_OK**。
+- 真实执行结果：后端 **646 用例 OK**、前端 **245 用例 pass** + `tsc` 0 错 + `build` 成功、`test:e2e` 1 pass、跨进程 4 用例 OK、真 Worker 审计端到端 **30 项 ALL PASS**、迁移演练 **DRILL_OK**。
 - AC 统计（按 §3 表）：**通过 26 条**（AC-02/03/04/06/07/08/11/12/13/15/16/17/18/21/22/24/25/26/27/28/29/30/32/35/37/38）、**部分通过 15 条**（AC-01/05/09/10/14/19/20/23/31/33/34/36/39/40/41/42）、**未实现 0 条**。
 - 剩余差距集中在：重试粒度（AC-14）、真实浏览器与崩溃注入类验证（AC-01/09/10/19/31/33/34）、软删正文清理与事件压缩作业（AC-39）、人工更正后重生成报告（AC-40）。每条均给出最小调整方案，未通过修改期望值或预填结果取得任何「通过」。
 
