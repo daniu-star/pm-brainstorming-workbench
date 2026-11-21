@@ -105,6 +105,18 @@ class LLMAuthError(LLMRequestError):
     retryable = False
 
 
+class LLMInsufficientBalanceError(LLMRequestError):
+    """账户余额不足（402）：同样属于「人工处理才能恢复」的错误。
+
+    上游在余额耗尽时会返回 402（某些中转站返回 403 并附带 ``insufficient_balance``
+    文案）。若当成普通 4xx 或干脆当成「输出不合法」，用户只能看到一句「失败」，
+    所以单列一类，把「充值 / 换 Key」写进错误信息。
+    """
+
+    code = "LLM_INSUFFICIENT_BALANCE"
+    retryable = False
+
+
 class LLMOutputInvalidError(LLMError):
     """结构化输出无法解析；属于可修复错误，允许一次重试。"""
 
@@ -221,10 +233,20 @@ def _translate_exception(exc: Exception) -> LLMError:
 
     if status == 429:
         return LLMRateLimitedError("LLM 请求过于频繁，请稍后重试", status_code=status)
+    if status == 403 and "insufficient" in str(exc).lower():
+        return LLMInsufficientBalanceError(
+            "模型账户余额不足（HTTP 403 / insufficient_balance）：请为 backend/.env 的 LLM_API_KEY 充值或更换可用 Key 后重启服务（start.bat / stop.bat）",
+            status_code=status,
+        )
     if status in (401, 403):
         return LLMAuthError(
             "模型服务鉴权失败（API Key 无效、已过期或无权限）："
             "请更新 backend/.env 的 LLM_API_KEY 后重启服务（start.bat / stop.bat）",
+            status_code=status,
+        )
+    if status == 402:
+        return LLMInsufficientBalanceError(
+            "模型账户余额不足（HTTP 402）：请为 backend/.env 的 LLM_API_KEY 充值或更换可用 Key 后重启服务（start.bat / stop.bat）",
             status_code=status,
         )
     if status is not None and 500 <= status < 600:

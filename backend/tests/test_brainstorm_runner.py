@@ -27,7 +27,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import select  # noqa: E402
 
-from core.llm_client import LLMRequestError, LLMResult, LLMUsage  # noqa: E402
+from core.llm_client import (  # noqa: E402
+    LLMInsufficientBalanceError,
+    LLMRequestError,
+    LLMResult,
+    LLMUsage,
+)
 from domain import contracts as C  # noqa: E402
 from domain.contracts import (  # noqa: E402
     Action,
@@ -459,6 +464,37 @@ class BrainstormRunnerTests(RunnerTestCase):
         # 部分成功也写出缺失角色说明（PRD FR-03）。
         warnings = json.loads(run.warnings_json or "[]")
         self.assertTrue(any("ops" in str(item) for item in warnings), warnings)
+
+    def test_non_retryable_llm_error_records_real_code_and_leaves_no_orphan_steps(self) -> None:
+        """余额不足（402）这类不可重试错误：角色 step 记录真实错误码、不白烧修复调用、无 running 残留。"""
+
+        session_id = self._prepare_brainstorm_session()
+        receipt = self._submit_brainstorm("all")
+        run_id = receipt.run_id
+        self.claim(run_id)
+
+        llm = _FailRoleLLM(
+            RoleCode.cto,
+            LLMInsufficientBalanceError("模型账户余额不足（HTTP 402）：请充值或更换 Key"),
+        )
+        self.run_once(run_id, llm=llm)
+
+        run = self.get_run(run_id)
+        # Run 级失败保留真实错误码（而不是被当成 MODEL_OUTPUT_INVALID / 超时）。
+        self.assertEqual(run.status, RunStatus.failed.value, run.error_message)
+        self.assertEqual(run.error_code, "LLM_INSUFFICIENT_BALANCE")
+        self.assertIn("余额不足", run.error_message)
+
+        role_steps = self._role_steps(run_id)
+        cto = role_steps[RoleCode.cto.value]
+        self.assertEqual(cto.status, StepStatus.failed.value)
+        self.assertEqual(cto.error_code, "LLM_INSUFFICIENT_BALANCE")
+        self.assertIn("余额不足", cto.error_message)
+        # 不可重试错误不再回喂修复，只调一次模型。
+        self.assertEqual(llm.attempted, [RoleCode.cto.value])
+        # 不允许任何步骤停在 running（否则界面永远显示「执行中」）。
+        for step in role_steps.values():
+            self.assertNotEqual(step.status, StepStatus.running.value, step.logical_key)
 
     def test_retry_only_reruns_failed_role_and_reuses_successes(self) -> None:
         """AC-14：重试子 Run 只调度失败步骤，已成功角色的产物直接复用。"""

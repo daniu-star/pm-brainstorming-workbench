@@ -22,9 +22,11 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core import llm_client as llm  # noqa: E402
-from core.llm_client import (  # noqa: E402
+from core.llm_client import (
+    # noqa: E402
     LLMAuthError,
     LLMClient,
+    LLMInsufficientBalanceError,
     LLMOutputInvalidError,
     LLMRateLimitedError,
     LLMRequestError,
@@ -245,6 +247,49 @@ class LLMClientCompleteTests(unittest.TestCase):
                 self.assertIn("LLM_API_KEY", str(ctx.exception))
                 # 同时仍是 LLMRequestError 的子类，旧调用方按父类捕获不会漏
                 self.assertIsInstance(ctx.exception, LLMRequestError)
+
+
+class LLMInsufficientBalanceTests(unittest.TestCase):
+    """402（余额不足）必须与普通 4xx 区分：给出「充值 / 换 Key」的可执行提示。"""
+
+    def test_insufficient_balance_is_distinguishable_and_actionable(self) -> None:
+        client = LLMClient(sdk_client=FakeSDK(FakeStatusError(402)), model="fake-model")
+        with self.assertRaises(LLMInsufficientBalanceError) as ctx:
+            _run(
+                client.complete(
+                    messages=MESSAGES,
+                    max_output_tokens=10,
+                    timeout_seconds=3,
+                    purpose="test.balance",
+                )
+            )
+        self.assertFalse(ctx.exception.retryable)
+        self.assertEqual(ctx.exception.code, "LLM_INSUFFICIENT_BALANCE")
+        self.assertEqual(ctx.exception.status_code, 402)
+        self.assertIn("余额不足", str(ctx.exception))
+        self.assertIn("充值", str(ctx.exception))
+        self.assertIsInstance(ctx.exception, LLMRequestError)
+
+    def test_403_with_insufficient_balance_text_is_balance_not_auth(self) -> None:
+        """部分中转站用 403 + insufficient_balance 汇报余额问题，不能误导成 Key 失效。"""
+
+        class _Msg403(Exception):
+            status_code = 403
+
+            def __str__(self) -> str:
+                return "403 insufficient_balance: account balance is empty"
+
+        client = LLMClient(sdk_client=FakeSDK(_Msg403()), model="fake-model")
+        with self.assertRaises(LLMInsufficientBalanceError) as ctx:
+            _run(
+                client.complete(
+                    messages=MESSAGES,
+                    max_output_tokens=10,
+                    timeout_seconds=3,
+                    purpose="test.balance403",
+                )
+            )
+        self.assertEqual(ctx.exception.code, "LLM_INSUFFICIENT_BALANCE")
 
 
 class LLMClientJsonTests(unittest.TestCase):

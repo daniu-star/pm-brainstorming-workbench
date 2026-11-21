@@ -438,6 +438,14 @@ async def _generate_role_result(
     raise ValueError(_format_validation_error(error)) from error
 
 
+def _llm_error_class() -> type[BaseException]:
+    """延迟取 ``LLMError`` 基类，避免测试替身没装 llm_client 时 import 失败。"""
+
+    from core.llm_client import LLMError
+
+    return LLMError
+
+
 def _output_invalid_error() -> type[BaseException]:
     """延迟取 ``LLMOutputInvalidError``，避免测试替身没装 llm_client 时 import 失败。"""
 
@@ -501,6 +509,22 @@ async def _run_role(
         )
         warnings.append(f"{label} 修复后仍未通过校验，该角色本轮失败：{outcome.error}")
         return outcome
+    except _llm_error_class() as exc:
+        # 上游错误（401/402/404/限流/超时）：先把真实错误码落到角色 step，再交给 runner。
+        # 旧实现只在 ValueError 分支写 step；上游错误直接抛出，导致角色 step 永远停在
+        # ``running``（实测余额耗尽时 4 个角色里最后一个是 running），界面无法解释失败。
+        # 这里统一收口 step 但**不吞掉**异常：Run 仍按 PRD 失败并带上真实 code（可重试错误
+        # 由 runner 的「单步最多 2 次尝试」重试）。
+        outcome.error = str(exc)[:1000]
+        _finish_role_step(
+            run_id,
+            step_id,
+            status=StepStatus.failed,
+            error_code=str(getattr(exc, "code", ErrorCode.INTERNAL)),
+            error_message=outcome.error,
+        )
+        warnings.append(f"{label} 调用模型失败，该角色本轮中止：{outcome.error}")
+        raise
 
     outcome.calls = calls
     try:

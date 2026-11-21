@@ -190,6 +190,10 @@ class BudgetTracker:
             if str(key).startswith("loop_"):
                 # 闭环参数（loop_id / 轮次 / 阶段预算）由工作流自取，不是预算覆盖项。
                 continue
+            if str(key) in _BUDGET_DISPATCH_KEYS:
+                # 调度提示（target / role 等）：命令层写进 budget_json 供 Workflow 读取，
+                # 不是预算覆盖项，不应产生 UNKNOWN_BUDGET_KEY 噪声。
+                continue
             normalized = _BUDGET_ALIASES.get(str(key))
             if normalized is None:
                 tracker.warnings.append(f"UNKNOWN_BUDGET_KEY:{key}")
@@ -411,6 +415,9 @@ class BudgetTracker:
             "warnings": list(self.warnings),
         }
 
+
+#: 命令层写进 ``run.budget_json`` 的调度提示键（由 Workflow 自取，不参与预算覆盖）。
+_BUDGET_DISPATCH_KEYS = frozenset({"target", "target_role", "clarify_target", "mode", "roles"})
 
 _BUDGET_ALIASES: dict[str, str] = {
     "max_run_input_tokens": "max_run_input_tokens",
@@ -1017,9 +1024,18 @@ def _finalize_failure(
 ) -> None:
     """把 Run 终结为 failed；apply_outcome 不可用时走兜底。
 
+    终结前先收口仍停在 ``running`` 的步骤（见 :func:`_fail_orphan_steps`）。
+
     ``usage`` 为截至当前的累计账本（:meth:`BudgetTracker.as_dict`），随终结
     事务写入 ``runs.usage_json``；预算超限路径同样携带，便于审计已花费的调用。
     """
+    _fail_orphan_steps(
+        run_id=run_id,
+        code=code,
+        message=message,
+        worker_id=worker_id,
+        lease_epoch=lease_epoch,
+    )
     outcome = _make_outcome(
         status=RunStatus.failed,
         error_code=code,
@@ -1094,6 +1110,50 @@ def _finish_step(
     except Exception:  # noqa: BLE001 - 步骤状态写失败不应掩盖原始错误
         logger.exception("写步骤状态失败 run=%s key=%s status=%s", run_id, logical_key, status)
         return False
+
+
+def _fail_orphan_steps(
+    *,
+    run_id: str,
+    code: str,
+    message: str,
+    worker_id: str,
+    lease_epoch: int,
+) -> int:
+    """把仍停在 ``running`` 的步骤收口为 failed（避免「Run 已失败但步骤永远运行中」）。
+
+    真实事故：四角色并行时账户余额耗尽，三个角色落 failed、最后一个角色被 Run 截止
+    时间打断，步骤停在 ``running``，界面上这一轮永远像「还在跑」，也无法解释失败原因。
+    """
+
+    run_repo, _ = _repositories()
+    finished = 0
+    try:
+        with _database().session_scope() as db:
+            run = run_repo.get_run(db, run_id)
+            if run is None:
+                return 0
+            if not _lease_owned(run, worker_id, lease_epoch):
+                logger.warning("跳过收口遗留步骤：租约已丢失 run=%s", run_id)
+                return 0
+            for step in run_repo.list_steps(db, run_id):
+                if step.status != C.StepStatus.running.value:
+                    continue
+                run_repo.finish_step(
+                    db,
+                    step,
+                    status=C.StepStatus.failed,
+                    error_code=code,
+                    error_message=_truncate(f"任务失败时该步骤仍在执行：{message}"),
+                    now_iso=_now_iso(),
+                )
+                finished += 1
+    except Exception:  # noqa: BLE001 - 步骤收口失败不应掩盖原始失败原因
+        logger.exception("收口遗留 running 步骤失败 run=%s", run_id)
+        return finished
+    if finished:
+        logger.info("收口遗留 running 步骤 run=%s count=%s", run_id, finished)
+    return finished
 
 
 def _attach_step_success_hook(
