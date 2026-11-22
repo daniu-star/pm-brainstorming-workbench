@@ -36,6 +36,30 @@ export function latestChatFailure(
   return best ? { runId: best.runId, errorMessage: best.errorMessage } : null;
 }
 
+/**
+ * 找最近一条「部分成功」的脑暴任务（AC-14）。
+ *
+ * 部分成功是终态且没有 errorMessage：它不算失败，所以不进错误条；但其中有专家
+ * 本轮失败，需要给用户一个「重试失败专家」的入口（后端 retry_run 会复用父 Run
+ * 已成功的角色，只重调失败的那几个）。
+ */
+export function latestPartialBrainstormRun(
+  runs: Record<string, ChatRunFailure | undefined>,
+  sessionId: string | null | undefined
+): string | null {
+  if (!sessionId) return null;
+  let best: { runId: string; createdAt: string } | null = null;
+  for (const [runId, run] of Object.entries(runs)) {
+    if (!run || run.status !== "partial_succeeded" || run.action !== "brainstorm") continue;
+    if (run.sessionId !== sessionId) continue;
+    const createdAt = run.createdAt ?? "";
+    if (!best || createdAt >= best.createdAt) {
+      best = { runId, createdAt };
+    }
+  }
+  return best ? best.runId : null;
+}
+
 /** 错误条文案：当前请求错误优先，其次恢复到的最近对话失败。 */
 export function displayChatError(
   error: string | null,

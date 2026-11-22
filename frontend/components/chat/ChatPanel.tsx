@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useSessionStore } from "@/store/sessionStore";
-import { displayChatError, latestChatFailure } from "@/lib/chatNotices";
+import { displayChatError, latestChatFailure, latestPartialBrainstormRun } from "@/lib/chatNotices";
 import { shouldShowStartDiscussion } from "@/lib/phaseRouter";
 import { MessageList } from "./MessageList";
 import { RoleSelector } from "./RoleSelector";
@@ -29,9 +29,12 @@ export function ChatPanel() {
 
   // 「开始讨论」的 once 守卫：点击后在回执到达（runs 出现 brainstorm）前禁用，防止重复提交
   const [discussionRequested, setDiscussionRequested] = useState(false);
+  // 部分成功提示条被用户手动关闭的 Run（按 runId 记，换会话/换 Run 自动重新出现）
+  const [dismissedPartialRunId, setDismissedPartialRunId] = useState<string | null>(null);
 
   useEffect(() => {
     setDiscussionRequested(false);
+    setDismissedPartialRunId(null);
   }, [currentSessionId]);
 
   useEffect(() => {
@@ -77,6 +80,20 @@ export function ChatPanel() {
     } catch {
       // 失败原因由 store 写回 error / runs，错误条保留可再次重试
       setDiscussionRequested(false);
+    }
+  };
+  // 部分成功的脑暴 Run：有专家本轮失败（AC-14），给「重试失败专家」入口；
+  // 它不是失败，不能塞进错误条（会显示空错误文案），单独用琥珀色提示条。
+  const partialBrainstormRunId = latestPartialBrainstormRun(runs, currentSessionId);
+  const showPartialBrainstorm =
+    partialBrainstormRunId !== null && partialBrainstormRunId !== dismissedPartialRunId;
+  const retryPartialBrainstorm = async () => {
+    if (!partialBrainstormRunId || isStreaming) return;
+    try {
+      // 成功时 Run 状态离开 partial_succeeded，提示条自然消失；失败时保留以便再试
+      await retryFailedRun(partialBrainstormRunId);
+    } catch {
+      // 失败原因由 store 写回 error / runs，提示条保留可再次重试
     }
   };
   const showStartDiscussion = shouldShowStartDiscussion({
@@ -165,6 +182,28 @@ export function ChatPanel() {
             <button
               onClick={clearLastFailedSend}
               aria-label="放弃重试"
+              className="min-h-[40px] min-w-[40px] flex items-center justify-center text-amber-300/70 hover:text-amber-200"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </button>
+          </span>
+        </div>
+      )}
+
+      {showPartialBrainstorm && (
+        <div className="mx-3 mt-2 px-3 py-2 bg-amber-900/20 border border-amber-800/40 rounded-xl text-amber-300 text-sm flex justify-between items-center gap-2">
+          <span className="min-w-0 flex-1 break-words">有专家本轮失败，可重试失败专家补齐</span>
+          <span className="flex shrink-0 items-center gap-1">
+            <button
+              onClick={() => void retryPartialBrainstorm()}
+              disabled={isStreaming}
+              className="min-h-[40px] px-3 text-xs font-medium text-amber-200 hover:text-amber-100 underline underline-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              重试失败专家
+            </button>
+            <button
+              onClick={() => setDismissedPartialRunId(partialBrainstormRunId)}
+              aria-label="关闭部分失败提示"
               className="min-h-[40px] min-w-[40px] flex items-center justify-center text-amber-300/70 hover:text-amber-200"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
