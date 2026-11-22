@@ -2473,14 +2473,23 @@ def retry_run(
                 },
             )
     if original.base_product_version != session.current_product_version:
-        raise AppError(
-            ErrorCode.RETRY_CONTEXT_CHANGED,
-            "产品状态已变化，不能重试该步骤",
-            details={
-                "base_product_version": original.base_product_version,
-                "current_product_version": session.current_product_version,
-            },
+        # 部分成功的 Run 已经把「成功角色」的产物提交进当前版本：它的
+        # result_product_version 就是当前版本时，允许在最新版本上重试 —— 只重调
+        # 失败角色、成功角色从父 Run 步骤复用，随后的归并会按 claim 文本去重（AC-14）。
+        retry_partial = (
+            RunStatus(original.status) is RunStatus.partial_succeeded
+            and original.result_product_version is not None
+            and int(original.result_product_version) == int(session.current_product_version)
         )
+        if not retry_partial:
+            raise AppError(
+                ErrorCode.RETRY_CONTEXT_CHANGED,
+                "产品状态已变化，不能重试该步骤",
+                details={
+                    "base_product_version": original.base_product_version,
+                    "current_product_version": session.current_product_version,
+                },
+            )
 
     # 闭环轮次 Run 的重试必须回到闭环里：子 Run 继承 loop_id，并把被重试的这一轮
     # 重新置为 running（排队超时/执行失败都会把 loop 收口为 failed）。否则子 Run

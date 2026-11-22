@@ -1444,7 +1444,15 @@ def _retry_scope_for(db: Any, run: Any, run_repo: Any) -> dict[str, Any] | None:
             "candidates": output.get("candidates") or {},
             "result": result,
         }
-    return {"parent_run_id": parent_id, "failed_keys": failed_keys, "reused": reused}
+    return {
+        "parent_run_id": parent_id,
+        "failed_keys": failed_keys,
+        "reused": reused,
+        # 父 Run 是 partial_succeeded 时已提交过成功角色的对外消息：重试子 Run
+        # 复用这些角色时不能再重复发消息（AC-14）；父 Run failed 则消息从未提交，
+        # 子 Run 必须补齐。
+        "parent_committed": RunStatus(parent.status) is RunStatus.partial_succeeded,
+    }
 
 
 def _drive_run(

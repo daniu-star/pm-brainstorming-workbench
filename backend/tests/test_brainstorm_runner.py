@@ -31,6 +31,7 @@ from core.llm_client import (  # noqa: E402
     LLMInsufficientBalanceError,
     LLMRequestError,
     LLMResult,
+    LLMUnavailableError,
     LLMUsage,
 )
 from domain import contracts as C  # noqa: E402
@@ -596,6 +597,87 @@ class BrainstormRunnerTests(RunnerTestCase):
         self.assertIsNotNone(state)
         assert state is not None
         self.assertIn(reused_claim_id, {claim.id for claim in state.claims})
+
+    def test_retry_reruns_all_failed_roles_and_enqueues_synthesis(self) -> None:
+        """AC-14：多个专家失败（超时 + 结构失败）时，重试只调这两个并接必要汇总。"""
+
+        session_id = self._prepare_brainstorm_session()
+        parent_id = self._submit_brainstorm("all").run_id
+        self.claim(parent_id)
+
+        class _MixedFailureLLM(_BrainstormLLM):
+            """ops 超时（LLMUnavailableError，可重试）、target_user 结构非法；cto/designer 正常。"""
+
+            def __init__(self) -> None:
+                super().__init__(invalid_roles=(RoleCode.target_user,))
+                self.timeout_roles = {RoleCode.ops.value}
+
+            async def complete_json(self, **kwargs: Any) -> tuple[Any, LLMResult]:  # type: ignore[override]
+                role = str(kwargs.get("purpose", "")).rsplit(".", 1)[-1]
+                if role in self.timeout_roles:
+                    self.calls.append({"role": role, "purpose": kwargs.get("purpose", "")})
+                    raise LLMUnavailableError("upstream timeout")
+                return await super().complete_json(**kwargs)
+
+        mixed = _MixedFailureLLM()
+        self.run_once(parent_id, llm=mixed)
+
+        parent = self.get_run(parent_id)
+        self.assertEqual(parent.status, RunStatus.partial_succeeded.value, parent.error_message)
+        parent_steps = self._role_steps(parent_id)
+        for role in (RoleCode.cto, RoleCode.designer):
+            self.assertEqual(parent_steps[role.value].status, StepStatus.succeeded.value)
+        for role in (RoleCode.ops, RoleCode.target_user):
+            self.assertNotEqual(parent_steps[role.value].status, StepStatus.succeeded.value)
+
+        with database.session_scope() as db:
+            retry = command_service.retry_run(
+                db,
+                owner_email=OWNER,
+                run_id=parent_id,
+                request_id=new_id(),
+                now_iso=utc_now_iso(),
+                now_epoch=int(time.time()),
+            )
+
+        child = self.get_run(retry.run_id)
+        # 父 Run 的顶层步骤其实成功了（部分成功会提交），失败的是两个角色步骤。
+        self.assertEqual(
+            set(json.loads(child.failed_steps_json)),
+            {role_logical_key(RoleCode.ops), role_logical_key(RoleCode.target_user)},
+        )
+
+        self.claim(child.id)
+        retry_llm = _BrainstormLLM()
+        self.run_once(child.id, llm=retry_llm)
+
+        # 只重调两个失败专家，成功角色不再调用。
+        self.assertEqual(
+            sorted(call["role"] for call in retry_llm.calls),
+            sorted([RoleCode.ops.value, RoleCode.target_user.value]),
+        )
+        child = self.get_run(child.id)
+        self.assertEqual(child.status, RunStatus.succeeded.value, child.error_message)
+        self.assertEqual(
+            set(self._role_steps(child.id)),
+            {RoleCode.ops.value, RoleCode.target_user.value},
+        )
+        # 父 Run 已把两个成功角色提交为 v3；重试在 v3 上合并新角色 → v4。
+        self.assertEqual(self._product_versions(session_id), [1, 2, 3, 4])
+        self.assertEqual(len(self._agent_messages(session_id)), 4)
+
+        # 必要汇总：重试成功后同事务排入主持人归并 Run。
+        with database.session_scope() as db:
+            synthesis = db.execute(
+                select(RunRow)
+                .where(RunRow.session_id == session_id)
+                .where(RunRow.action == TaskKind.synthesis.value)
+            ).scalars().one_or_none()
+        self.assertIsNotNone(synthesis, "重试成功后应排入 synthesis 子 Run")
+        assert synthesis is not None
+        self.assertEqual(synthesis.parent_run_id, child.id)
+        self.assertEqual(synthesis.status, RunStatus.queued.value)
+        self.assertEqual(int(synthesis.base_product_version), 4)
 
     def test_brainstorm_enqueues_synthesis_child_run(self) -> None:
         """FR-04D：四角色合并后自动排入主持人归并 Run，结论投影到画布。"""

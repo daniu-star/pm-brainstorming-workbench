@@ -103,6 +103,9 @@ class _RoleRun:
     stage_map: dict[str, dict[str, str]] = field(default_factory=dict)
     warning: str | None = None
     error: str | None = None
+    #: 保留瞬时上游异常：所有角色都失败时重新抛给 runner 做步骤级重试。
+    #:：所有角色都失败时重新抛给 runner，交给「单步最多 2 次」重试。
+    transient_error: BaseException | None = None
     calls: int = 0
     #: 重试子 Run 直接复用父 Run 已成功角色的产物（不重复调模型）。
     reused: bool = False
@@ -556,19 +559,27 @@ async def _run_role(
         warnings.append(f"{label} 修复后仍未通过校验，该角色本轮失败：{outcome.error}")
         return outcome
     except _llm_error_class() as exc:
-        # 上游错误（401/402/404/限流/超时）：先把真实错误码落到角色 step，再交给 runner。
+        # 上游错误（401/402/404/限流/超时）：先把真实错误码落到角色 step，再决定是否上抛。
         # 旧实现只在 ValueError 分支写 step；上游错误直接抛出，导致角色 step 永远停在
         # ``running``（实测余额耗尽时 4 个角色里最后一个是 running），界面无法解释失败。
-        # 这里统一收口 step 但**不吞掉**异常：Run 仍按 PRD 失败并带上真实 code（可重试错误
-        # 由 runner 的「单步最多 2 次尝试」重试）。
+        code = str(getattr(exc, "code", ErrorCode.INTERNAL))
         outcome.error = str(exc)[:1000]
         _finish_role_step(
             run_id,
             step_id,
             status=StepStatus.failed,
-            error_code=str(getattr(exc, "code", ErrorCode.INTERNAL)),
+            error_code=code,
             error_message=outcome.error,
         )
+        if getattr(exc, "retryable", False):
+            # AC-14：单个专家的瞬时错误（超时/限流/5xx）不得中止整轮 —— 记为角色级失败，
+            # 其余角色照常执行；只要有专家成功，本轮以 partial_succeeded 收口，
+            # 失败专家由用户触发的重试子 Run 只重调这几个（runner.retry_scope）。
+            outcome.transient_error = exc
+            warnings.append(
+                f"{label} 调用模型失败（{code}），该角色本轮失败，其余角色继续：{outcome.error}"
+            )
+            return outcome
         warnings.append(f"{label} 调用模型失败，该角色本轮中止：{outcome.error}")
         raise
 
@@ -786,6 +797,13 @@ async def run_brainstorm(ctx: Any):
         events.append({"type": EventType.role_completed.value, "payload": payload})
 
     if not succeeded:
+        # 所有角色都没成：若原因包含瞬时上游错误，原样上抛给 runner 做步骤级重试；
+        # 否则是输出/协议问题，按 MODEL_OUTPUT_INVALID 收口。
+        transient = next(
+            (run.transient_error for run in role_runs if run.transient_error is not None), None
+        )
+        if transient is not None:
+            raise transient
         return RunOutcome(
             status=RunStatus.failed,
             error_code=ErrorCode.MODEL_OUTPUT_INVALID,
@@ -798,7 +816,14 @@ async def run_brainstorm(ctx: Any):
         )
 
     messages: list[Any] = []
+    skip_reused_messages = bool(
+        isinstance(retry_scope, dict) and retry_scope.get("parent_committed")
+    )
     for run in succeeded:
+        if run.reused and skip_reused_messages:
+            # 父 Run（partial_succeeded）已提交过这些角色的对外消息，重试子 Run
+            # 只补新执行角色，避免聊天里出现重复发言。
+            continue
         message = _role_message(run)
         if message.content:
             messages.append(message)
@@ -846,6 +871,9 @@ async def run_brainstorm(ctx: Any):
             f"{len(failed)} 个角色本轮失败（{'、'.join(run.role_code.value for run in failed)}），"
             "其余角色的产物已合并"
         )
+        # AC-14：部分成功时不自动排主持人归并 —— 先把「只重调失败专家」的机会留给用户，
+        # 否则 synthesis 子 Run 会占住 active_run_id，重试直接被 SESSION_BUSY 拒绝。
+        warnings.append("主持人归并未自动开始；请先重试失败专家，成功后会自动生成归并报告")
 
     return RunOutcome(
         status=status,
@@ -859,7 +887,9 @@ async def run_brainstorm(ctx: Any):
         brief_status=None,
         # FR-04D：四角色观点合并后交给主持人归并（决策建议/分歧/未解决缺口），
         # 子 Run 由 apply_outcome 在同一事务内排入，避免本 Run 变成并行观点清单。
-        follow_up=TaskKind.synthesis,
+        # 有角色失败时（partial_succeeded）不排：留给用户重试失败专家，重试成功后
+        # 由那次 Run 排入「必要汇总」（AC-14）。
+        follow_up=None if failed else TaskKind.synthesis,
     )
 
 

@@ -25,9 +25,9 @@
 ## 2. 实际执行的验证命令与结果
 
 ```bash
-# 后端全量（652 用例，含 M2/M3 + QA Loop 收口 + 闭环/数据生命周期/崩溃注入/旧 ID 别名热修新增用例）
+# 后端全量（653 用例，含 M2/M3 + QA Loop 收口 + 闭环/数据生命周期/崩溃注入/旧 ID 别名/AC-14 多失败重试热修新增用例）
 cd backend && ../.venv/Scripts/python.exe -m unittest discover -s tests
-# → Ran 652 tests / OK / exit 0（含 tests/test_audit_runner.py 的 3 个真 runner 审计用例、tests/test_control_crash.py 的 3 个真 kill/restart 用例、tests/test_session_alias.py 的 6 个旧 ID 别名用例）
+# → Ran 653 tests / OK / exit 0（含 tests/test_audit_runner.py 的 3 个真 runner 审计用例、tests/test_control_crash.py 的 3 个真 kill/restart 用例、tests/test_session_alias.py 的 6 个旧 ID 别名用例、tests/test_brainstorm_runner.py 的 AC-14 多失败重试用例）
 
 # 跨进程（真 subprocess + 共享 SQLite）
 cd backend && ../.venv/Scripts/python.exe -m unittest tests.test_run_repo tests.test_cross_process
@@ -77,7 +77,7 @@ cd frontend && npm run test:e2e      # 1 pass（真起 uvicorn，401/404 语义�
 | AC-11 | 通过 | `test_api_v2.py::test_sse_replays_from_after_seq_and_closes_on_terminal`；`test_legacy_compat.py::test_brainstorm_sse_translates_events_and_done_once`；`frontend/tests/sse.test.cjs` | 终结事件恰好一次（服务端 + 前端双保险） |
 | AC-12 | 通过 | `frontend/tests/sse.test.cjs`（跨块 UTF-8/CRLF/多行 data/注释/意外 EOF）；`test_api_v2.py::test_keepalive_frame_is_comment_without_seq` | 心跳为注释不占序号；EOF 无终结只算断连 |
 | AC-13 | 通过 | `frontend/tests/store.test.cjs`（切换会话/generation 守卫）；`test_api_v2.py::test_sse_disconnect_does_not_cancel_run` | 切 A→B 取消订阅但不取消服务器任务 |
-| AC-14 | 部分通过 | `test_brainstorm.py::test_repeated_invalid_output_fails_role_but_run_partial`；`test_brainstorm_runner.py::test_invalid_role_output_marks_partial` | 一专家失败不中止、run 标 partial_succeeded；**重试仍是整 Run 重放，未做「只调失败专家」** |
+| AC-14 | 通过 | `test_brainstorm.py::test_repeated_invalid_output_fails_role_but_run_partial`；`test_brainstorm_runner.py::test_invalid_role_output_marks_partial`；`test_brainstorm_runner.py::test_retry_only_reruns_failed_role_and_reuses_successes`（单失败）；`test_brainstorm_runner.py::test_retry_reruns_all_failed_roles_and_enqueues_synthesis`（一个超时 + 一个结构失败 → partial_succeeded，重试子 Run 只调这两个专家并复用另外两个，成功后同事务排入 synthesis） | 单专家瞬时错误不中止整轮（`LLMUnavailableError` 记该角色 failed、其余继续）；部分成功不自动排 synthesis（避免占住 active_run_id 阻断重试）；`retry_run` 允许在 partial Run 的结果版本上重试；复用角色不重复发对外消息 |
 | AC-15 | 通过 | `test_reducer.py::test_merge_is_independent_of_arrival_order`；`test_brainstorm_runner.py`（4 角色各自 `build_context(product_version=base)`，首轮互不可见） | 结果不依赖完成顺序、同基准产品版本 |
 | AC-16 | 通过 | `backend/workflows/synthesis.py`（`MAX_REPAIR_ROUNDS=1`、`MAX_REVIEWERS=2`、冲突上限 2、只看冲突相关对方结论、degraded 回退）；`backend/tests/test_synthesis.py`(8)：归并/复核上限/复核专家不可再开复核/降级；`workflows/runner.py` 注册 `TaskKind.synthesis`；brainstorm 成功后由 `command_service._enqueue_follow_up` 同事务排入子 Run | 最多 1 轮修复 + 至多 2 位专家复核，冲突与分歧进 `SynthesisResult`；预算不足时降级并标注 |
 | AC-17 | 通过 | `test_context_builder.py::test_protected_content_is_never_dropped_by_budget`；`test_coach.py::test_confirmed_field_is_never_overwritten_by_model` | 受保护字段不因预算丢弃；模型不可改写已确认项 |
@@ -110,7 +110,7 @@ cd frontend && npm run test:e2e      # 1 pass（真起 uvicorn，401/404 语义�
 ## 4. 已知偏差（如实列出，含影响与最小调整方案）
 
 1. **主持人 synthesis/复核（AC-16）— 已解决（QA Loop 第 1 轮修复）**：新增 `backend/workflows/synthesis.py`（696 行）实现 `SynthesisResult`、冲突上限 2、「最多 1 轮修复 + 至多 2 位专家复核 + 复核专家不可再开复核」、预算不足 degraded 回退；brainstorm 成功后由 `command_service._enqueue_follow_up` 在同一事务排入 `TaskKind.synthesis` 子 Run；`backend/tests/test_synthesis.py` 8 例覆盖。
-2. **重试粒度是整 Run（AC-14）**：`retry_run` 建子 Run 重放整个 action；已成功步骤会被跳过（不重复调模型），但失败专家的上下文仍按当前产品版本重建。影响：重试成本略高于「只调失败专家」。最小调整：在子 Run 上记录失败 step 列表，runner 只调度这些 logical_key。
+2. **重试粒度 — 已解决（第 11 批，AC-14）**：`runner._retry_scope_for` 读子 Run 的 `failed_steps_json`，把父 Run 已成功 step 的 `RoleResult`/staging 候选交给 `brainstorm._reused_role_run` 直接复用，只对失败角色调模型；`brainstorm._run_role` 区分两类上游错误——`retryable=True`（超时/限流/5xx）记为角色级失败并继续其余角色（整轮以 `partial_succeeded` 收口），账号级（401/402 等不可重试、影响所有角色）才整轮失败并保留真实错误码；所有角色都因瞬时错误失败时仍上抛给 runner 做步骤级重试。部分成功不再自动排 synthesis（否则占住 `active_run_id` 让重试撞 `SESSION_BUSY`），重试成功后才由该 Run 排入「必要汇总」；`retry_run` 额外允许 `partial_succeeded` 且 `result_product_version == session.current_product_version` 的 Run 重试（归并按 claim 文本去重）。覆盖 `tests/test_brainstorm_runner.py` 3 例。
 3. **越权 evidence_id 归属校验 — 已解决（第 9 批）**：`services/evidence_guard.py::check_role_result_refs` / `assert_role_result_refs` + `session_repo.list_referenceable_evidence_ids` / `list_session_message_ids`，接到 `workflows/brainstorm.py::_validate_role_result`：逐条回查会话已有消息与已登记证据（含公开知识域 `session_id IS NULL`），越权引用先回喂修复一次，仍失败 → `MODEL_OUTPUT_INVALID`。覆盖 `tests/test_evidence_guard.py`(7) 与 `test_brainstorm_runner.py` 2 例。
 4. **前端测试用 `node --test` 而非 vitest/RTL**：本机 `registry.npmjs.org` 不可达，无法安装新依赖。影响：无组件渲染测试，AC-01/19/31/33 只能到 store/逻辑层。最小调整：网络恢复后补 vitest + RTL。
 5. **软删不清正文 — 已解决（第 8 批）**：`repositories/session_repo.py::purge_session_content` 在软删时清空消息正文、证据摘要、产品状态（回骨架但保留版本链）、审计问答与报告、闭环产物，只保留 tombstone 与会话骨架；`soft_delete_session(..., purge_content=True)` 为默认。物理清理仍依赖运维脚本，属保留期策略而非功能缺口。
@@ -135,8 +135,8 @@ cd frontend && npm run test:e2e      # 1 pass（真起 uvicorn，401/404 语义�
 ## 6. 结论
 
 - M1（WP-00～05）、M2（WP-06～08）、M3（WP-09）与 WP-10 的发布件（CI、迁移演练、健康诊断、前端 e2e 冒烟）均已交付。
-- 真实执行结果：后端 **652 用例 OK**、前端 **245 用例 pass** + `tsc` 0 错 + `build` 成功、`test:e2e` 1 pass、跨进程 6 用例 OK + 崩溃注入 3 用例 OK、旧 ID 别名 6 用例 OK、真 Worker 审计端到端 **30 项 ALL PASS**、迁移演练 **DRILL_OK**。
-- AC 统计（按 §3 表）：**通过 34 条**（AC-02/03/04/05/06/07/08/09/11/12/13/15/16/17/18/21/22/23/24/25/26/27/28/29/30/32/35/36/37/38/39/40/41/42）、**部分通过 8 条**（AC-01/10/14/19/20/31/33/34）、**未实现 0 条**。
+- 真实执行结果：后端 **653 用例 OK**、前端 **245 用例 pass** + `tsc` 0 错 + `build` 成功、`test:e2e` 1 pass、跨进程 6 用例 OK + 崩溃注入 3 用例 OK、旧 ID 别名 6 用例 OK、AC-14 多失败重试 1 用例 OK、真 Worker 审计端到端 **30 项 ALL PASS**、迁移演练 **DRILL_OK**。
+- AC 统计（按 §3 表）：**通过 35 条**（AC-02/03/04/05/06/07/08/09/11/12/13/14/15/16/17/18/21/22/23/24/25/26/27/28/29/30/32/35/36/37/38/39/40/41/42）、**部分通过 7 条**（AC-01/10/19/20/31/33/34）、**未实现 0 条**。
 - 剩余差距集中在：重试粒度（AC-14，仍是整 Run 重放而非只调失败专家）、真实浏览器交互验证（AC-01/19/31/33/34，npm registry 不可达无法装 playwright）、崩溃后预留预算回收（AC-10）、模型是否编造数字的端到端人工标注（AC-20）。每条均给出最小调整方案，未通过修改期望值或预填结果取得任何「通过」。
 
 ## 7. QA Loop Engineering 首次运行（用户要求，2026-11-19）
