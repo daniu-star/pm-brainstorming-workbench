@@ -34,6 +34,7 @@ TABLES = (
     "audits",
     "legacy_artifacts",
     "migration_records",
+    "session_id_aliases",
 )
 REQUIRED_PLAN_KEYS = ("sessions", "messages", "product_states")
 

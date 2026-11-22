@@ -60,9 +60,17 @@ create_session(db, *, session_id, owner_email, problem_statement, now_iso) -> Se
 get_session(db, session_id, *, include_deleted=False) -> SessionRow | None
 require_session(db, session_id, *, owner_email, include_deleted=False) -> SessionRow
     # 不存在 -> AppError(NOT_FOUND)；owner 不符 -> AppError(FORBIDDEN)
+record_session_alias(db, legacy_id, session_id, *, source_path=None, now_iso=None) -> SessionIdAliasRow
+    # 旧 ID -> 32 hex 别名（幂等：同 legacy_id 已存在直接返回）
+    # legacy_id 为空或等于 session_id -> AppError(INVALID_REQUEST)
+resolve_session_id(db, session_id) -> str | None
+    # 32 hex 原样返回；否则查 session_id_aliases；无别名 -> None
+    # 只读重定向：不改归属校验、不参与写路径
+list_session_aliases(db, session_id) -> list[SessionIdAliasRow]   # 按 created_at 排序
 list_sessions(db, owner_email, *, cursor: str | None, limit: int) -> tuple[list[SessionRow], str | None]
     # 按 (updated_at DESC, id DESC) 稳定排序；cursor 为上一页最后一条 id；返回 (rows, next_cursor)
-soft_delete_session(db, session, *, now_iso) -> None   # 置 deleted_at
+soft_delete_session(db, session, *, now_iso, purge_content=True) -> dict[str, int]
+    # 置 deleted_at + 默认清正文（purge_session_content），保留会话/消息/版本链骨架 tombstone
 touch_session(db, session, *, now_iso, phase=UNSET, session_version=UNSET, product_version=UNSET,
               active_run_id=UNSET, current_audit_id=UNSET, current_control_id=UNSET,
               brief_status=UNSET) -> SessionRow       # 写入后 session 对象同步更新
