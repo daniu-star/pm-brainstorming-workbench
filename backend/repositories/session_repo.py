@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from typing import Any, Iterable, Sequence
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 
 from domain.contracts import (
     BriefStatus,
@@ -535,6 +535,36 @@ def list_evidence(db, session_id: str, *, limit: int = 50) -> list[EvidenceRow]:
             .limit(limit)
         ).scalars().all()
     )
+
+
+def list_referenceable_evidence_ids(db, session_id: str, *, limit: int = 500) -> set[str]:
+    """可被模型引用的证据 ID 集合：本会话证据 + 公开知识域（``session_id IS NULL``）。
+
+    用于 FR-04C 的引用归属校验；超过 ``limit`` 的部分不返回，多出来的 ID 会被判为
+    不可引用（宁可让模型少引用，也不放过越权引用）。
+    """
+
+    limit = max(1, min(int(limit), 2000))
+    rows = db.execute(
+        select(EvidenceRow.id)
+        .where(or_(EvidenceRow.session_id == session_id, EvidenceRow.session_id.is_(None)))
+        .order_by(EvidenceRow.retrieved_at.desc())
+        .limit(limit)
+    ).scalars().all()
+    return {str(item) for item in rows}
+
+
+def list_session_message_ids(db, session_id: str, *, limit: int = 500) -> set[str]:
+    """本会话最近 ``limit`` 条消息的 ID 集合（供 ``source_message_ids`` 归属校验）。"""
+
+    limit = max(1, min(int(limit), 2000))
+    rows = db.execute(
+        select(MessageRow.id)
+        .where(MessageRow.session_id == session_id)
+        .order_by(MessageRow.seq.desc())
+        .limit(limit)
+    ).scalars().all()
+    return {str(item) for item in rows}
 
 
 def evidence_to_model(row: EvidenceRow) -> Evidence:

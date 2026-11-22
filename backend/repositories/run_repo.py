@@ -229,11 +229,19 @@ def _claim_once(db, *, worker_id: str, now_epoch: int, lease_seconds: int) -> Ru
             conditions.append(
                 or_(RunRow.lease_expires_at.is_(None), RunRow.lease_expires_at < int(now_epoch))
             )
+        # 取消意图不因租约过期而清除（PRD FR-03 / AC-30）：接管一个
+        # cancel_requested 的 Run 时保持该状态，让执行器在第一个安全点直接终结为
+        # cancelled；若重置回 running，取消请求会被静默「复活」成正常执行。
+        takeover_status = (
+            RunStatus.cancel_requested.value
+            if status == RunStatus.cancel_requested.value
+            else RunStatus.running.value
+        )
         result = db.execute(
             update(RunRow)
             .where(*conditions)
             .values(
-                status=RunStatus.running.value,
+                status=takeover_status,
                 lease_owner=worker_id,
                 lease_epoch=func.coalesce(RunRow.lease_epoch, 0) + 1,
                 lease_expires_at=int(now_epoch) + int(lease_seconds),

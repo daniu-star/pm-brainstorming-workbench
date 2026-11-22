@@ -2460,6 +2460,18 @@ def retry_run(
             raise AppError(ErrorCode.RETRY_AUDIT_CONTEXT_CHANGED, "审计已结束，不能重试该步骤")
         if original.base_audit_version is not None and audit.audit_version != original.base_audit_version:
             raise AppError(ErrorCode.RETRY_AUDIT_CONTEXT_CHANGED, "审计上下文已变化，不能重试该步骤")
+        # AC-41：开场失败后用户可能在同一产品版本上开了新的审计实例。旧 Run 属于旧审计，
+        # 重试它等于复活旧实例（并可能覆盖新审计），所以必须按上下文变化拒绝。
+        current_audit_id = getattr(session, "current_audit_id", None)
+        if current_audit_id and current_audit_id != original.audit_id:
+            raise AppError(
+                ErrorCode.RETRY_AUDIT_CONTEXT_CHANGED,
+                "会话已开启新的审计实例，不能重试旧审计的步骤",
+                details={
+                    "audit_id": original.audit_id,
+                    "current_audit_id": current_audit_id,
+                },
+            )
     if original.base_product_version != session.current_product_version:
         raise AppError(
             ErrorCode.RETRY_CONTEXT_CHANGED,

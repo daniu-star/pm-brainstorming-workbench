@@ -65,8 +65,14 @@ PROMPT_TOKENS = 120
 COMPLETION_TOKENS = 60
 
 
-def _role_payload(role: RoleCode, *, display: str | None = None) -> dict[str, Any]:
-    """构造一份合法的 ``RoleResult`` JSON（默认含一条 claim）。"""
+def _role_payload(
+    role: RoleCode,
+    *,
+    display: str | None = None,
+    evidence_refs: list[str] | None = None,
+    source_message_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """构造一份合法的 ``RoleResult`` JSON（默认含一条 claim，可注入引用）。"""
 
     return {
         "schema_version": 1,
@@ -78,6 +84,8 @@ def _role_payload(role: RoleCode, *, display: str | None = None) -> dict[str, An
                 "kind": "fact",
                 "text": f"{role.value} 的关键事实",
                 "confidence_level": "medium",
+                "evidence_refs": list(evidence_refs or []),
+                "source_message_ids": list(source_message_ids or []),
             }
         ],
         "option_proposals": [],
@@ -112,8 +120,18 @@ def _llm_result(
 class _BrainstormLLM:
     """按 ``purpose`` 末段的角色名返回 ``RoleResult``；可令某些角色始终非法。"""
 
-    def __init__(self, *, invalid_roles: tuple[RoleCode, ...] = ()) -> None:
+    def __init__(
+        self,
+        *,
+        invalid_roles: tuple[RoleCode, ...] = (),
+        ghost_ref_roles: tuple[RoleCode, ...] = (),
+        ref_ids: dict[str, list[str]] | None = None,
+    ) -> None:
         self.invalid_roles = set(invalid_roles)
+        #: 这些角色输出「臆造的引用」，用来验证 FR-04C 的归属校验与一次修复。
+        self.ghost_ref_roles = set(ghost_ref_roles)
+        #: 合法引用（本会话证据/消息），供正向用例注入。
+        self.ref_ids = ref_ids or {}
         self.calls: list[dict[str, Any]] = []
 
     async def complete_json(
@@ -139,7 +157,24 @@ class _BrainstormLLM:
         if role in self.invalid_roles:
             # 角色码非法 → pydantic 校验失败 → 触发一次修复；第二次仍失败则角色 step failed。
             return {"role_code": "not-a-role"}, _llm_result()
-        return _role_payload(RoleCode(role)), _llm_result()
+        if role in self.ghost_ref_roles:
+            # 臆造引用：每次（含修复后）都返回同一个越权证据/消息 ID → 一次修复后仍失败。
+            return (
+                _role_payload(
+                    RoleCode(role),
+                    evidence_refs=["ghost-evidence-does-not-exist"],
+                    source_message_ids=["ghost-message-does-not-exist"],
+                ),
+                _llm_result(),
+            )
+        return (
+            _role_payload(
+                RoleCode(role),
+                evidence_refs=self.ref_ids.get("evidence"),
+                source_message_ids=self.ref_ids.get("messages"),
+            ),
+            _llm_result(),
+        )
 
 
 class _FailRoleLLM(_BrainstormLLM):
@@ -703,6 +738,78 @@ class BrainstormRunnerTests(RunnerTestCase):
         self.assertIsNotNone(step)
         self.assertEqual(step.status, StepStatus.failed.value)
         self.assertEqual(step.error_code, ErrorCode.BUDGET_EXCEEDED)
+
+
+    def test_foreign_evidence_ref_fails_after_one_repair(self) -> None:
+        """FR-04C：模型给出不属于本会话/公开知识域的引用 → 修复一次后角色 step failed。"""
+
+        session_id = self._prepare_brainstorm_session()
+        receipt = self._submit_brainstorm("all")
+        run_id = receipt.run_id
+        self.claim(run_id)
+
+        llm = _BrainstormLLM(ghost_ref_roles=(RoleCode.cto,))
+        self.run_once(run_id, llm=llm)
+
+        run = self.get_run(run_id)
+        self.assertEqual(run.status, RunStatus.partial_succeeded.value, run.error_message)
+
+        # 越权引用被回喂修复一次 → 该角色两次调用；其余角色各一次。
+        cto_calls = [call for call in llm.calls if call["role"] == RoleCode.cto.value]
+        self.assertEqual(len(cto_calls), 2, "引用校验失败必须走一次修复")
+        self.assertEqual(len(llm.calls), 5)
+
+        step = self.get_step(run_id, role_logical_key(RoleCode.cto))
+        self.assertIsNotNone(step)
+        self.assertEqual(step.status, StepStatus.failed.value)
+        self.assertEqual(step.error_code, ErrorCode.MODEL_OUTPUT_INVALID)
+        self.assertIn("引用校验失败", step.error_message or "")
+        self.assertIn("evidence_refs", step.error_message or "")
+
+        # 其余三个角色照常合并，产品状态推进一次。
+        self.assertEqual(self._product_versions(session_id), [1, 2, 3])
+
+    def test_session_evidence_and_messages_are_referenceable(self) -> None:
+        """正向：引用本会话证据行与消息 ID 通过校验并进入合并结果。"""
+
+        session_id = self._prepare_brainstorm_session()
+        receipt = self._submit_brainstorm("cto")
+        run_id = receipt.run_id
+
+        with database.session_scope() as db:
+            session = session_repo.get_session(db, session_id)
+            self.assertIsNotNone(session)
+            first_message = session_repo.list_messages(db, session_id, limit=1)[0]
+            evidence = session_repo.add_evidence(
+                db,
+                session,
+                kind=C.EvidenceKind.user_statement,
+                title="种子用户访谈",
+                excerpt="用户说：现在的灵感管理工具都太重，想要一个能随手记的。",
+                created_by=OWNER,
+            )
+            evidence_id = evidence.id
+            message_id = first_message.id
+
+        self.claim(run_id)
+        llm = _BrainstormLLM(
+            ref_ids={"evidence": [evidence_id], "messages": [message_id]}
+        )
+        self.run_once(run_id, llm=llm)
+
+        run = self.get_run(run_id)
+        self.assertEqual(run.status, RunStatus.succeeded.value, run.error_message)
+        step = self.get_step(run_id, role_logical_key(RoleCode.cto))
+        self.assertEqual(step.status, StepStatus.succeeded.value)
+        self.assertEqual(len(llm.calls), 1)
+
+        with database.session_scope() as db:
+            state = session_repo.get_product_state(db, session_id)
+        self.assertIsNotNone(state)
+        cto_claims = [claim for claim in state.claims if claim.role_code is RoleCode.cto]
+        self.assertTrue(cto_claims)
+        self.assertIn(evidence_id, cto_claims[0].evidence_refs)
+        self.assertIn(message_id, cto_claims[0].source_message_ids)
 
 
 class WorkflowRegistryTests(unittest.TestCase):

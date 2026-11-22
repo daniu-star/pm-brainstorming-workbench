@@ -5,7 +5,7 @@
 - ``PROMPTS[version][name]`` 保存完整提示词文本，便于灰度、回归与审计；
 - ``get_prompt(name, version)`` 与 ``build_role_messages(role_code, bundle, version)``
   是工作流（coach / brainstorm / audit）唯一入口；
-- 旧常量 ``TONE_PREAMBLE`` / ``COACH_PROMPT`` / ``build_system_prompt`` /
+- 旧常量 ``COACH_PROMPT`` / ``build_system_prompt`` /
   ``build_interviewer_prompt`` 保留，供 ``core.agent_loop`` 与 ``core.interviewer``
   的兼容路径使用（旧路由只读，不再新增调用点）。
 
@@ -398,82 +398,15 @@ def build_role_messages(
     return messages
 
 
-# --------------------------------------------------------------------------- #
-# 旧兼容 API（agent_loop / interviewer 仍在使用，勿删）
-# --------------------------------------------------------------------------- #
-
-# DEPRECATED(M1): 仅为 v1 兼容保留，M2 删除
-COACH_PROMPT = COACH_CLARIFY_PROMPT
-CTO_PROMPT = PROMPTS[PROMPT_VERSION]["role_cto"]
-DESIGNER_PROMPT = PROMPTS[PROMPT_VERSION]["role_designer"]
-OPERATIONS_PROMPT = PROMPTS[PROMPT_VERSION]["role_ops"]
-USER_PROMPT = PROMPTS[PROMPT_VERSION]["role_target_user"]
-
-#: 旧键名 ``user`` 映射到 canonical 的 ``target_user``。
-ROLE_PROMPTS: dict[str, str] = {
-    "cto": CTO_PROMPT,
-    "designer": DESIGNER_PROMPT,
-    "ops": OPERATIONS_PROMPT,
-    "user": USER_PROMPT,
-}
-
-ROLE_NAMES: dict[str, str] = {
-    "cto": "技术负责人",
-    "designer": "设计师",
-    "ops": "运营负责人",
-    "user": "目标用户",
-}
-
-ROLE_COLORS: dict[str, str] = {
-    "cto": "#3b82f6",
-    "designer": "#a855f7",
-    "ops": "#22c55e",
-    "user": "#f97316",
-}
-
-ROLE_ICONS: dict[str, str] = {
-    "cto": "👨‍💻",
-    "designer": "🎨",
-    "ops": "📊",
-    "user": "👤",
-}
-
-INTERVIEWER_PROMPT = AUDIT_PROMPT
-
-
-def build_system_prompt(role: str) -> str:
-    """旧接口：返回带语气基线的角色提示词。"""
-    if role not in ROLE_PROMPTS:
-        raise ValueError(f"未知角色: {role}")
-    return TONE_PREAMBLE + "\n\n" + ROLE_PROMPTS[role]
-
-
-def build_interviewer_prompt() -> str:
-    """旧接口：面试官系统提示词。"""
-    return TONE_PREAMBLE + "\n\n" + INTERVIEWER_PROMPT
-
-
 __all__ = [
-    "COACH_PROMPT",
     "COACH_SCHEMA",
-    "CTO_PROMPT",
-    "DESIGNER_PROMPT",
-    "INTERVIEWER_PROMPT",
     "MAX_COACH_FOLLOW_UPS",
-    "OPERATIONS_PROMPT",
     "PROMPTS",
     "PROMPT_NAMES",
     "PROMPT_VERSION",
-    "ROLE_COLORS",
-    "ROLE_ICONS",
-    "ROLE_NAMES",
-    "ROLE_PROMPTS",
     "ROLE_RESULT_PROTOCOL",
     "TONE_PREAMBLE",
-    "USER_PROMPT",
-    "build_interviewer_prompt",
     "build_role_messages",
-    "build_system_prompt",
     "get_prompt",
     "prompt_name_for_role",
 ]

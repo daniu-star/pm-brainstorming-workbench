@@ -32,6 +32,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from repositories import session_repo
+from services.evidence_guard import assert_role_result_refs
 from domain.contracts import (
     MAX_CONTEXT_INPUT_TOKENS,
     MAX_OUTPUT_TOKENS,
@@ -119,6 +121,23 @@ def _run_id(ctx: Any) -> str | None:
 def _session_id(ctx: Any, state: ProductState) -> str:
     session = getattr(ctx, "session", None)
     return getattr(session, "id", None) or state.session_id
+
+
+def _reference_sets(ctx: Any, state: ProductState) -> tuple[set[str], set[str]]:
+    """可引用集合：本会话 + 公开知识域的证据 ID、本会话消息 ID（FR-04C 归属校验）。
+
+    取不到 DB/会话时返回空集合 —— 此时任何引用都会被判为越权，宁可让角色产物作废，
+    也不放过无法溯源的引用（公开知识域由 ``session_id IS NULL`` 判定）。
+    """
+
+    db = getattr(ctx, "db", None)
+    session_id = _session_id(ctx, state)
+    if db is None or not session_id:
+        return set(), set()
+    return (
+        session_repo.list_referenceable_evidence_ids(db, session_id),
+        session_repo.list_session_message_ids(db, session_id),
+    )
 
 
 def _current_message(ctx: Any) -> Any:
@@ -321,13 +340,25 @@ def _register_candidates(
 # --------------------------------------------------------------------------- #
 
 
-def _validate_role_result(parsed: Any, role_code: RoleCode) -> RoleResult:
-    """严格校验：字段协议 + 角色一致性（未知角色一律拒绝）。"""
+def _validate_role_result(
+    parsed: Any,
+    role_code: RoleCode,
+    *,
+    allowed_evidence_ids: set[str] | None = None,
+    allowed_message_ids: set[str] | None = None,
+) -> RoleResult:
+    """严格校验：字段协议 + 角色一致性 + 引用归属（未知角色/越权引用一律拒绝）。"""
 
     result = RoleResult.model_validate(parsed)
     if result.role_code != role_code:
         raise ValueError(
             f"role_code 与当前角色不一致：期望 {role_code.value}，实际 {result.role_code}"
+        )
+    if allowed_evidence_ids is not None and allowed_message_ids is not None:
+        assert_role_result_refs(
+            result,
+            allowed_evidence_ids=allowed_evidence_ids,
+            allowed_message_ids=allowed_message_ids,
         )
     return result
 
@@ -392,6 +423,8 @@ async def _generate_role_result(
     messages: list[dict[str, Any]],
     warnings: list[str],
     label: str,
+    allowed_evidence_ids: set[str] | None = None,
+    allowed_message_ids: set[str] | None = None,
 ) -> tuple[RoleResult, Any, int]:
     """取一个角色的结构化产物：首轮 + 至多一次修复。返回 (result, llm_result, calls)。"""
 
@@ -415,7 +448,12 @@ async def _generate_role_result(
             continue
 
         try:
-            result = _validate_role_result(parsed, role_code)
+            result = _validate_role_result(
+                parsed,
+                role_code,
+                allowed_evidence_ids=allowed_evidence_ids,
+                allowed_message_ids=allowed_message_ids,
+            )
         except Exception as exc:  # pydantic ValidationError / role 不一致
             last_error = exc
             if attempt >= MAX_REPAIR_ROUNDS:
@@ -486,6 +524,8 @@ async def _run_role(
     run_id: str,
     warnings: list[str],
     usage: dict[str, Any],
+    allowed_evidence_ids: set[str] | None = None,
+    allowed_message_ids: set[str] | None = None,
 ) -> _RoleRun:
     """跑一个角色：建 step → 组装上下文 → 调模型（含修复）→ 登记候选 → 收尾 step。"""
 
@@ -496,7 +536,13 @@ async def _run_role(
     try:
         messages = _role_messages(ctx, role_code, state)
         result, llm_result, calls = await _generate_role_result(
-            ctx, role_code=role_code, messages=messages, warnings=warnings, label=label
+            ctx,
+            role_code=role_code,
+            messages=messages,
+            warnings=warnings,
+            label=label,
+            allowed_evidence_ids=allowed_evidence_ids,
+            allowed_message_ids=allowed_message_ids,
         )
     except ValueError as exc:
         outcome.error = str(exc)[:1000]
@@ -686,6 +732,9 @@ async def run_brainstorm(ctx: Any):
             brief_status=None,
         )
 
+    # FR-04C：引用归属校验（本会话 + 公开知识域），一次查询供本轮所有角色复用。
+    allowed_evidence_ids, allowed_message_ids = _reference_sets(ctx, state)
+
     role_runs: list[_RoleRun] = []
     for role_code in roles:
         if role_code in reused:
@@ -700,6 +749,8 @@ async def run_brainstorm(ctx: Any):
                     run_id=run_id,
                     warnings=warnings,
                     usage=usage,
+                    allowed_evidence_ids=allowed_evidence_ids,
+                    allowed_message_ids=allowed_message_ids,
                 )
             )
         except AppError as exc:
