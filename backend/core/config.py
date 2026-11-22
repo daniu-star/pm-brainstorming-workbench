@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     llm_embedding_model: str = "text-embedding-3-small"
     llm_timeout_seconds: float = 60.0
     llm_max_retries: int = 3
+    # FR-08 预算档位：standard|lean|frugal，只收紧不放宽（见 domain.contracts.BUDGET_PROFILES）
+    llm_budget_profile: str = "standard"
 
     stt_api_key: str = ""
     stt_base_url: str = "https://api.openai.com/v1"

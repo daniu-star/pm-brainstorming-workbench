@@ -124,6 +124,15 @@ app.include_router(canvas_router)
 app.include_router(voice_router)
 
 
+def C_budget_defaults() -> dict[str, int]:
+    """当前预算档位实际生效的上限（供前端/运维核对成本口径）。"""
+
+    from services.command_service import default_budget
+
+    limits = default_budget()
+    return {k: int(v) for k, v in limits.items() if isinstance(v, (int, float))}
+
+
 def _service_status() -> dict:
     return {
         "llm": bool(settings.llm_api_key),
@@ -184,4 +193,6 @@ async def health_detail(request: Request):
         "status": "ok" if all(services.values()) and worker.get("db") else "degraded",
         "services": {**services, "worker": bool(worker.get("db"))},
         "worker": worker,
+        "budget_profile": (settings.llm_budget_profile or "standard"),
+        "budget_limits": C_budget_defaults(),
     }

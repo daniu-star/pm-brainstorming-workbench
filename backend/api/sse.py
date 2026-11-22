@@ -103,6 +103,7 @@ def resolve_start_cursor(
     after_seq: object | None,
     *,
     latest_event_seq: int,
+    retention_watermark: int | None = None,
 ) -> int:
     """合并两个游标来源并按 PRD 规则校验；返回 ``after_seq``（含）。"""
 
@@ -114,14 +115,15 @@ def resolve_start_cursor(
         candidates.append(_parse_cursor(after_seq, source="after_seq"))
 
     cursor = max(candidates) if candidates else 0
-    # 游标过期：水位之上的第一个可回放 seq 是 watermark+1，因此只允许
-    # after_seq >= watermark（即 after_seq < watermark - 1 才过期）。
-    # M1 水位为 0，任何合法游标都不会过期（显式 after_seq=0 = 从头回放）。
-    if cursor < RETENTION_WATERMARK - 1:
+    # 游标过期：该 Run 仍保留的最早事件是 oldest，则允许的最小游标是 oldest-1。
+    # 低于它说明请求的事件已被压缩删除，客户端必须重新取快照恢复（PRD FR-06 / AC-35）。
+    watermark = RETENTION_WATERMARK if retention_watermark is None else int(retention_watermark)
+    # watermark 语义 = 第一个仍可回放的 seq；因此允许的最小游标是 watermark-1。
+    if cursor < watermark - 1:
         raise AppError(
             ErrorCode.EVENT_CURSOR_EXPIRED,
             "事件游标已过期，请重新获取任务快照",
-            details={"after_seq": cursor, "retention_watermark": RETENTION_WATERMARK},
+            details={"after_seq": cursor, "retention_watermark": watermark},
         )
     if cursor > latest_event_seq:
         raise AppError(

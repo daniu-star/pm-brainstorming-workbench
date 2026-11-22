@@ -13,7 +13,7 @@ import logging
 import time
 from typing import Any, Sequence
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import tuple_, and_, func, or_, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from domain import state_machine as SM
@@ -760,6 +760,49 @@ def append_event(
         retryable=True,
         details={"run_id": run_id},
     ) from last_error
+
+
+def oldest_event_seq(db, run_id: str) -> int | None:
+    """该 Run 仍保留的最早事件序号（用于 SSE 游标水位判断）。"""
+
+    value = db.execute(select(func.min(EventRow.seq)).where(EventRow.run_id == run_id)).scalar()
+    return int(value) if value is not None else None
+
+
+def compact_events(db, *, before_iso: str, limit: int = 5000) -> int:
+    """压缩已终结 Run 的历史事件（PRD FR-06）。
+
+    * 只处理**终结** Run（活动 Run 永远不压缩）；
+    * 保留每个 Run 的最后一个事件（终结标记），保证回放仍能看到终态；
+    * ``limit`` 限制单次删除行数，避免长事务锁库。
+    """
+
+    from sqlalchemy import delete as _delete
+    from sqlalchemy.orm import aliased
+
+    from domain import contracts as _C
+
+    terminal = [s.value for s in _C.RunStatus if s in _C.TERMINAL_RUN_STATUSES]
+    if not terminal:
+        return 0
+    tail = aliased(EventRow)
+    max_seq = select(func.max(tail.seq)).where(tail.run_id == EventRow.run_id).scalar_subquery()
+    target_ids = (
+        select(EventRow.run_id, EventRow.seq)
+        .where(
+            EventRow.run_id.in_(select(RunRow.id).where(RunRow.status.in_(terminal))),
+            EventRow.created_at < before_iso,
+            EventRow.seq < max_seq,
+        )
+        .limit(limit)
+        .subquery()
+    )
+    result = db.execute(
+        _delete(EventRow).where(
+            tuple_(EventRow.run_id, EventRow.seq).in_(select(target_ids.c.run_id, target_ids.c.seq))
+        )
+    )
+    return int(result.rowcount or 0)
 
 
 def events_after(db, run_id: str, *, after_seq: int = 0, limit: int = 200) -> list[EventRow]:

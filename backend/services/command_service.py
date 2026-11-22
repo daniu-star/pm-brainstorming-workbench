@@ -57,6 +57,7 @@ from domain.contracts import (
     parse_command,
     utc_now_iso,
 )
+from core.config import settings
 from domain.errors import AppError, ErrorCode
 from repositories import audit_repo, loop_repo, run_repo, session_repo
 from repositories.database import (
@@ -154,9 +155,13 @@ class RunOutcome:
 
 
 def default_budget(*, output_tokens: int | None = None) -> dict[str, Any]:
-    """FR-08 默认预算；可由 Run.budget_json 覆盖。"""
+    """FR-08 默认预算；可由 Run.budget_json 覆盖（只收紧不放宽）。
 
-    return {
+    环境变量 ``LLM_BUDGET_PROFILE`` 选择档位（standard/lean/frugal），档位只降低上限；
+    实际生效值写进 ``Run.budget_json``，所以重放/迁移后预算口径不变。
+    """
+
+    base: dict[str, Any] = {
         "max_run_input_tokens": C.MAX_RUN_INPUT_TOKENS,
         "max_run_output_tokens": C.MAX_RUN_OUTPUT_TOKENS,
         "max_upstream_calls": C.MAX_UPSTREAM_CALLS_PER_RUN,
@@ -164,6 +169,20 @@ def default_budget(*, output_tokens: int | None = None) -> dict[str, Any]:
         "max_output_tokens": output_tokens or C.MAX_OUTPUT_TOKENS,
         "max_step_output_tokens": output_tokens or C.MAX_OUTPUT_TOKENS,
     }
+    profile = (getattr(settings, "llm_budget_profile", None) or C.BUDGET_PROFILE_STANDARD).strip().lower()
+    limits = C.budget_profile_limits(profile)
+    if limits:
+        for key, cap in limits.items():
+            if key == "max_synthesis_output_tokens":
+                # 综合/报告专用上限，不改写默认的 max_output_tokens
+                base.setdefault("max_synthesis_output_tokens", C.MAX_SYNTHESIS_OUTPUT_TOKENS)
+                base["max_synthesis_output_tokens"] = min(int(base["max_synthesis_output_tokens"]), int(cap))
+                continue
+            if key in base:
+                base[key] = min(int(base[key]), int(cap))
+            else:
+                base[key] = int(cap)
+    return base
 
 
 def _events_url(run_id: str) -> str:

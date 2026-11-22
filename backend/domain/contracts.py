@@ -43,6 +43,42 @@ MAX_REVISION_ROUNDS = 1
 LEASE_SECONDS = 30
 LEASE_RENEW_SECONDS = 10
 QUEUE_WAIT_LIMIT_SECONDS = 600
+# FR-06 事件保留：未压缩事件保留 7 天；活动 Run 不压缩；压缩后保留每个 Run 的终结事件。
+EVENT_RETENTION_DAYS = 7
+EVENT_COMPACT_INTERVAL_SECONDS = 3600
+
+# FR-08 预算档位：只允许在默认限额基础上**收紧**，用于低成本环境（如个人额度）。
+# 通过环境变量 LLM_BUDGET_PROFILE=standard|lean|frugal 选择，写入 Run.budget_json 后可复现。
+BUDGET_PROFILE_STANDARD = "standard"
+BUDGET_PROFILES: dict[str, dict[str, int]] = {
+    BUDGET_PROFILE_STANDARD: {},
+    "lean": {
+        "max_run_input_tokens": 24_000,
+        "max_run_output_tokens": 6_000,
+        "max_upstream_calls": 6,
+        "max_context_input_tokens": 6_000,
+        "max_output_tokens": 900,
+        "max_step_output_tokens": 900,
+        "max_synthesis_output_tokens": 1_200,
+    },
+    "frugal": {
+        "max_run_input_tokens": 12_000,
+        "max_run_output_tokens": 3_000,
+        "max_upstream_calls": 4,
+        "max_context_input_tokens": 4_000,
+        "max_output_tokens": 700,
+        "max_step_output_tokens": 700,
+        "max_synthesis_output_tokens": 900,
+    },
+}
+BUDGET_PROFILE_NAMES = tuple(BUDGET_PROFILES)
+
+
+def budget_profile_limits(profile: str | None) -> dict[str, int]:
+    """返回档位覆盖值；未知/空档位按 standard（不覆盖）。"""
+
+    name = (profile or "").strip().lower() or BUDGET_PROFILE_STANDARD
+    return dict(BUDGET_PROFILES.get(name) or {})
 
 # FR-04C 结构上限
 MAX_DISPLAY_TEXT_CHARS = 6_000

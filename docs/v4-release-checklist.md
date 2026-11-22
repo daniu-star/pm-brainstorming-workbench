@@ -1,12 +1,12 @@
 # V4.0 发布就绪清单（WP-10）
 
 - 分支：`feat/prd-v4-m1`；对应 PRD：`docs/superpowers/specs/2026-11-18-pm-brainstorm-agent-architecture-prd-v4.md`
-- 验收记录：`docs/v4-acceptance-report.md`（646 后端用例 / 245 前端用例 / 契约 parity 13 / 跨进程 4 + 崩溃注入 1 / 真 Worker E2E 30 项 + Loop 闭环 29 项 / 迁移演练 / 浏览器交互验收（docs/browser-qa.md，6 张归档截图）；QA Loop 记录见 docs/qa-loop-runs/README.md，多角色 Loop 记录见 docs/loop-runs/README.md）
+- 验收记录：`docs/v4-acceptance-report.md`（661 后端用例 / 245 前端用例 / 契约 parity 13 / 跨进程 4 + 崩溃注入 1 / 真 Worker E2E 30 项 + Loop 闭环 29 项 / 迁移演练 / 浏览器交互验收（docs/browser-qa.md，6 张归档截图）；QA Loop 记录见 docs/qa-loop-runs/README.md，多角色 Loop 记录见 docs/loop-runs/README.md）
 
 ## 1. 发布前必须通过的命令
 
 ```bash
-# 后端（629 用例，含 Loop Studio 65 项）
+# 后端（661 用例，含 Loop Studio 65 项 + 数据生命周期/预算档位/审计并发 13 项）
 cd backend && ../.venv/Scripts/python.exe -m unittest discover -s tests
 
 # 前端类型检查 + 逻辑用例 + 生产构建 + 冒烟 e2e
@@ -58,7 +58,7 @@ CI 配置见 `.github/workflows/ci.yml`（backend：安装依赖 → 全量测�
 - 未登录访问未知 `/api/v2/*` 返回 **401**（鉴权中间件在路由匹配前短路）。
 - `PUT /api/canvas` 返回 **409 CANVAS_IS_DERIVED**（画布由 `product_state` 投影生成，不接受手工写入）。
 - M3 之后仍未实现的动作（如 `rebuild_legacy` 缺工作流）会以 `failed(FEATURE_NOT_READY)` 明确失败，并保留 step 记录，不产生假成功。
-- 删除会话为软删（30 天幂等记录同生命周期）；正文清理作业尚未提供。
+- 删除会话为软删 + **默认清正文**（`session_repo.purge_session_content`）：消息正文/证据摘要/审计问答/审计报告/闭环产物清空，保留会话/消息/版本链等骨架行作为 tombstone（`test_data_lifecycle.py` 覆盖）。调试可用 `purge_content=False`。
 - 同步命令（确认定义/跳过/修订/加证据/确认决策/更正评估）各产生一条 `succeeded` Run，用于幂等回执，属预期行为。
 - **`next build` 与 `next dev` 共用 `frontend/.next`**：开发服务器运行时执行生产构建会破坏其路由缓存（动态路由全 500）。验证构建前先 `stop.bat`，构建后 `start.bat` 重新拉起。
 - Loop Studio（v5）的「测试执行」是模拟执行：产物 `simulated=true` 且必须注明「未实际执行」，否则确定性校验记 P0 阻塞并把总分压到 70；真实沙箱执行尚未实现。
@@ -67,6 +67,8 @@ CI 配置见 `.github/workflows/ci.yml`（backend：安装依赖 → 全量测�
 - **控制意图由 Worker 每轮扫描**：`end_audit`/`cancel_audit` 在活跃 Run 上只登记意图（`control_intents`，状态 `accepted`），由 `RunWorker.tick()` 每轮调用 `command_service.reconcile_control_intents` 在旧 Run 终结后建唯一 closing Run（或完成取消）。停掉 Worker 时结束/取消审计会停在 `scheduled`，属预期。
 - **闭环兜底终结会收口**：`workflows.runner._force_terminal` 与排队超时路径会调 `command_service.settle_loop_for_run_failure`，把 `loop/loop_round` 置 `failed` 并写 `loop.updated`；只收口 `loop.latest_run_id` 指向的 Run，迟到兜底不会误关已推进的闭环。
 - **前端 `retryFailedRun` / `cancelRun` 返回 `boolean`**：失败时返回 false 并写 `error`/toast，页面据此展示失败而不是「已重新排队」。
+- **低额度模式**：`backend/.env` 设 `LLM_BUDGET_PROFILE=lean|frugal` 后，`services.command_service.default_budget()` 用 `min()` 只收紧不下调契约常量，生效值写入每条 Run 的 `budget_json`（重放/迁移口径不变）；`/health/detail` 暴露 `budget_profile` 与 `budget_limits`。
+- **事件压缩由 Worker 每小时驱动**：只删已终结 Run 的旧事件（每个 Run 保留最后一个），压缩后旧游标返回 410 `EVENT_CURSOR_EXPIRED`（`resolve_start_cursor` 的 watermark = 第一个仍可回放的 seq）。
 - 旧 SQLite 库缺新列时由 `repositories/database.py::_additive_schema_upgrade()` 在启动时自动补列（当前覆盖 `runs.failed_steps_json`、`runs.loop_id`、`steps.created_at`）。缺列曾导致「发消息一律失败（INTERNAL / no such column: steps.created_at）」，已在 `backend/tests/test_schema_upgrade.py` 固化回归。
 
 ## 6. 本机验证的临时产物约定

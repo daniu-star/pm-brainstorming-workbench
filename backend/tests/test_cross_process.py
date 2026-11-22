@@ -27,7 +27,7 @@ if str(BACKEND) not in sys.path:  # pragma: no cover - 直接运行单文件时�
     sys.path.insert(0, str(BACKEND))
 
 from domain import contracts as C  # noqa: E402
-from repositories import auth_repo, database, run_repo, session_repo  # noqa: E402
+from repositories import audit_repo, auth_repo, database, run_repo, session_repo  # noqa: E402
 
 OWNER = "cross-process@example.com"
 
@@ -334,6 +334,186 @@ class CrossProcessCase(unittest.TestCase):
         with database.session_scope() as db:
             again = auth_repo.verify_code(db, email=OWNER, code_hash=code_hash, now_epoch=int(time.time()))
         self.assertFalse(again)
+
+
+    # -- AC-23 / AC-42：审计并发与结束/取消竞争 --------------------------- #
+
+    def _prepare_active_audit(self) -> tuple[str, str]:
+        """准备一个 active 审计 + 当前待答问题（不调模型）。"""
+
+        self._advance_to_brainstorming()
+        with database.session_scope() as db:
+            session = session_repo.require_session(db, self.session_id, owner_email=OWNER)
+            state = session_repo.get_product_state(db, self.session_id)
+            audit = audit_repo.create_audit(
+                db,
+                session_id=self.session_id,
+                product_version=state.version,
+                now_iso=C.utc_now_iso(),
+            )
+            question = audit_repo.add_question(
+                db,
+                audit,
+                ordinal=1,
+                dimension="problem_validity",
+                issue_refs=[],
+                question_text="目标用户是谁？有访谈证据吗？",
+                now_iso=C.utc_now_iso(),
+            )
+            audit_repo.update_audit(
+                db,
+                audit,
+                now_iso=C.utc_now_iso(),
+                status=C.AuditStatus.active,
+                active_question_id=question.id,
+                question_count=1,
+            )
+            session_repo.touch_session(
+                db,
+                session,
+                phase=C.SessionPhase.auditing,
+                current_audit_id=audit.id,
+                now_iso=C.utc_now_iso(),
+            )
+            return audit.id, question.id
+
+    def test_concurrent_answers_to_same_question_accept_exactly_one(self) -> None:
+        audit_id, question_id = self._prepare_active_audit()
+        body = (
+            "def submit_answer():\n"
+            "    from services import command_service\n"
+            "    try:\n"
+            "        with database.session_scope() as db:\n"
+            "            receipt = command_service.submit_command(\n"
+            "                db,\n"
+            "                owner_email=os.environ['OWNER'],\n"
+            "                session_id=os.environ['SID'],\n"
+            "                command=C.CommandRequest(\n"
+            "                    request_id=C.new_request_id(),\n"
+            "                    action=C.Action.answer_audit,\n"
+            "                    payload={\n"
+            "                        'audit_id': os.environ['AID'],\n"
+            "                        'question_id': os.environ['QID'],\n"
+            "                        'answer': '目标用户是中小企业财务团队，访谈了 12 家',\n"
+            "                    },\n"
+            "                ),\n"
+            "            )\n"
+            "        return {'ok': True, 'run_id': receipt.run_id}\n"
+            "    except AppError as exc:\n"
+            "        return {'ok': False, 'code': exc.code, 'details': exc.details}\n"
+            "wait_gate()\n"
+            "print(json.dumps(submit_answer(), ensure_ascii=False))\n"
+        )
+        with database.session_scope() as db:
+            baseline_messages = len(session_repo.list_messages(db, self.session_id))
+            baseline_runs = int(
+                db.execute(
+                    __import__("sqlalchemy").text("SELECT COUNT(*) FROM runs WHERE session_id=:sid"),
+                    {"sid": self.session_id},
+                ).scalar_one()
+            )
+        procs = [
+            self._spawn(body, AID=audit_id, QID=question_id, WORKER="api-1"),
+            self._spawn(body, AID=audit_id, QID=question_id, WORKER="api-2"),
+        ]
+        results = self._collect(procs)
+
+        accepted = [item for item in results if item["ok"]]
+        rejected = [item for item in results if not item["ok"]]
+        self.assertEqual(len(accepted), 1, f"同一问题只允许一个回答被接收：{results}")
+        self.assertEqual(len(rejected), 1, f"另一个必须被拒绝：{results}")
+        self.assertIn(
+            rejected[0]["code"],
+            {"QUESTION_ALREADY_ANSWERED", "SESSION_BUSY", "VERSION_CONFLICT", "AUDIT_CLOSED"},
+            rejected[0],
+        )
+
+        with database.session_scope() as db:
+            question = audit_repo.get_question(db, audit_id, question_id)
+            self.assertIsNotNone(question.answer_message_id, "被接收的回答必须写回问题")
+            messages = session_repo.list_messages(db, self.session_id)
+            self.assertEqual(
+                len(messages), baseline_messages + 1, "只允许一条回答消息，被拒绝者不得写入"
+            )
+            total_runs = db.execute(
+                __import__("sqlalchemy").text("SELECT COUNT(*) FROM runs WHERE session_id=:sid"),
+                {"sid": self.session_id},
+            ).scalar_one()
+            self.assertEqual(int(total_runs), baseline_runs + 1, "被拒绝的回答不得创建额外的 Run")
+
+    def test_end_and_cancel_audit_race_has_single_control_chain(self) -> None:
+        audit_id, _ = self._prepare_active_audit()
+        body = (
+            "def submit_control(action):\n"
+            "    from services import command_service\n"
+            "    try:\n"
+            "        with database.session_scope() as db:\n"
+            "            receipt = command_service.submit_command(\n"
+            "                db,\n"
+            "                owner_email=os.environ['OWNER'],\n"
+            "                session_id=os.environ['SID'],\n"
+            "                command=C.CommandRequest(\n"
+            "                    request_id=C.new_request_id(),\n"
+            "                    action=action,\n"
+            "                    payload={'audit_id': os.environ['AID']},\n"
+            "                ),\n"
+            "            )\n"
+            "        return {\n"
+            "            'ok': True,\n"
+            "            'control_id': getattr(receipt, 'control_id', None),\n"
+            "            'run_id': getattr(receipt, 'run_id', None),\n"
+            "            'status': getattr(receipt, 'status', None),\n"
+            "        }\n"
+            "    except AppError as exc:\n"
+            "        return {'ok': False, 'code': exc.code}\n"
+            "wait_gate()\n"
+            "print(json.dumps(submit_control(C.Action.end_audit if os.environ['KIND'] == 'end' else C.Action.cancel_audit), ensure_ascii=False))\n"
+        )
+        procs = [
+            self._spawn(body, AID=audit_id, KIND="end", WORKER="api-end"),
+            self._spawn(body, AID=audit_id, KIND="cancel", WORKER="api-cancel"),
+        ]
+        results = self._collect(procs)
+        self.assertTrue(any(item["ok"] for item in results), f"至少一个控制意图必须被接收：{results}")
+
+        with database.session_scope() as db:
+            audit = audit_repo.get_audit(db, audit_id)
+            session = session_repo.require_session(db, self.session_id, owner_email=OWNER)
+            controls = list(
+                db.execute(
+                    __import__("sqlalchemy").text(
+                        "SELECT action, status FROM control_intents WHERE audit_id=:aid ORDER BY created_at"
+                    ),
+                    {"aid": audit_id},
+                )
+            )
+            closing_runs = db.execute(
+                __import__("sqlalchemy").text(
+                    "SELECT COUNT(*) FROM runs WHERE audit_id=:aid AND action='end_audit'"
+                ),
+                {"aid": audit_id},
+            ).scalar_one()
+
+        self.assertIn(audit.status, {"cancelled", "closing", "completed"}, audit.status)
+        self.assertLessEqual(len(controls), 2, f"最多一条结束 + 一条取消：{controls}")
+        self.assertLessEqual(int(closing_runs), 1, "最多一个 closing Run")
+
+        statuses = {(row[0], row[1]) for row in controls}
+        cancel_applied = ("cancel_audit", "applied") in statuses
+        if cancel_applied:
+            self.assertEqual(audit.status, C.AuditStatus.cancelled.value, "取消优先：审计必须为 cancelled")
+            self.assertNotEqual(session.phase, C.SessionPhase.auditing.value, "取消后会话必须离开 auditing")
+            self.assertEqual(int(closing_runs), 0, "取消优先时不得保留 closing Run")
+        else:
+            end_rows = [row for row in controls if row[0] == "end_audit"]
+            cancel_rows = [row for row in controls if row[0] == "cancel_audit"]
+            self.assertTrue(end_rows, "至少登记了结束意图")
+            if cancel_rows:
+                self.assertIn(
+                    cancel_rows[0][1],
+                    {"failed", "accepted", "scheduled"},
+                    f"取消意图状态必须可解释：{cancel_rows}",
+                )
 
 
 if __name__ == "__main__":  # pragma: no cover

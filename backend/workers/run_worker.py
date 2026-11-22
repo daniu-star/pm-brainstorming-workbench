@@ -10,6 +10,7 @@
 
 每轮顺序：``recover_expired_leases`` → ``requeue_interrupted`` →
 ``expire_queued_runs`` → ``reconcile_control_intents``（审计结束/取消的回执）→
+``compact_events``（每小时一次，清理 7 天前已终结 Run 的历史事件）→
 检查运行中数量 → ``claim_next_run`` → ``execute_run``。
 收到 SIGINT 后停止领取新任务，等待当前 Run 执行完再退出。
 """
@@ -29,6 +30,15 @@ from domain import contracts as C
 from domain.contracts import utc_now_iso
 
 logger = logging.getLogger("workers.run_worker")
+
+
+def _iso_days_ago(days: int) -> str:
+    """当前时间往前 N 天的 UTC ISO 文本（字典序可比较）。"""
+
+    from datetime import datetime, timedelta, timezone
+
+    moment = datetime.now(timezone.utc) - timedelta(days=max(0, int(days)))
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _repositories():
@@ -81,6 +91,7 @@ class RunWorker:
         self.max_runs = max(0, int(max_runs))
         self._stop = threading.Event()
         self.processed = 0
+        self._last_compaction = 0.0
 
     # -- 生命周期 ---------------------------------------------------------- #
 
@@ -143,6 +154,19 @@ class RunWorker:
             recovered = list(run_repo.recover_expired_leases(db, now_epoch=now_epoch, now_iso=now_iso))
             interrupted = list(run_repo.requeue_interrupted(db))
             expired = list(run_repo.expire_queued_runs(db, now_epoch=now_epoch, now_iso=now_iso))
+            if now_epoch - self._last_compaction >= C.EVENT_COMPACT_INTERVAL_SECONDS:
+                cutoff_iso = _iso_days_ago(C.EVENT_RETENTION_DAYS)
+                try:
+                    compacted = int(run_repo.compact_events(db, before_iso=cutoff_iso))
+                except Exception:  # pragma: no cover - 压缩失败不应阻塞任务执行
+                    logger.exception("event=worker.compact_failed worker=%s", self.worker_id)
+                    compacted = 0
+                self._last_compaction = now_epoch
+                if compacted:
+                    logger.info(
+                        "event=worker.compacted worker=%s events=%d cutoff=%s",
+                        self.worker_id, compacted, cutoff_iso,
+                    )
             # 控制意图只登记、不回执（PRD FR-07）：在活跃 Run 上提交 end_audit / cancel_audit 时
             # 命令层只写 control 行，保留旧 Run 正常收尾；必须由 Worker 每轮扫描、在旧 Run 终结后
             # 建唯一 closing Run（结束）或复位会话阶段（取消）。缺少这一步时结束审计会永久停在

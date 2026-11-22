@@ -180,7 +180,106 @@ def list_sessions(
     return rows[:limit], next_cursor
 
 
-def soft_delete_session(db, session: SessionRow, *, now_iso: str | None = None) -> None:
+#: 内容清除时给证据标题用的墓碑文案（保留行以便审计追溯，不回填正文）。
+PURGED_TITLE = "（已删除）"
+
+
+def purge_session_content(db, session: SessionRow, *, now_iso: str | None = None) -> dict[str, int]:
+    """清除会话的在线正文（AC-39：「删除后在线正文已清除」）。
+
+    只清正文与模型生成物，**保留**会话行、消息行、证据行与版本链等骨架，
+    以便审计追溯「谁在什么时候删了什么」，同时避免删除后重新迁移旧源复活内容。
+
+    返回各类被清理行数，便于日志与测试断言。
+    """
+
+    from repositories.database import (
+        AuditQuestionRow,
+        AuditRow,
+        LoopArtifactRow,
+        LoopStageResultRow,
+    )
+
+    now_iso = now_iso or utc_now_iso()
+    counts: dict[str, int] = {}
+
+    # 会话问题陈述（原始输入，最敏感）
+    if session.problem_statement:
+        session.problem_statement = ""
+    session.updated_at = now_iso
+
+    # 消息正文
+    messages = db.execute(
+        update(MessageRow)
+        .where(MessageRow.session_id == session.id)
+        .values(content="", status=MessageStatus.interrupted.value)
+    )
+    counts["messages"] = int(messages.rowcount or 0)
+
+    # 证据正文（保留 kind/source_uri/verification_status 以便审计）
+    evidence = db.execute(
+        update(EvidenceRow)
+        .where(EvidenceRow.session_id == session.id)
+        .values(excerpt="", limitations=None, title=PURGED_TITLE)
+    )
+    counts["evidence"] = int(evidence.rowcount or 0)
+
+    # 产品状态载荷：换成同版本骨架（保留 session_id/version 链，正文清空）
+    states = db.execute(select(ProductStateRow).where(ProductStateRow.session_id == session.id))
+    state_rows = list(states.scalars())
+    for row in state_rows:
+        skeleton = initial_product_state(session.id)
+        payload = skeleton.model_dump(mode="json")
+        payload["version"] = int(row.version)
+        payload["source_run_id"] = None
+        payload["created_at"] = row.created_at
+        row.payload_json = canonical_json(payload)
+    counts["product_states"] = len(state_rows)
+
+    # 审计问题与报告（保留问题行与评估，清除文本）
+    questions = db.execute(
+        update(AuditQuestionRow)
+        .where(AuditQuestionRow.audit_id.in_(select(AuditRow.id).where(AuditRow.session_id == session.id)))
+        .values(question_text="", rationale="", evidence_refs_json="[]")
+    )
+    counts["audit_questions"] = int(questions.rowcount or 0)
+    audits = db.execute(
+        update(AuditRow)
+        .where(AuditRow.session_id == session.id)
+        .values(report_json=None, dimension_states_json="{}")
+    )
+    counts["audits"] = int(audits.rowcount or 0)
+
+    # 闭环产物（MVP 规格/原型/测试报告文本）
+    from repositories.database import LoopRow
+
+    loops = list(db.execute(select(LoopRow.id).where(LoopRow.session_id == session.id)).scalars())
+    if loops:
+        payload_rows = db.execute(
+            update(LoopArtifactRow).where(LoopArtifactRow.loop_id.in_(loops)).values(payload_json="{}")
+        )
+        counts["loop_artifacts"] = int(payload_rows.rowcount or 0)
+        stage_rows = db.execute(
+            update(LoopStageResultRow)
+            .where(LoopStageResultRow.loop_id.in_(loops))
+            .values(summary="", payload_json="{}")
+        )
+        counts["loop_stage_results"] = int(stage_rows.rowcount or 0)
+        db.execute(update(LoopRow).where(LoopRow.id.in_(loops)).values(focus=""))
+
+    db.flush()
+    return counts
+
+
+def soft_delete_session(
+    db,
+    session: SessionRow,
+    *,
+    now_iso: str | None = None,
+    purge_content: bool = True,
+) -> dict[str, int]:
+    """软删会话；默认同时清除在线正文（``purge_content=False`` 仅置墓碑）。"""
+
     now_iso = now_iso or utc_now_iso()
     session.deleted_at = now_iso
     session.updated_at = now_iso
@@ -190,7 +289,9 @@ def soft_delete_session(db, session: SessionRow, *, now_iso: str | None = None) 
         .where(MessageRow.session_id == session.id, MessageRow.status.in_(ACTIVE_MESSAGE_STATUSES))
         .values(status=MessageStatus.interrupted.value)
     )
+    counts = purge_session_content(db, session, now_iso=now_iso) if purge_content else {}
     db.flush()
+    return counts
 
 
 def touch_session(

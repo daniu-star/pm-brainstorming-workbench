@@ -152,13 +152,23 @@ async def stream_run_events(run_id: str, request: Request, after_seq: str | None
 
     owner_email = common.require_user(request)
 
-    def _prepare() -> int:
+    def _prepare() -> tuple[int, int]:
         with common.open_db() as db:
             run = common.require_owned_run(db, run_id, owner_email)
-            return common.repo("run_repo").latest_event_seq(db, run.id)
+            run_repo = common.repo("run_repo")
+            latest = run_repo.latest_event_seq(db, run.id)
+            oldest = run_repo.oldest_event_seq(db, run.id)
+            # watermark = 第一个仍可回放的 seq（取全局水位与该 Run 最早保留事件中较大者）。
+            watermark = max(int(sse.RETENTION_WATERMARK), int(oldest) if oldest is not None else 0)
+            return latest, watermark
 
-    latest_event_seq = await asyncio.to_thread(_prepare)
-    cursor = sse.resolve_start_cursor(request, after_seq, latest_event_seq=latest_event_seq)
+    latest_event_seq, watermark = await asyncio.to_thread(_prepare)
+    cursor = sse.resolve_start_cursor(
+        request,
+        after_seq,
+        latest_event_seq=latest_event_seq,
+        retention_watermark=watermark,
+    )
     return sse.sse_response(sse.stream_run_events(run_id=run_id, after_seq=cursor))
 
 
