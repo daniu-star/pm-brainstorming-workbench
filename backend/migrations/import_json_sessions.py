@@ -56,6 +56,7 @@ from repositories.database import (
     MessageRow,
     MigrationRecordRow,
     ProductStateRow,
+    SessionIdAliasRow,
     SessionRow,
 )
 
@@ -361,6 +362,19 @@ def _build_session_row(plan: ImportPlan, now_iso: str) -> SessionRow:
     )
 
 
+def _build_alias_row(plan: ImportPlan, now_iso: str) -> SessionIdAliasRow | None:
+    """旧 ID 被确定性重映射时登记别名，让旧书签链接仍可打开（PRD §8.1）。"""
+
+    if plan.legacy_id == plan.session_id:
+        return None
+    return SessionIdAliasRow(
+        legacy_id=plan.legacy_id,
+        session_id=plan.session_id,
+        source_path=plan.source.source_path,
+        created_at=now_iso,
+    )
+
+
 def _build_message_rows(plan: ImportPlan, now_iso: str) -> list[MessageRow]:
     rows: list[MessageRow] = []
     stage = _message_stage(plan.phase)
@@ -564,6 +578,9 @@ def _import_plan(db: Session, plan: ImportPlan, now_iso: str) -> None:
     db.add(_build_session_row(plan, now_iso))
     db.flush()
     db.add(_build_product_state_row(plan, now_iso))
+    alias = _build_alias_row(plan, now_iso)
+    if alias is not None:
+        db.add(alias)
     for row in _build_message_rows(plan, now_iso):
         db.add(row)
     if plan.canvas_tree is not None:

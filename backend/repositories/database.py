@@ -476,6 +476,24 @@ class LegacyArtifactRow(Base):
     __table_args__ = (Index("ix_legacy_artifacts_session", "session_id"),)
 
 
+class SessionIdAliasRow(Base):
+    """旧会话 ID（12 hex 等非 32 hex 形态）→ 当前 32 hex ID 的别名表（PRD §8.1）。
+
+    迁移器把旧 ID 确定性重映射为 ``sha256(legacy_id)[:32]``，旧书签/旧链接里的
+    12 hex ID 直接访问会 404。这里保留只读别名，让 ``/api/v2/sessions/{legacy}``
+    仍能解析到同一会话；别名只是入口重定向，不参与任何写路径。
+    """
+
+    __tablename__ = "session_id_aliases"
+
+    legacy_id = Column(String(128), primary_key=True)
+    session_id = Column(String(64), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
+    source_path = Column(String(1024), nullable=True)
+    created_at = Column(String(32), nullable=False)
+
+    __table_args__ = (Index("ix_session_id_aliases_session", "session_id"),)
+
+
 class LoopRow(Base):
     """Loop Studio 闭环实例（设想→检验→开发→测试→评测）。"""
 
@@ -769,6 +787,7 @@ __all__ = [
     "ProductStateRow",
     "RateLimitRow",
     "RunRow",
+    "SessionIdAliasRow",
     "SessionRow",
     "StepCandidateRow",
     "StepRow",

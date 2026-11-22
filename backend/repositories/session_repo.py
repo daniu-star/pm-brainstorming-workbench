@@ -31,12 +31,19 @@ from domain.contracts import (
     VerificationStatus,
     canonical_json,
     initial_product_state,
+    is_session_id,
     new_id,
     sha256_text,
     utc_now_iso,
 )
 from domain.errors import AppError, ErrorCode
-from repositories.database import EvidenceRow, MessageRow, ProductStateRow, SessionRow
+from repositories.database import (
+    EvidenceRow,
+    MessageRow,
+    ProductStateRow,
+    SessionIdAliasRow,
+    SessionRow,
+)
 
 #: 区分「字段不改」与「字段置 None」。
 UNSET: Any = object()
@@ -135,6 +142,65 @@ def get_session(db, session_id: str, *, include_deleted: bool = False) -> Sessio
     if session.deleted_at and not include_deleted:
         return None
     return session
+
+
+def record_session_alias(
+    db,
+    legacy_id: str,
+    session_id: str,
+    *,
+    source_path: str | None = None,
+    now_iso: str | None = None,
+) -> SessionIdAliasRow:
+    """登记「旧 ID → 当前 32 hex ID」别名（幂等：同旧 ID 只保留首条）。"""
+
+    value = (legacy_id or "").strip()
+    if not value:
+        raise AppError(ErrorCode.INVALID_REQUEST, "legacy_id 不能为空")
+    if value == session_id:
+        raise AppError(ErrorCode.INVALID_REQUEST, "legacy_id 与 session_id 相同，无需别名")
+    existing = db.get(SessionIdAliasRow, value)
+    if existing is not None:
+        return existing
+    row = SessionIdAliasRow(
+        legacy_id=value,
+        session_id=session_id,
+        source_path=source_path,
+        created_at=now_iso or utc_now_iso(),
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def resolve_session_id(db, session_id: str) -> str | None:
+    """把旧 ID 解析为当前会话 ID；已是 32 hex 或查无别名时原样返回。
+
+    只做只读重定向：别名不参与写路径，也不改变归属校验（调用方仍按解析后的
+    ``session.owner_email`` 判断权限）。
+    """
+
+    value = (session_id or "").strip()
+    if not value:
+        return None
+    if is_session_id(value):
+        return value
+    alias = db.get(SessionIdAliasRow, value)
+    if alias is None:
+        return None
+    return alias.session_id
+
+
+def list_session_aliases(db, session_id: str) -> list[SessionIdAliasRow]:
+    """列出某个会话登记过的旧 ID（调试/前端跳转提示用）。"""
+
+    return list(
+        db.execute(
+            select(SessionIdAliasRow)
+            .where(SessionIdAliasRow.session_id == session_id)
+            .order_by(SessionIdAliasRow.created_at)
+        ).scalars()
+    )
 
 
 def require_session(

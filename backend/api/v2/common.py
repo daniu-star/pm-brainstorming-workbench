@@ -282,12 +282,19 @@ def run_event(row) -> RunEvent:
 
 
 def require_owned_session(db, session_id: str, owner_email: str, *, include_deleted: bool = False):
-    """非本人 403、不存在（或已删除）404；ID 格式非法按不存在处理。"""
+    """非本人 403、不存在（或已删除）404；ID 格式非法按不存在处理。
 
-    if not C.is_session_id(session_id):
+    兼容旧链接：迁移后的 12 hex 旧 ID 若登记过别名（``session_id_aliases``），
+    解析为当前 32 hex ID 后照常做归属校验；未登记别名仍按「不存在」处理。
+    """
+
+    canonical = repo("session_repo").resolve_session_id(db, session_id)
+    if canonical is None:
+        raise AppError(ErrorCode.NOT_FOUND, "会话不存在")
+    if not C.is_session_id(canonical):
         raise AppError(ErrorCode.NOT_FOUND, "会话不存在")
     return repo("session_repo").require_session(
-        db, session_id, owner_email=owner_email, include_deleted=include_deleted
+        db, canonical, owner_email=owner_email, include_deleted=include_deleted
     )
 
 
