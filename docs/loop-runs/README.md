@@ -121,7 +121,18 @@
 
 证据：`cd backend && ../.venv/Scripts/python.exe ../scripts/browser_e2e/run_browser_e2e.py AC-33` → `[PASS] AC-33`，`elapsed_seconds: 18.07`，`failures: []`，`cleanup: 1`；随后回归 `run_browser_e2e.py AC-01 AC-19 AC-31` → 3/3 PASS（`elapsed_seconds: 11.06`）。本轮真实模型消耗约 6–8K tokens（audit.open + audit.answer 各一次）。
 
-当前基线：**后端 657 用例 OK / 前端 249 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS**。
+## 第 15 批热修（AC-34 新构建失败→切回上一兼容构建回滚演练，2026-11-23）
+
+| 修复 | 证据 | 验证 |
+| --- | --- | --- |
+| 回滚演练可重复、不碰生产库 | `scripts/ac34_rollback_drill.py`：`sqlite3.backup()` 从 `backend/data/app.db` 做一致性快照到 `backend/.tmp_tests/ac34-*/rollback.db`，全部 DDL 只在副本上执行 | 演练结束 `finally` 删除工作目录；生产库文件路径仅用于只读快照 |
+| 坏构建的两种失败形态 | ① `alter table sessions add column rollout_flag text not null`（SQLite 拒绝：`Cannot add a NOT NULL column with default value NULL`）② 加可空列 + 建 `rollout_journal` + 写 marker 后启动自检失败 | 两种形态都被捕获并记录在报告 `failed_build` 字段 |
+| 切回后消息/任务不丢 | 回滚（`drop table`/`drop column`/幂等 `initialize_database()`）后，逐表行数、会话/消息/Run ID 集合、每会话产品状态最大版本与回滚前完全一致；在第二份副本上 `claim_next_run` 领取「切换时排队」的注入任务 | PASS：`ROLLBACK_DRILL_OK`；`claim_check.claimed == inflight.run_id`（`status: running`）；`readable_sessions: 14` |
+| 数据库状态可读 + 无 JSON 双写 | 每个会话经 `session_repo.get_session(include_deleted=True)` 与 `list_session_runs` 读取；`pragma integrity_check=ok`、`foreign_key_check` 0 行；`data/sessions` 全量文件 sha256 指纹前后一致 | PASS；`sqlite_version: 3.53.1`（支持 `DROP COLUMN`） |
+
+证据：`cd backend && ../.venv/Scripts/python.exe ../scripts/ac34_rollback_drill.py` → `ROLLBACK_DRILL_OK`，`ok: true`；基线 `sessions=14 / messages=25 / product_states=21 / runs=25 / steps=22 / events=96`，注入排队任务后 `runs=26 / events=97`，回滚后计数与注入后完全一致；`json_dir_fingerprint_before == after`。
+
+当前基线：**后端 657 用例 OK / 前端 249 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK**。
 
 ## 运行方式
 

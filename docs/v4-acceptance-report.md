@@ -68,6 +68,11 @@ cd backend && ../.venv/Scripts/python.exe ../scripts/browser_e2e/run_browser_e2e
 # 语音/摄像头降级场景（AC-33；会触发一次真实模型生成审计开场问题，约 6–8K tokens）
 cd backend && ../.venv/Scripts/python.exe ../scripts/browser_e2e/run_browser_e2e.py AC-33
 # → [PASS] AC-33，elapsed_seconds≈18，cleanup=1（种子会话硬删）
+
+# 迁移回滚演练（AC-34；生产库只读快照到临时副本，模拟坏构建后回滚，不碰 backend/data/app.db）
+cd backend && ../.venv/Scripts/python.exe ../scripts/ac34_rollback_drill.py
+# → ROLLBACK_DRILL_OK：注入的排队任务回滚后仍可被领取、会话/消息/任务计数不变、
+#   integrity_check=ok 且外键无悬挂、data/sessions JSON 指纹不变（无 JSON 双写）
 #   截图 docs/browser-qa/e2e/ac-33-camera-denied.png、ac-33-voice-playing.png、
 #   ac-33-text-answer.png
 ```
@@ -109,7 +114,7 @@ cd backend && ../.venv/Scripts/python.exe ../scripts/browser_e2e/run_browser_e2e
 | AC-31 | 通过（真实浏览器） | `scripts/browser_e2e/run_browser_e2e.py::scenario_ac31`（点真实「退出登录」按钮后换 Cookie 登录）+ 截图 `docs/browser-qa/e2e/ac-31-account-a.png`、`ac-31-account-b.png`；`frontend/tests/store.test.cjs`（登出后写回被丢弃） | B 登录后历史抽屉只有 B 的会话、页面无 A 的消息；localStorage/sessionStorage 无 A 会话 ID；B 直接打开 A 的会话链接显示「加载失败」且不渲染内容 |
 | AC-32 | 通过 | `test_migration_import.py`(12)：dry-run 零写、apply 幂等、源变更 conflict、空 owner 隔离、旧面试 cancelled+归档、源 hash 不变；`scripts/v4_migration_drill.py` 实跑 | 迁移演练 5 阶段全通过 |
 | AC-33 | 通过（真实浏览器） | `test_voice.py`(7)；`scripts/browser_e2e/run_browser_e2e.py::scenario_ac33`（真 Chrome：摄像头拒绝→真实原因浮层→「继续仅文字面试」→文字输入可用；TTS 播放中麦克风禁用、切「文字」立即停止播放；麦克风被拒→真实原因浮层；文字回答经 Worker 真实处理后审计推进到第 2 问）；截图 `docs/browser-qa/e2e/ac-33-camera-denied.png`、`ac-33-voice-playing.png`、`ac-33-text-answer.png` | 三种降级路径都在真浏览器验证：引擎说明如实（无服务端 STT 时不显示「AI 高精度转写」）、播放停止、麦克风状态跟随实际音频；TTS 用本地静音 WAV 替换外部语音服务（只替换外部依赖，不伪造被测界面） |
-| AC-34 | 部分通过 | v2 单一写源 + 旧路由 adapter；`test_legacy_compat.py`(7) | 无 JSON 双写；**未做「新构建失败切回上一兼容构建」演练** |
+| AC-34 | 通过（回滚演练） | v2 单一写源 + 旧路由 adapter；`test_legacy_compat.py`(7)；`scripts/ac34_rollback_drill.py`（生产库一致性快照 → 临时副本上模拟坏构建 → 回滚） | 切换后消息/任务不丢（注入的排队 Run 回滚后仍被 Worker 领取）、14 个会话全部可读、`integrity_check=ok` 且外键无悬挂、`data/sessions` JSON 指纹前后一致（无 JSON 双写） |
 | AC-35 | 通过 | `test_api_v2.py::test_sse_after_seq_zero_replays_from_start`、`test_sse_cursor_expired_only_below_retention_watermark`、`test_sse_invalid_cursor_errors`、`test_run_detail_and_snapshot_single_transaction` | after_seq=0 从头回放、410 仅低于水位、快照单事务 |
 | AC-36 | 通过（真 kill/restart） | `test_command_service.py::test_end_audit_schedules_closing_run_when_idle`、`test_cancel_audit_supersedes_pending_end`；`test_control_crash.py::test_end_audit_receipt_survives_worker_kill_and_closing_run_resumes`（真子进程跑到 `audit.answer` 生成中途 `kill()`：结束意图落库 → 旧 Run `cancel_requested` → 租约过期后新 Worker 接管 → 旧生成零写入、唯一 `end_audit` closing Run `succeeded`、审计 `completed`、阶段 `audit_completed`） | 意图持久 + 旧生成不提交 + 唯一 closing Run 接续 + 最终阶段正确 |
 | AC-37 | 通过 | `test_command_service.py::test_retry_rejects_when_product_state_changed` | 409 RETRY_CONTEXT_CHANGED，不混新上下文 |
@@ -147,9 +152,9 @@ cd backend && ../.venv/Scripts/python.exe ../scripts/browser_e2e/run_browser_e2e
 ## 6. 结论
 
 - M1（WP-00～05）、M2（WP-06～08）、M3（WP-09）与 WP-10 的发布件（CI、迁移演练、健康诊断、前端 e2e 冒烟）均已交付。
-- 真实执行结果：后端 **657 用例 OK**、前端 **249 用例 pass** + `tsc` 0 错 + `build` 成功、`test:e2e` 1 pass、真实浏览器 E2E **AC-01/19/31/33 全部 PASS**（CDP，零新依赖，7 张截图）、跨进程 6 用例 OK + 崩溃注入 3 用例 OK、旧 ID 别名 6 用例 OK、AC-14 多失败重试 1 用例 OK、预算预留崩溃 4 用例 OK、真 Worker 审计端到端 **30 项 ALL PASS**、迁移演练 **DRILL_OK**。
-- AC 统计（按 §3 表）：**通过 40 条**（AC-01/02/03/04/05/06/07/08/09/10/11/12/13/14/15/16/17/18/19/21/22/23/24/25/26/27/28/29/30/31/32/33/35/36/37/38/39/40/41/42）、**部分通过 2 条**（AC-20/34）、**未实现 0 条**。
-- 剩余差距集中在：AC-34（新构建失败后切回上一数据库兼容构建的演练）、AC-20（模型是否编造数字的端到端人工标注）。每条均给出最小调整方案，未通过修改期望值或预填结果取得任何「通过」。
+- 真实执行结果：后端 **657 用例 OK**、前端 **249 用例 pass** + `tsc` 0 错 + `build` 成功、`test:e2e` 1 pass、真实浏览器 E2E **AC-01/19/31/33 全部 PASS**（CDP，零新依赖，7 张截图）、跨进程 6 用例 OK + 崩溃注入 3 用例 OK、旧 ID 别名 6 用例 OK、AC-14 多失败重试 1 用例 OK、预算预留崩溃 4 用例 OK、真 Worker 审计端到端 **30 项 ALL PASS**、迁移演练 **DRILL_OK**、新构建回滚演练 **ROLLBACK_DRILL_OK**（临时副本上模拟坏构建→回滚：注入的排队任务仍可被领取、消息/任务计数不变、`integrity_check=ok`、`data/sessions` JSON 指纹不变）。
+- AC 统计（按 §3 表）：**通过 41 条**（AC-01/02/03/04/05/06/07/08/09/10/11/12/13/14/15/16/17/18/19/21/22/23/24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42）、**部分通过 1 条**（AC-20）、**未实现 0 条**。
+- 剩余差距集中在：AC-20（模型是否编造数字的端到端人工标注，需要人工标注样本）。AC-34 已由回滚演练覆盖（第 15 批，临时副本上模拟坏构建→回滚）。每条均给出最小调整方案，未通过修改期望值或预填结果取得任何「通过」。
 
 ## 7. QA Loop Engineering 首次运行（用户要求，2026-11-19）
 
