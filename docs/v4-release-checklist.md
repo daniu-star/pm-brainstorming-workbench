@@ -1,7 +1,7 @@
 # V4.0 发布就绪清单（WP-10）
 
 - 分支：`feat/prd-v4-m1`；对应 PRD：`docs/superpowers/specs/2026-11-18-pm-brainstorm-agent-architecture-prd-v4.md`
-- 验收记录：`docs/v4-acceptance-report.md`（657 后端用例 / 249 前端用例 / 契约 parity 13 / 跨进程 6 + 崩溃注入 3 + 预算崩溃 4 / 真 Worker E2E 30 项 + Loop 闭环 29 项 / 迁移演练 / 浏览器交互验收（docs/browser-qa.md，6 张归档截图）；QA Loop 记录见 docs/qa-loop-runs/README.md，多角色 Loop 记录见 docs/loop-runs/README.md）
+- 验收记录：`docs/v4-acceptance-report.md`（657 后端用例 / 249 前端用例 / 契约 parity 13 / 跨进程 6 + 崩溃注入 3 + 预算崩溃 4 / 真 Worker E2E 30 项 + Loop 闭环 29 项 / 迁移演练 / 真实浏览器 E2E AC-01/19/31（docs/browser-qa.md + docs/browser-qa/e2e/ 4 张截图）；QA Loop 记录见 docs/qa-loop-runs/README.md，多角色 Loop 记录见 docs/loop-runs/README.md）
 
 ## 1. 发布前必须通过的命令
 
@@ -14,6 +14,9 @@ cd frontend && npx tsc --noEmit
 cd frontend && npm test
 cd frontend && npm run build
 cd frontend && npm run test:e2e
+
+# 真实浏览器 E2E（CDP + 本机 Chrome；前置：API 8001 / Web 3001 已启动）
+cd backend && ../.venv/Scripts/python.exe ../scripts/browser_e2e/run_browser_e2e.py
 
 # 迁移演练（只读复制源文件，临时库；不得对生产库执行 --apply 前跳过此步）
 ../.venv/Scripts/python.exe scripts/v4_migration_drill.py

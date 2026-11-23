@@ -30,3 +30,7 @@ frontend/.tmp_tests/
 *.tmp_*.txt
 backend/.tmp_*.txt
 .tmp_*.txt
+
+# 浏览器 e2e 诊断日志（TEMP 不可用时落到 cwd）
+chrome-e2e-*.log
+backend/chrome-e2e-*.log

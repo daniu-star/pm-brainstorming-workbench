@@ -45,7 +45,7 @@
 | 硬性封顶有解释 | `lib/loopView.ts::scoreCapNotice` + 评分卡头部提示 | `tests/loop-view.test.cjs` 1 例 |
 | 决策事件反映决策后状态 | `command_service._loop_event(status=…, loop_version=…)` | `test_ship_decision_closes_loop_synchronously` 断言 payload |
 
-仍未闭合：浏览器交互验收是**人工/半自动协议**（`docs/browser-qa.md` + `docs/loop-runs/evidence/` 截图），未进 CI。SRV-02 已由 `backend/tests/test_crash_atomicity.py` 用真子进程崩溃注入补齐（不再是单进程模拟），TST-01 由 `tests/components-render.test.cjs` 补上真实渲染断言。
+浏览器交互验收已从「人工/半自动协议」升级为 **CDP 自动化 e2e**（`scripts/browser_e2e/`，AC-01/19/31，见第 13 批）；仍不进 CI（需要本机 Chrome，CI 无图形栈）。SRV-02 已由 `backend/tests/test_crash_atomicity.py` 用真子进程崩溃注入补齐（不再是单进程模拟），TST-01 由 `tests/components-render.test.cjs` 补上真实渲染断言。
 
 ## 第 7 批热修（契约守卫 / 吸底 / 降级，2026-11-20）
 
@@ -100,7 +100,18 @@
 
 证据：`tests/test_budget_crash.py` 4 例 OK（`BudgetLedgerUnitTests` 2 例账本单测 + `BudgetReservationCrashTests` 2 例真 `os._exit(9)` 子进程崩溃/接管）；回归 `tests.test_runner tests.test_crash_atomicity tests.test_command_service tests.test_control_crash tests.test_brainstorm_runner tests.test_audit_workflow tests.test_loop_workflow` 124 例 OK；后端全量 657 例 OK。
 
-当前基线：**后端 657 用例 OK / 前端 249 用例 + `tsc --noEmit` 0 错**。
+## 第 13 批热修（真实浏览器 E2E：AC-01 / AC-19 / AC-31，2026-11-23）
+
+| 修复 | 证据 | 验证 |
+| --- | --- | --- |
+| AC-01 刷新三次不重复 | `scripts/browser_e2e/run_browser_e2e.py::scenario_ac01`：CDP 驱动真 Chrome 打开会话页后 `reload()` ×3，前后比对库内 runs/messages/session_version | PASS：页面上原始用户消息恰好 1 条，`messages=2`、`runs=1`、版本未推进、无未捕获异常；截图 `docs/browser-qa/e2e/ac-01-refresh-x3.png` |
+| AC-19 八分支不折叠 | `scenario_ac19`：种子产品状态产出 8 个分支（技术/设计/商业/用户/方案/决策/未决/实验），逐个断言标题可见、无「+N 条更多」，并检查第 8 分支节点原文与引用计数 | PASS：8 分支全渲染、`v2` 版本徽标与「证据/消息」计数可见；截图 `ac-19-eight-branches.png` |
+| AC-31 换账号零残留 | `scenario_ac31`：点真实「退出登录」按钮 → 换 B 的 Cookie 登录 → 断言历史只有 B、storage 无 A 会话 ID、越权打开 A 会话显示「加载失败」 | PASS；截图 `ac-31-account-a.png` / `ac-31-account-b.png` |
+| 零新依赖浏览器驱动 | `scripts/browser_e2e/cdp.py`（`websockets` + stdlib，`--headless=new`；因 venv Python 3.12 的句柄继承会让 Chrome 以 `STATUS_BREAKPOINT` 退出，本机 headless 追加 `--no-sandbox`）+ `seed.py`（走真实仓储直接播种，不调模型、不耗额度） | `run_browser_e2e.py` 连跑 2 次均 3/3 PASS（约 19s），种子会话自动硬删（`cleanup=3`，库里无残留） |
+
+证据：`cd backend && ../.venv/Scripts/python.exe ../scripts/browser_e2e/run_browser_e2e.py` → `[PASS] AC-01 / [PASS] AC-19 / [PASS] AC-31`，`failures: []`，`elapsed_seconds: 19.22`。
+
+当前基线：**后端 657 用例 OK / 前端 249 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31 PASS**。
 
 ## 运行方式
 

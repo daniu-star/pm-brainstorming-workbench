@@ -125,3 +125,32 @@ messages: 3 条（seq1 人类输入 / seq2 系统提示 / seq3 brainstorm 指令
 2. 重新铸 Cookie（上面命令）并在浏览器写入；
 3. 按 §2 逐步执行，每步对照 §3 的观察点；
 4. 如需留证，把截图写入 `docs/loop-runs/evidence/`，并在本文件 §3 表里追加一行。
+
+## 6. 自动化 CDP 验收（`scripts/browser_e2e/`，第 13 批新增）
+
+§2 的人工协议保留作探索性验收；三个关键 AC 现在有可复跑的自动化脚本（零新依赖，
+本机 Chrome + Python `websockets`，不装 Playwright）：
+
+```bash
+cd backend
+../.venv/Scripts/python.exe ../scripts/browser_e2e/run_browser_e2e.py            # 全部
+../.venv/Scripts/python.exe ../scripts/browser_e2e/run_browser_e2e.py AC-19      # 单个场景
+```
+
+| 场景 | 断言要点 | 截图 |
+| --- | --- | --- |
+| AC-01 | 打开种子会话后 `reload()` ×3：原始用户消息页面恰好 1 条；`messages=2`、`runs=1`、`session_version`/`product_version` 不变；无未捕获异常 | `docs/browser-qa/e2e/ac-01-refresh-x3.png` |
+| AC-19 | 8 个分支（技术/设计/商业/用户/方案/决策/未决/实验）全部渲染；无「+N 条更多」；第 8 分支节点原文、`v2` 版本徽标、引用计数可见 | `docs/browser-qa/e2e/ac-19-eight-branches.png` |
+| AC-31 | 点真实「退出登录」→ 换 B Cookie 登录：历史抽屉只有 B、页面无 A 消息、storage 无 A 会话 ID、直接打开 A 会话显示「加载失败」 | `docs/browser-qa/e2e/ac-31-account-a.png`、`ac-31-account-b.png` |
+
+实现说明：
+
+- `cdp.py`：极简 CDP 客户端（`Target.createTarget` / `Page.navigate` / `Runtime.evaluate` /
+  `Page.captureScreenshot` / `Network.setCookie`），负责启动/关闭 headless Chrome；
+- `seed.py`：走**真实仓储**（`session_repo` / `run_repo` / `audit_repo`）直接播种会话、产品状态与
+  `active` 审计，只跳过 LLM 调用，因此前端读到的仍是真实 API 投影；跑完自动硬删种子会话；
+- 本机 venv 的 Python 3.12 会把子进程句柄继承列表收窄，Chrome 的沙箱子进程会以
+  `STATUS_BREAKPOINT(0x80000003)` 立刻退出，因此 headless 启动追加 `--no-sandbox`
+  （只影响验收浏览器，不影响被测应用的安全模型）；
+- 该脚本不进 CI（CI 无图形栈/Chrome），属于发布前本地必跑项，见
+  `docs/v4-release-checklist.md` §1。
