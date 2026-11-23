@@ -124,6 +124,14 @@ class Page:
             time.sleep(interval)
         raise CdpError(f"等待超时：{expression}")
 
+    def add_init_script(self, source: str) -> str:
+        """在每次导航前注入脚本（用于替换外部语音服务，验证 UI 行为）。"""
+        result = self._send(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {"source": source, "runImmediately": True},
+        )
+        return str(result.get("identifier") or "")
+
     def text(self) -> str:
         return str(self.eval("document.body ? document.body.innerText : ''") or "")
 
@@ -199,6 +207,8 @@ class Browser:
                 "--disable-gpu",
                 "--disable-dev-shm-usage",
                 "--disable-features=Translate,MediaRouter",
+                # 验收需要验证 TTS 播放态（麦克风随之禁用），headless 下放开自动播放限制
+                "--autoplay-policy=no-user-gesture-required",
                 f"--window-size={window_size}",
                 "about:blank",
             ],

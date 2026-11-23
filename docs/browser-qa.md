@@ -126,7 +126,7 @@ messages: 3 条（seq1 人类输入 / seq2 系统提示 / seq3 brainstorm 指令
 3. 按 §2 逐步执行，每步对照 §3 的观察点；
 4. 如需留证，把截图写入 `docs/loop-runs/evidence/`，并在本文件 §3 表里追加一行。
 
-## 6. 自动化 CDP 验收（`scripts/browser_e2e/`，第 13 批新增）
+## 6. 自动化 CDP 验收（`scripts/browser_e2e/`，第 13 批新增，第 14 批补 AC-33）
 
 §2 的人工协议保留作探索性验收；三个关键 AC 现在有可复跑的自动化脚本（零新依赖，
 本机 Chrome + Python `websockets`，不装 Playwright）：
@@ -135,6 +135,7 @@ messages: 3 条（seq1 人类输入 / seq2 系统提示 / seq3 brainstorm 指令
 cd backend
 ../.venv/Scripts/python.exe ../scripts/browser_e2e/run_browser_e2e.py            # 全部
 ../.venv/Scripts/python.exe ../scripts/browser_e2e/run_browser_e2e.py AC-19      # 单个场景
+../.venv/Scripts/python.exe ../scripts/browser_e2e/run_browser_e2e.py AC-33      # 摄像头/STT/TTS 降级（真调模型）
 ```
 
 | 场景 | 断言要点 | 截图 |
@@ -142,6 +143,7 @@ cd backend
 | AC-01 | 打开种子会话后 `reload()` ×3：原始用户消息页面恰好 1 条；`messages=2`、`runs=1`、`session_version`/`product_version` 不变；无未捕获异常 | `docs/browser-qa/e2e/ac-01-refresh-x3.png` |
 | AC-19 | 8 个分支（技术/设计/商业/用户/方案/决策/未决/实验）全部渲染；无「+N 条更多」；第 8 分支节点原文、`v2` 版本徽标、引用计数可见 | `docs/browser-qa/e2e/ac-19-eight-branches.png` |
 | AC-31 | 点真实「退出登录」→ 换 B Cookie 登录：历史抽屉只有 B、页面无 A 消息、storage 无 A 会话 ID、直接打开 A 会话显示「加载失败」 | `docs/browser-qa/e2e/ac-31-account-a.png`、`ac-31-account-b.png` |
+| AC-33 | 点「同意并开启摄像头面试」→ 真实 `NotAllowedError` 浮层（headless 默认拒绝 `getUserMedia`）→「继续仅文字面试」后文字输入可用；TTS 播放中麦克风 `disabled`、切「文字」立即无「正在发言…/正在播报」；点麦克风→真实拒绝浮层；文字回答提交后审计推进（`question_count` 1→2） | `docs/browser-qa/e2e/ac-33-camera-denied.png`、`ac-33-voice-playing.png`、`ac-33-text-answer.png` |
 
 实现说明：
 

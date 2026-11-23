@@ -45,7 +45,7 @@
 | 硬性封顶有解释 | `lib/loopView.ts::scoreCapNotice` + 评分卡头部提示 | `tests/loop-view.test.cjs` 1 例 |
 | 决策事件反映决策后状态 | `command_service._loop_event(status=…, loop_version=…)` | `test_ship_decision_closes_loop_synchronously` 断言 payload |
 
-浏览器交互验收已从「人工/半自动协议」升级为 **CDP 自动化 e2e**（`scripts/browser_e2e/`，AC-01/19/31，见第 13 批）；仍不进 CI（需要本机 Chrome，CI 无图形栈）。SRV-02 已由 `backend/tests/test_crash_atomicity.py` 用真子进程崩溃注入补齐（不再是单进程模拟），TST-01 由 `tests/components-render.test.cjs` 补上真实渲染断言。
+浏览器交互验收已从「人工/半自动协议」升级为 **CDP 自动化 e2e**（`scripts/browser_e2e/`，AC-01/19/31/33，见第 13/14 批）；仍不进 CI（需要本机 Chrome，CI 无图形栈）。SRV-02 已由 `backend/tests/test_crash_atomicity.py` 用真子进程崩溃注入补齐（不再是单进程模拟），TST-01 由 `tests/components-render.test.cjs` 补上真实渲染断言。
 
 ## 第 7 批热修（契约守卫 / 吸底 / 降级，2026-11-20）
 
@@ -111,7 +111,17 @@
 
 证据：`cd backend && ../.venv/Scripts/python.exe ../scripts/browser_e2e/run_browser_e2e.py` → `[PASS] AC-01 / [PASS] AC-19 / [PASS] AC-31`，`failures: []`，`elapsed_seconds: 19.22`。
 
-当前基线：**后端 657 用例 OK / 前端 249 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31 PASS**。
+## 第 14 批热修（真实浏览器 E2E：AC-33 摄像头/STT/TTS 降级，2026-11-23）
+
+| 修复 | 证据 | 验证 |
+| --- | --- | --- |
+| 摄像头被拒仍可完成文字审计 | `scripts/browser_e2e/run_browser_e2e.py::scenario_ac33`：点「同意并开启摄像头面试」后断言 `[role="alert"]` 文案含「摄像头」（headless 默认 `NotAllowedError`，无需 CDP 授权），再点「继续仅文字面试」断言 textarea 可输入 | PASS：真实拒绝原因浮层 + 文字面试可继续；截图 `ac-33-camera-denied.png` |
+| 引擎说明如实 / 播放停止 / 麦克风跟随实际音频 | 同场景：TTS 用 `Page.add_init_script` 替换 `/api/voice/tts` 返回 1.5s 静音 WAV；断言服务端 STT 未配置时页面无「AI 高精度转写」、播放中麦克风 `disabled`、切「文字」后「正在发言…/正在播报」消失 | PASS：三条状态断言全部成立；截图 `ac-33-voice-playing.png` |
+| STT 未配置时错误不静默 + 文字回答真实推进审计 | 点麦克风按钮 → 断言 `[role="alert"]` 文案含「麦克风」；在 textarea 输入真实访谈内容并发送 → 轮询库内 `audits.active_question_id`/`question_count` 变化 | PASS：`audit_after={status:active,count:2}`（Worker 真跑回答并生成第 2 问）；截图 `ac-33-text-answer.png` |
+
+证据：`cd backend && ../.venv/Scripts/python.exe ../scripts/browser_e2e/run_browser_e2e.py AC-33` → `[PASS] AC-33`，`elapsed_seconds: 18.07`，`failures: []`，`cleanup: 1`；随后回归 `run_browser_e2e.py AC-01 AC-19 AC-31` → 3/3 PASS（`elapsed_seconds: 11.06`）。本轮真实模型消耗约 6–8K tokens（audit.open + audit.answer 各一次）。
+
+当前基线：**后端 657 用例 OK / 前端 249 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS**。
 
 ## 运行方式
 
