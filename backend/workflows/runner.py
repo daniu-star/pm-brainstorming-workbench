@@ -241,8 +241,14 @@ class BudgetTracker:
             return
         if not isinstance(parsed, dict):
             return
-        self.input_tokens = _count(parsed.get("prompt_tokens"))
-        self.output_tokens = _count(parsed.get("completion_tokens"))
+        # 上一 epoch 只写下了「预留」但没来得及结算（模型已响应、提交前崩溃，
+        # AC-10）：接管者按预留上限记账，避免崩溃把这次调用成本抹掉。
+        self.input_tokens = _count(parsed.get("prompt_tokens")) + _count(
+            parsed.get("reserved_prompt_tokens")
+        )
+        self.output_tokens = _count(parsed.get("completion_tokens")) + _count(
+            parsed.get("reserved_completion_tokens")
+        )
         self.upstream_calls = _count(parsed.get("upstream_calls", parsed.get("calls")))
         self.provider_calls = _count(parsed.get("provider_calls"))
         self.estimated_calls = _count(parsed.get("estimated_calls"))
@@ -400,6 +406,9 @@ class BudgetTracker:
             "upstream_calls": self.upstream_calls,
             "provider_calls": self.provider_calls,
             "estimated_calls": self.estimated_calls,
+            # 仍在途的预留额度：崩溃恢复时按「已消耗」记账，保证预留成本不丢（AC-10）。
+            "reserved_prompt_tokens": self.reserved_input_tokens,
+            "reserved_completion_tokens": self.reserved_output_tokens,
             "usage_source": usage_source,
             "limits": {
                 "max_run_input_tokens": self.max_run_input_tokens,
@@ -442,11 +451,33 @@ _BUDGET_ALIASES: dict[str, str] = {
 
 
 class BudgetedLLM:
-    """``StepContext.llm`` 的预算包装：每次 ``complete*`` 都预留并结算 usage。"""
+    """``StepContext.llm`` 的预算包装：每次 ``complete*`` 都预留并结算 usage。
 
-    def __init__(self, client: Any, budget: BudgetTracker) -> None:
+    ``on_reserve`` 在预留成功后、真正发起上游请求前调用：执行器用它把已预留的
+    额度先落盘（AC-10）。若进程在模型响应后、结果提交前崩溃，接管者按预留上限
+    记账，这次调用的成本不会因为崩溃而丢失。
+    """
+
+    def __init__(
+        self,
+        client: Any,
+        budget: BudgetTracker,
+        *,
+        on_reserve: Callable[[], None] | None = None,
+    ) -> None:
         self._client = client
         self._budget = budget
+        self._on_reserve = on_reserve
+
+    def _pre_charge(self) -> None:
+        """把预留额度落盘；失败只记日志，不阻断这次调用。"""
+
+        if self._on_reserve is None:
+            return
+        try:
+            self._on_reserve()
+        except Exception:  # noqa: BLE001 - 账本落盘失败不应影响业务调用
+            logger.exception("预留预算落盘失败")
 
     # 透传属性（model 等），便于工作流按需读取。
     def __getattr__(self, name: str) -> Any:
@@ -468,6 +499,7 @@ class BudgetedLLM:
             input_tokens=_estimate_prompt_tokens(messages),
             output_tokens=max(0, reserved_output),
         )
+        self._pre_charge()
         try:
             result = await self._client.complete(
                 messages=messages,
@@ -507,6 +539,7 @@ class BudgetedLLM:
             input_tokens=_estimate_prompt_tokens(messages),
             output_tokens=max(0, reserved_output),
         )
+        self._pre_charge()
         try:
             result = await self._client.complete_json(
                 messages=messages,
@@ -533,6 +566,7 @@ class BudgetedLLM:
             input_tokens=_estimate_prompt_tokens(messages),
             output_tokens=self._budget.max_output_tokens,
         )
+        self._pre_charge()
         produced = 0
         try:
             async for token in self._client.stream(messages, temperature=temperature, **kwargs):
@@ -1715,7 +1749,16 @@ def _drive_run(
             product_state=product_state,
             current_message=current_message,
             task_kind=task_kind,
-            llm=BudgetedLLM(client, budget),
+            llm=BudgetedLLM(
+                client,
+                budget,
+                on_reserve=lambda: _persist_budget(
+                    run_id=run_id,
+                    worker_id=worker_id,
+                    lease_epoch=lease_epoch,
+                    budget=budget,
+                ),
+            ),
             budget=budget,
             worker_id=worker_id,
             lease_epoch=lease_epoch,

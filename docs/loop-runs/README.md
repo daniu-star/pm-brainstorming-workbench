@@ -91,7 +91,16 @@
 
 证据：`tests/test_brainstorm_runner.py::test_retry_reruns_all_failed_roles_and_enqueues_synthesis`（超时 + 结构失败 → 父 `partial_succeeded`、子 Run 失败步骤 = {ops, target_user}、只调这两个、产品版本 [1,2,3,4]、4 条 agent 消息、synthesis 子 Run 指向重试 Run 且 `base_product_version=4`）；回归 `tests.test_brainstorm_runner` 13 例 OK；后端全量 653 例 OK；前端 249 例 + `tsc` 0 错（新增 4 例覆盖 partial 入口）。
 
-当前基线：**后端 653 用例 OK / 前端 249 用例 + `tsc --noEmit` 0 错**。
+## 第 12 批热修（AC-10 崩溃后预留预算不丢，2026-11-23）
+
+| 改动 | 缺陷/差距 | 修复与证据 |
+| --- | --- | --- |
+| ① 预留额度在发请求前落盘 | `BudgetedLLM` 只在调用**结束后**才把用量写回（`_persist_budget` 仅在工作流返回/重试前调用），进程若在「模型已响应、结果未提交」处崩溃，这次调用的次数与 token 完全丢失；接管者从旧账本继续，反复崩溃可无限多花 | `runner._persist_budget` 接线到 `BudgetedLLM(on_reserve=...)`，在 `begin_call()` 之后、发请求之前写入；`as_dict()` 增加 `reserved_prompt_tokens` / `reserved_completion_tokens`，`_restore_usage` 把上一 epoch 的预留按已消耗计入 → 崩溃一次 + 重跑一次 `upstream_calls == 2` |
+| ② `attempt_count` 只按真实提交推进 | 步骤尝试次数随 `start_step` 递增，崩溃后接管会再 start 一次；配合 ① 保证总尝试 ≤ 2 落库可查 | `test_budget_crash.py` 断言崩溃后 step `running` 且 `attempt_count == 1`，接管完成后为 `succeeded` |
+
+证据：`tests/test_budget_crash.py` 4 例 OK（`BudgetLedgerUnitTests` 2 例账本单测 + `BudgetReservationCrashTests` 2 例真 `os._exit(9)` 子进程崩溃/接管）；回归 `tests.test_runner tests.test_crash_atomicity tests.test_command_service tests.test_control_crash tests.test_brainstorm_runner tests.test_audit_workflow tests.test_loop_workflow` 124 例 OK；后端全量 657 例 OK。
+
+当前基线：**后端 657 用例 OK / 前端 249 用例 + `tsc --noEmit` 0 错**。
 
 ## 运行方式
 

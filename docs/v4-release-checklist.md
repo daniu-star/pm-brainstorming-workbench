@@ -1,12 +1,12 @@
 # V4.0 发布就绪清单（WP-10）
 
 - 分支：`feat/prd-v4-m1`；对应 PRD：`docs/superpowers/specs/2026-11-18-pm-brainstorm-agent-architecture-prd-v4.md`
-- 验收记录：`docs/v4-acceptance-report.md`（653 后端用例 / 249 前端用例 / 契约 parity 13 / 跨进程 6 + 崩溃注入 3 / 真 Worker E2E 30 项 + Loop 闭环 29 项 / 迁移演练 / 浏览器交互验收（docs/browser-qa.md，6 张归档截图）；QA Loop 记录见 docs/qa-loop-runs/README.md，多角色 Loop 记录见 docs/loop-runs/README.md）
+- 验收记录：`docs/v4-acceptance-report.md`（657 后端用例 / 249 前端用例 / 契约 parity 13 / 跨进程 6 + 崩溃注入 3 + 预算崩溃 4 / 真 Worker E2E 30 项 + Loop 闭环 29 项 / 迁移演练 / 浏览器交互验收（docs/browser-qa.md，6 张归档截图）；QA Loop 记录见 docs/qa-loop-runs/README.md，多角色 Loop 记录见 docs/loop-runs/README.md）
 
 ## 1. 发布前必须通过的命令
 
 ```bash
-# 后端（653 用例，含 Loop Studio 65 项 + 数据生命周期/预算档位/审计并发 13 项；第 9 批删 v1 死代码 27 例，新增引用归属 7 + 崩溃注入 3；第 10 批新增旧 ID 别名 6；第 11 批新增 AC-14 多失败重试 1）
+# 后端（657 用例，含 Loop Studio 65 项 + 数据生命周期/预算档位/审计并发 13 项；第 9 批删 v1 死代码 27 例，新增引用归属 7 + 崩溃注入 3；第 10 批新增旧 ID 别名 6；第 11 批新增 AC-14 多失败重试 1；第 12 批新增 AC-10 预算预留崩溃 4）
 cd backend && ../.venv/Scripts/python.exe -m unittest discover -s tests
 
 # 前端类型检查 + 逻辑用例 + 生产构建 + 冒烟 e2e

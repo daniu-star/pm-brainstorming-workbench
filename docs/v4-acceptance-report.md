@@ -25,9 +25,9 @@
 ## 2. 实际执行的验证命令与结果
 
 ```bash
-# 后端全量（653 用例，含 M2/M3 + QA Loop 收口 + 闭环/数据生命周期/崩溃注入/旧 ID 别名/AC-14 多失败重试热修新增用例）
+# 后端全量（657 用例，含 M2/M3 + QA Loop 收口 + 闭环/数据生命周期/崩溃注入/旧 ID 别名/AC-14 多失败重试/AC-10 预算预留热修新增用例）
 cd backend && ../.venv/Scripts/python.exe -m unittest discover -s tests
-# → Ran 653 tests / OK / exit 0（含 tests/test_audit_runner.py 的 3 个真 runner 审计用例、tests/test_control_crash.py 的 3 个真 kill/restart 用例、tests/test_session_alias.py 的 6 个旧 ID 别名用例、tests/test_brainstorm_runner.py 的 AC-14 多失败重试用例）
+# → Ran 657 tests / OK / exit 0（含 tests/test_audit_runner.py 的 3 个真 runner 审计用例、tests/test_control_crash.py 的 3 个真 kill/restart 用例、tests/test_session_alias.py 的 6 个旧 ID 别名用例、tests/test_brainstorm_runner.py 的 AC-14 多失败重试用例、tests/test_budget_crash.py 的 4 个预算预留崩溃用例）
 
 # 跨进程（真 subprocess + 共享 SQLite）
 cd backend && ../.venv/Scripts/python.exe -m unittest tests.test_run_repo tests.test_cross_process
@@ -73,7 +73,7 @@ cd frontend && npm run test:e2e      # 1 pass（真起 uvicorn，401/404 语义�
 | AC-07 | 通过（跨进程） | `test_cross_process.py::test_concurrent_different_keys_same_session_gets_session_busy` | 一成一败（SESSION_BUSY/VERSION_CONFLICT），messages=2、runs=1 |
 | AC-08 | 通过（跨进程） | `test_cross_process.py::test_two_worker_processes_claim_the_same_run_once`；`test_run_repo.py::test_old_worker_submit_after_takeover_is_rejected`；`test_runner.py::test_succeeded_step_is_skipped_without_model_call` | 条件 UPDATE 原子领取、epoch 递增、旧提交被拒、成功步骤不重跑 |
 | AC-09 | 通过（崩溃注入） | `test_run_repo.py::test_event_seq_is_monotonic_and_unique`；`test_runner.py::test_succeeded_step_is_skipped_without_model_call`；`tests/test_crash_atomicity.py`（子进程 `os._exit(9)` 真崩溃注入：步骤成功与结果同事务，重启后无 succeeded-无结果残留） | 步骤幂等 + 事件可回放 + 崩溃后不产生假成功 |
-| AC-10 | 部分通过 | `test_runner.py::test_retryable_error_two_attempts_then_run_failed`；`test_command_service.py::test_apply_outcome_twice_applies_only_once`；`test_llm_client.py::test_sdk_retries_disabled` | 单步 ≤2 次、结果仅应用一次；**未验证崩溃后预留预算回收** |
+| AC-10 | 通过（崩溃注入） | `test_runner.py::test_retryable_error_two_attempts_then_run_failed`；`test_command_service.py::test_apply_outcome_twice_applies_only_once`；`test_llm_client.py::test_sdk_retries_disabled`；`tests/test_budget_crash.py`（子进程 `os._exit(9)` 真崩溃：`BudgetedLLM` 在发请求前把预留写进 `run.usage_json`（`reserved_prompt_tokens` / `reserved_completion_tokens`），接管者 `_restore_usage` 把上一 epoch 的预留按已消耗计入 → 崩溃一次 + 重跑一次 `upstream_calls == 2`） | 单步 ≤2 次、结果仅应用一次、预留成本不丢（崩溃后不会从旧账本重算而多花次数与 token） |
 | AC-11 | 通过 | `test_api_v2.py::test_sse_replays_from_after_seq_and_closes_on_terminal`；`test_legacy_compat.py::test_brainstorm_sse_translates_events_and_done_once`；`frontend/tests/sse.test.cjs` | 终结事件恰好一次（服务端 + 前端双保险） |
 | AC-12 | 通过 | `frontend/tests/sse.test.cjs`（跨块 UTF-8/CRLF/多行 data/注释/意外 EOF）；`test_api_v2.py::test_keepalive_frame_is_comment_without_seq` | 心跳为注释不占序号；EOF 无终结只算断连 |
 | AC-13 | 通过 | `frontend/tests/store.test.cjs`（切换会话/generation 守卫）；`test_api_v2.py::test_sse_disconnect_does_not_cancel_run` | 切 A→B 取消订阅但不取消服务器任务 |
@@ -135,9 +135,9 @@ cd frontend && npm run test:e2e      # 1 pass（真起 uvicorn，401/404 语义�
 ## 6. 结论
 
 - M1（WP-00～05）、M2（WP-06～08）、M3（WP-09）与 WP-10 的发布件（CI、迁移演练、健康诊断、前端 e2e 冒烟）均已交付。
-- 真实执行结果：后端 **653 用例 OK**、前端 **249 用例 pass** + `tsc` 0 错 + `build` 成功、`test:e2e` 1 pass、跨进程 6 用例 OK + 崩溃注入 3 用例 OK、旧 ID 别名 6 用例 OK、AC-14 多失败重试 1 用例 OK、真 Worker 审计端到端 **30 项 ALL PASS**、迁移演练 **DRILL_OK**。
-- AC 统计（按 §3 表）：**通过 35 条**（AC-02/03/04/05/06/07/08/09/11/12/13/14/15/16/17/18/21/22/23/24/25/26/27/28/29/30/32/35/36/37/38/39/40/41/42）、**部分通过 7 条**（AC-01/10/19/20/31/33/34）、**未实现 0 条**。
-- 剩余差距集中在：重试粒度（AC-14，仍是整 Run 重放而非只调失败专家）、真实浏览器交互验证（AC-01/19/31/33/34，npm registry 不可达无法装 playwright）、崩溃后预留预算回收（AC-10）、模型是否编造数字的端到端人工标注（AC-20）。每条均给出最小调整方案，未通过修改期望值或预填结果取得任何「通过」。
+- 真实执行结果：后端 **657 用例 OK**、前端 **249 用例 pass** + `tsc` 0 错 + `build` 成功、`test:e2e` 1 pass、跨进程 6 用例 OK + 崩溃注入 3 用例 OK、旧 ID 别名 6 用例 OK、AC-14 多失败重试 1 用例 OK、预算预留崩溃 4 用例 OK、真 Worker 审计端到端 **30 项 ALL PASS**、迁移演练 **DRILL_OK**。
+- AC 统计（按 §3 表）：**通过 36 条**（AC-02/03/04/05/06/07/08/09/10/11/12/13/14/15/16/17/18/21/22/23/24/25/26/27/28/29/30/32/35/36/37/38/39/40/41/42）、**部分通过 6 条**（AC-01/19/20/31/33/34）、**未实现 0 条**。
+- 剩余差距集中在：真实浏览器交互验证（AC-01/19/31/33/34，npm registry 不可达无法装 playwright）、模型是否编造数字的端到端人工标注（AC-20）。每条均给出最小调整方案，未通过修改期望值或预填结果取得任何「通过」。
 
 ## 7. QA Loop Engineering 首次运行（用户要求，2026-11-19）
 
