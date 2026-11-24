@@ -143,6 +143,10 @@ def _service_status() -> dict:
 
 WORKER_STALL_SECONDS = 120.0
 
+#: 报告质量统计的回看窗口（`/health/detail` 的 report_quality 块，第 30 批）
+REPORT_QUALITY_WINDOW_SECONDS = 24 * 3600
+
+
 
 def _parse_iso_seconds(value: str | None) -> float | None:
     """把 ``runs.heartbeat_at``（``%Y-%m-%dT%H:%M:%SZ``）转成 epoch 秒；解析失败返回 None。"""
@@ -155,6 +159,72 @@ def _parse_iso_seconds(value: str | None) -> float | None:
         return float(datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").timestamp())
     except (TypeError, ValueError):
         return None
+
+
+def _iso_seconds_ago(seconds: float) -> str:
+    """当前时间往前 ``seconds`` 秒，格式化为与库内一致的 ``%Y-%m-%dT%H:%M:%SZ``。"""
+
+    from datetime import datetime, timedelta, timezone
+
+    moment = datetime.now(timezone.utc) - timedelta(seconds=float(seconds))
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _report_quality_status(stats: dict) -> dict:
+    """把仓储统计翻译成「模型是不是老在编数字」的一句话判断（第 30 批）。
+
+    只做阈值判断，不臆测原因：报告样本太少时明确说样本不足，避免拿
+    一两条报告下结论。
+    """
+
+    scanned = int(stats.get("scanned") or 0)
+    annotated = int(stats.get("reports_with_unverified") or 0)
+    numbers = int(stats.get("unverified_numbers") or 0)
+    fallback = int(stats.get("fallback_reports") or 0)
+
+    if scanned == 0:
+        verdict, hint = "no_data", "窗口内没有新的审计报告，暂时无法判断"
+    elif scanned < 3:
+        verdict, hint = "insufficient", f"窗口内只有 {scanned} 份报告，样本不足以下结论"
+    else:
+        ratio = annotated / scanned
+        if ratio >= 0.5:
+            verdict = "frequent"
+            hint = (
+                f"{scanned} 份报告里 {annotated} 份含无来源数字（共 {numbers} 个）："
+                "建议在提示词里要求写清数据来源与统计口径"
+            )
+        elif annotated > 0:
+            verdict = "occasional"
+            hint = f"{scanned} 份报告里 {annotated} 份含无来源数字（共 {numbers} 个）"
+        else:
+            verdict = "clean"
+            hint = f"{scanned} 份报告的正文数字都能在消息/证据里找到"
+
+    return {
+        "verdict": verdict,
+        "hint": hint,
+        "reports_without_source": annotated,
+        "fallback_reports": fallback,
+    }
+
+
+def _report_quality(days: float = REPORT_QUALITY_WINDOW_SECONDS / 86400) -> dict:
+    """只读聚合最近窗口内的报告数字标注情况；异常时降级为 ``db`` 为假。"""
+
+    from repositories import audit_repo
+    from repositories.database import new_session
+
+    since = _iso_seconds_ago(float(days) * 86400)
+    db = new_session()
+    try:
+        stats = audit_repo.report_quality_stats(db, since_iso=since)
+        return {"db": True, "window": f"{int(float(days))}d", **stats, **_report_quality_status(stats)}
+    except Exception:  # pragma: no cover - 只在库异常时走到
+        logger.exception("event=health.report_quality_failed")
+        return {"db": False, "window": f"{int(float(days))}d", "verdict": "unknown", "hint": None}
+    finally:
+        db.close()
 
 
 def _worker_stall_hint(
@@ -284,4 +354,6 @@ async def health_detail(request: Request):
             "timeout_seconds": float(settings.llm_timeout_seconds),
             "max_retries": int(settings.llm_max_retries),
         },
+        # 报告质量（第 30 批）：模型是否老在报告里写没有来源的数字。
+        "report_quality": _report_quality(),
     }

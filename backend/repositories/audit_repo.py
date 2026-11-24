@@ -808,6 +808,63 @@ def update_control(
     db.flush()
 
 
+def report_quality_stats(
+    db: Session, *, since_iso: str, limit: int = 500
+) -> dict[str, Any]:
+    """统计窗口内已产出报告的「数字可追溯」情况（第 30 批，只读）。
+
+    为什么放在仓储层：`/health/detail` 要一个「模型是不是老在编数字」的
+    信号，而报告正文的标注只在 `report_json` 里，必须先取出再解析。这里
+    只读、不做任何写入，也不触发重算（重算在 `audit_to_snapshot` 里发生）。
+    """
+
+    stmt = (
+        select(AuditRow)
+        .where(AuditRow.report_json.is_not(None), AuditRow.updated_at >= since_iso)
+        .order_by(AuditRow.updated_at.desc())
+        .limit(max(1, int(limit)))
+    )
+    reports = 0
+    model_reports = 0
+    fallback_reports = 0
+    annotated = 0
+    total_numbers = 0
+    samples: list[dict[str, Any]] = []
+
+    for audit in db.execute(stmt).scalars():
+        raw = _load_dict(audit.report_json)
+        if raw is None:
+            continue
+        reports += 1
+        generated_by = str(raw.get("generated_by") or "model")
+        if generated_by == "model":
+            model_reports += 1
+        else:
+            fallback_reports += 1
+        numbers = [str(value) for value in (raw.get("unverified_numbers") or [])]
+        if numbers:
+            annotated += 1
+            total_numbers += len(numbers)
+            if len(samples) < 5:
+                samples.append(
+                    {
+                        "audit_id": audit.id,
+                        "unverified_numbers": numbers[:10],
+                        "generated_by": generated_by,
+                    }
+                )
+
+    return {
+        "since": since_iso,
+        "scanned": reports,
+        "model_reports": model_reports,
+        "fallback_reports": fallback_reports,
+        "reports_with_unverified": annotated,
+        "unverified_numbers": total_numbers,
+        "samples": samples,
+    }
+
+
 __all__ = [
     "UNSET",
     "add_assessment_revision",
@@ -826,6 +883,7 @@ __all__ = [
     "pending_end_intent",
     "questions_for_audit",
     "record_assessment",
+    "report_quality_stats",
     "require_audit",
     "save_report_revision",
     "update_audit",
