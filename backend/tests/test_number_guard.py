@@ -150,6 +150,39 @@ class AuditRoleResultTests(unittest.TestCase):
         self.assertIs(guard.audit_claim(claim, source_text=""), claim)
 
 
+class AuditReportTextsTests(unittest.TestCase):
+    """报告侧标注（第 28 批）：整段报告做一次数字提取，来源里找不到的标未验证。"""
+
+    SOURCE = "访谈记录：我们访谈了 12 家中小企业财务团队，平均每周对账 6 小时。"
+
+    def test_marks_only_numbers_absent_from_sources(self) -> None:
+        unverified, suggestion = guard.audit_report_texts(
+            texts=[
+                "对账时间从每周 6 小时降到 2 小时，节省 66%",
+                "建议先做 5 家客户的付费意愿验证",
+                "结论：12 家客户的访谈支持方向可行。",
+            ],
+            source_text=self.SOURCE,
+        )
+        self.assertEqual(unverified[:2], ["2", "66"])
+        self.assertIn("5", unverified)
+        self.assertNotIn("12", unverified)
+        self.assertNotIn("6", unverified)
+        self.assertEqual(
+            suggestion,
+            guard.verification_suggestion(unverified),
+            "建议文案必须与独立调用的结果一致",
+        )
+        self.assertIn("未验证数字：", suggestion or "")
+
+    def test_empty_report_has_no_marking(self) -> None:
+        unverified, suggestion = guard.audit_report_texts(
+            texts=["技术路线清晰", ""], source_text=self.SOURCE
+        )
+        self.assertEqual(unverified, [])
+        self.assertIsNone(suggestion)
+
+
 class ReducerAndProjectionTests(unittest.TestCase):
     """标注必须一路带到产品状态与画布投影。"""
 

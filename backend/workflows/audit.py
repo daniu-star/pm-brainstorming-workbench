@@ -37,6 +37,8 @@ from pydantic import Field, ValidationError, model_validator
 from core.llm_client import LLMError
 from core.role_prompts import PROMPT_VERSION, build_role_messages
 from domain import state_machine as SM
+from repositories import session_repo
+from services import number_guard
 from domain.contracts import (
     AUDIT_DIMENSIONS,
     AUDIT_DIMENSION_LABELS,
@@ -531,6 +533,19 @@ def _current_message_id(ctx: Any) -> str | None:
 
 def _run_id(ctx: Any) -> str:
     return str(getattr(getattr(ctx, "run", None), "id", "") or "")
+
+
+def _reference_texts(ctx: Any) -> tuple[dict[str, str], dict[str, str]]:
+    """报告侧来源原文（消息 + 证据）；取不到时返回空表 → 所有数字都会被标未验证。"""
+
+    db = getattr(ctx, "db", None)
+    session_id = _session_id(ctx)
+    if db is None or not session_id:
+        return {}, {}
+    try:
+        return session_repo.load_reference_texts(db, session_id)
+    except Exception:  # noqa: BLE001 - 标注是尽力而为，不能阻塞报告生成
+        return {}, {}
 
 
 def _session_id(ctx: Any) -> str:
@@ -1232,6 +1247,8 @@ def _apply_report_draft(
     states: Sequence[DimensionState],
     product_state: Any,
     warnings: list[str],
+    message_texts: dict[str, str] | None = None,
+    evidence_texts: dict[str, str] | None = None,
 ) -> AuditReport:
     """把模型报告与结构化记录对齐：不凭空虚增 supported 结论。"""
 
@@ -1255,6 +1272,21 @@ def _apply_report_draft(
     # 摘要必须有内容：模型漏写时用结构化兜底摘要，避免报告页出现一块空白。
     summary = str(draft.summary or "").strip()[:4000] or fallback.summary
 
+    # AC-20 延伸：报告正文里的数字也要能回到来源。只标注、不改写，不改动模型原文。
+    reference = chr(10).join(
+        [*(message_texts or {}).values(), *(evidence_texts or {}).values()]
+    )
+    unverified, suggestion = number_guard.audit_report_texts(
+        texts=[*supported, *gaps, *experiments, limitations, summary],
+        source_text=reference,
+    )
+    if unverified:
+        warnings.append(
+            "审计报告含未验证数字："
+            + "、".join(unverified)
+            + "（来源原文中找不到，已在报告顶部标注为未验证）"
+        )
+
     return AuditReport(
         audit_id=str(getattr(audit, "id", "") or ""),
         product_version=int(getattr(audit, "product_version", 1) or 1),
@@ -1267,6 +1299,8 @@ def _apply_report_draft(
         recommended_experiments=experiments,
         limitations=limitations,
         summary=summary,
+        unverified_numbers=unverified,
+        verification_suggestion=suggestion,
         generated_by="model",
     )
 
@@ -1325,7 +1359,19 @@ async def _generate_report(
         )
         return build_fallback_report(audit=audit, states=states, product_state=product_state, note=note), "fallback"
 
-    return _apply_report_draft(draft, audit=audit, states=states, product_state=product_state, warnings=warnings), "model"
+    message_texts, evidence_texts = _reference_texts(ctx)
+    return (
+        _apply_report_draft(
+            draft,
+            audit=audit,
+            states=states,
+            product_state=product_state,
+            warnings=warnings,
+            message_texts=message_texts,
+            evidence_texts=evidence_texts,
+        ),
+        "model",
+    )
 
 
 # --------------------------------------------------------------------------- #

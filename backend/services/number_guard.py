@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import re
+from typing import Sequence
 
 from domain import contracts as C
 
@@ -77,6 +78,22 @@ def audit_claim(claim: C.Claim, *, source_text: str) -> C.Claim:
     if unverified == list(claim.unverified_numbers):
         return claim
     return claim.model_copy(update={"unverified_numbers": unverified})
+
+
+def audit_report_texts(*, texts: Sequence[str], source_text: str) -> tuple[list[str], str | None]:
+    """标注报告正文里的未验证数字（AC-20 的报告侧延伸）。
+
+    与角色论断不同，报告是一段段散文，因此这里把「支持论据 / 未解决缺口 / 建议实验 /
+    局限性 / 摘要」当成一个整体文本做一次数字提取，返回去重后的未验证值与补充建议。
+    """
+
+    numbers: list[str] = []
+    for text in texts:
+        for value in extract_numbers(str(text)):
+            if value not in numbers:
+                numbers.append(value)
+    unverified = [value for value in numbers if not number_is_traceable(value, source_text)]
+    return unverified, verification_suggestion(unverified)
 
 
 def audit_role_result(

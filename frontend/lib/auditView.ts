@@ -230,6 +230,10 @@ export interface NormalizedReport {
   limitations: string;
   /** 报告摘要（模型路径来自模型，兜底路径由结构化记录拼出） */
   summary: string;
+  /** 报告里在来源找不到的数字（服务端标注；旧报告为空数组） */
+  unverifiedNumbers: string[];
+  /** 补充数字来源的建议 */
+  verificationSuggestion: string | null;
   humanRevised: boolean;
   generatedBy: string | null;
   /** 缺失的字段名（中文），用于「未生成提示」；空数组 = 报告完整 */
@@ -311,6 +315,8 @@ export function normalizeReport(raw: unknown): NormalizedReport | null {
   const limitations = asString(raw.limitations).trim();
   // 摘要是可选增强字段：旧报告没有它就不算「缺字段」，页面显示「未生成」即可。
   const summary = asString(raw.summary).trim();
+  const unverifiedNumbers = asStringArray(raw.unverified_numbers);
+  const verificationSuggestion = asNullableString(raw.verification_suggestion);
   const dimensionStates = Array.isArray(raw.dimension_states)
     ? raw.dimension_states.map(normalizeDimensionState)
     : [];
@@ -337,6 +343,8 @@ export function normalizeReport(raw: unknown): NormalizedReport | null {
     recommendedExperiments,
     limitations,
     summary,
+    unverifiedNumbers,
+    verificationSuggestion,
     humanRevised: asBoolean(raw.human_revised),
     generatedBy: asNullableString(raw.generated_by),
     missingFields,

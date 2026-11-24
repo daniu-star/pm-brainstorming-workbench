@@ -148,6 +148,19 @@ function ReportView({
               <div className="text-sm text-zinc-500">{NOT_GENERATED}</div>
             )}
           </Section>
+          {report.unverifiedNumbers.length > 0 ? (
+            <div
+              className="flex flex-wrap items-center gap-2 rounded-lg border border-orange-500/40 bg-orange-500/10 px-2.5 py-1.5 text-[11px] text-orange-300"
+              title={
+                report.verificationSuggestion ??
+                "报告里的这些数字在来源消息/证据中找不到，请补充出处与统计日期"
+              }
+            >
+              <span className="font-medium">数字未验证</span>
+              <span>{report.unverifiedNumbers.join("、")}</span>
+              <span className="text-orange-200/70">补充来源后可重新生成报告</span>
+            </div>
+          ) : null}
           <Section title="维度评估">
             {report.dimensionStates.length === 0 ? (
               <div className="text-sm text-zinc-500">{NOT_GENERATED}</div>

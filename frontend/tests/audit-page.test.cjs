@@ -182,6 +182,8 @@ test("normalizeReport 完整报告 missingFields 为空", () => {
   assert.deepEqual(report.missingFields, []);
   assert.equal(report.humanRevised, true);
   assert.equal(report.summary, "方向可行，但用户证据仍需补齐。", "摘要应去除首尾空白");
+  assert.deepEqual(report.unverifiedNumbers, [], "旧报告没有标注字段时归一化为空数组");
+  assert.equal(report.verificationSuggestion, null, "没有建议时为 null");
   assert.equal(report.dimensionStates[0].label, "技术风险");
   assert.equal(report.dimensionStates[0].assessmentLabel, "存在缺口");
 });
@@ -823,4 +825,21 @@ test("resolveAuditStaleness：版本相同/报告更新/版本缺失时不误报
     assert.equal(state.stale, false, JSON.stringify(input));
     assert.equal(state.text, "");
   }
+});
+
+test("审计报告：未验证数字与建议原样透出，缺失字段不当作缺字段", () => {
+  const report = view.normalizeReport({
+    supported_points: ["目标用户明确"],
+    unresolved_gaps: ["缺少付费意愿证据"],
+    recommended_experiments: ["做试点"],
+    limitations: "样本有限",
+    dimension_states: [{ key: "problem_validity", assessment: "supported" }],
+    generated_by: "model",
+    unverified_numbers: ["2", "66"],
+    verification_suggestion: "请补充这些数字的来源与统计日期。",
+  });
+
+  assert.deepEqual(report.unverifiedNumbers, ["2", "66"]);
+  assert.equal(report.verificationSuggestion, "请补充这些数字的来源与统计日期。");
+  assert.equal(report.missingFields.length, 0, "有标注字段的报告仍算完整，不能提示缺字段");
 });

@@ -490,6 +490,10 @@ export interface AuditReport {
   limitations: string;
   /** 一段话总结（第 18 批新增；旧报告可能缺失 → 可选） */
   summary?: string | null;
+  /** 报告正文里在来源中找不到的数字（第 28 批新增；旧报告缺失视为空） */
+  unverified_numbers?: string[] | null;
+  /** 补充数字来源的建议 */
+  verification_suggestion?: string | null;
   human_revised: boolean;
   generated_by: "model" | "fallback";
 }

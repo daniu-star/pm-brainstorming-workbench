@@ -864,13 +864,14 @@ def _report_payload(
     *,
     supported: list[str] | None = None,
     gaps: list[str] | None = None,
+    summary: str | None = None,
 ) -> dict[str, Any]:
     return {
         "supported_points": supported or ["技术路线清晰"],
         "unresolved_gaps": gaps or ["缺少真实用户样本"],
         "recommended_experiments": ["用 5 个用户做一次可用性测试"],
         "limitations": "只覆盖了技术与用户两个维度。",
-        "summary": "整体判断：方向可行，但用户证据仍需补齐。",
+        "summary": summary or "整体判断：方向可行，但用户证据仍需补齐。",
     }
 
 
@@ -1346,6 +1347,60 @@ class AuditReportTests(AuditWorkflowTestCase):
         self.assertEqual(len(revisions), 1)
         self.assertEqual(revisions[0].generated_by, "model")
         self.assertEqual(self.session_row().phase, SessionPhase.audit_completed.value)
+
+    async def test_report_marks_numbers_absent_from_sources(self) -> None:
+        """报告正文里的数字也要能回到来源（第 28 批）：12/6 可追溯，2/66 标注未验证。"""
+
+        audit_id = self.create_audit(status=AuditStatus.active)
+        self.add_question(
+            audit_id,
+            ordinal=1,
+            dimension=AUDIT_DIMENSIONS[0],
+            answer="访谈了 12 家客户，他们原来的对账耗时是每周 6 小时",
+            assessment=Assessment.supported,
+            rationale="访谈证据支持",
+        )
+        audit = audit_repo.require_audit(self.db, audit_id, owner_email=OWNER)
+        audit_repo.update_audit(
+            self.db,
+            audit,
+            now_iso=utc_now_iso(),
+            status=AuditStatus.closing,
+            end_reason=EndReason.completed,
+            close_requested=1,
+        )
+        self.db.commit()
+
+        run_id, lease_epoch = self.create_run(action="end_audit", audit_id=audit_id)
+        llm = FakeLLM(
+            {
+                audit_workflow.PURPOSE_REPORT: [
+                    _report_payload(
+                        supported=["对账时间从每周 6 小时降到 2 小时，节省 66%"],
+                        summary="结论：12 家客户的访谈支持方向可行，2 小时目标需再验证。",
+                    )
+                ]
+            }
+        )
+        ctx = self.make_ctx(run_id, llm=llm, task_kind=C.TaskKind.audit_report)
+        outcome = await audit_workflow.run_audit_report(ctx)
+        self.assertEqual(outcome.status, RunStatus.succeeded)
+        self.commit_outcome(run_id, lease_epoch, outcome)
+
+        audit = self.reload_audit(audit_id)
+        report = __import__("json").loads(audit.report_json)
+        self.assertEqual(report["generated_by"], "model")
+        unverified = report["unverified_numbers"]
+        self.assertEqual(unverified[:2], ["2", "66"], "只出现在模型文字里的数字必须标注")
+        self.assertIn("5", unverified, "建议实验里的「5 个用户」同样是模型给的数字，也要标")
+        self.assertNotIn("12", unverified, "12 出现在用户回答里（可追溯），不能误标")
+        self.assertNotIn("6", unverified, "6 出现在用户回答里（可追溯），不能误标")
+        self.assertTrue(report["verification_suggestion"])
+        self.assertIn("未验证数字", report["verification_suggestion"])
+        self.assertTrue(
+            any("未验证数字" in warning for warning in outcome.warnings),
+            "标注同时要进 warnings，便于前端提示与日志排查",
+        )
 
     async def test_report_falls_back_when_model_unavailable(self) -> None:
         audit_id, _ = self.seed_closing_audit()

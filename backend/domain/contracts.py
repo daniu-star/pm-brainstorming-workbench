@@ -1084,6 +1084,10 @@ class AuditReport(StrictModel):
     #: 一段话总结（AC-36/AC-40）。模型路径用模型给的摘要，兜底路径由结构化记录拼出，
     #: 前端在「报告摘要」区展示；缺失时为空串，页面显示「未生成」而不是编内容。
     summary: str = Field(default="", max_length=4000)
+    #: AC-20/AC-33 延伸：报告正文里在来源（消息/证据）找不到的数字，由服务端标注，
+    #: 前端在报告顶部给出「数字未验证」徽标与补充建议；为空表示报告里的数字都可追溯。
+    unverified_numbers: list[str] = Field(default_factory=list, max_length=MAX_REFS_PER_ITEM)
+    verification_suggestion: str | None = Field(default=None, max_length=600)
     human_revised: bool = False
     generated_by: Literal["model", "fallback"] = "model"
 

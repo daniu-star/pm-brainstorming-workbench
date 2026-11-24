@@ -156,6 +156,30 @@ test("审计页：已完成审计渲染报告摘要、维度评估与问题原�
   assert.match(html, /缺少付费意愿证据/);
 });
 
+test("审计页：报告含未验证数字时顶部给徽标与补充建议", () => {
+  const audit = JSON.parse(JSON.stringify(COMPLETED_AUDIT));
+  audit.report.unverified_numbers = ["2", "66"];
+  audit.report.verification_suggestion = "未验证数字：2、66。请补充这些数字的来源与统计日期。";
+
+  resetStore({
+    sessionView: {
+      id: SESSION_ID,
+      phase: "audit_completed",
+      session_version: 4,
+      current_product_version: 2,
+      current_audit_id: "audit-1",
+      active_run_id: null,
+    },
+    audits: { "audit-1": audit },
+  });
+
+  const html = render(React.createElement(AuditPage));
+
+  assert.match(html, /数字未验证/);
+  assert.match(html, /2、66/);
+  assert.match(html, /补充来源后可重新生成报告/);
+});
+
 test("审计页：读取失败渲染错误态与重试入口，不渲染「开始审计」", () => {
   resetStore({
     sessionView: {
