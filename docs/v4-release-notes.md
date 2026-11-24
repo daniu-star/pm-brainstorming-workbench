@@ -8,7 +8,7 @@
 
 | 检查项 | 结果 |
 | --- | --- |
-| 后端全量 | `Ran 693 tests` / OK（含 M2/M3、闭环、数据生命周期、崩溃注入、旧 ID 别名、AC-20 数字守卫、结项报告容错、Worker 卡死诊断） |
+| 后端全量 | `Ran 697 tests` / OK（含 M2/M3、闭环、数据生命周期、崩溃注入、旧 ID 别名、AC-20 数字守卫、结项报告容错、Worker 卡死诊断） |
 | 前端类型 + 用例 | `npx tsc --noEmit` 0 错；`npm test` **254** 用例 pass |
 | 前端构建 + 冒烟 | `npm run build` exit 0（7 条路由，含 `/session/[id]/audit` 8.11 kB）；`npm run test:e2e` 1 pass |
 | 契约 parity | `tests.test_contract_parity` **13** 例，前后端枚举/常量/Literal 按序比对 |
@@ -73,7 +73,7 @@
 - `LLM_BUDGET_PROFILE=standard|lean|frugal`：只收紧预算，生效值写入每条 Run 的 `budget_json`；`/health/detail` 暴露 `budget_profile` 与 `budget_limits`。
 - `LLM_DISABLE_REASONING=true`：默认开启，对含 `deepseek` 的模型关闭思考；设 `false` 恢复供应商默认行为。
 - 其它：`DATABASE_URL` 覆盖 SQLite 位置（默认 `backend/data/app.db`），`NEXT_PUBLIC_API_URL` 指向 API。
-- 手工部署顺序：备份 `backend/data/app.db` 与 `backend/data/sessions/` → `initialize_database()` 或 `alembic upgrade head` → 迁移 `--dry-run` 后再 `--apply` → API → Worker（至少 1 个，推荐 2 个验租约）→ 前端 `build` / `start` → `GET /health`、`GET /health/detail`。
+- 手工部署顺序：`python scripts/backup_restore.py backup`（一致性备份 + manifest） → `initialize_database()` 或 `alembic upgrade head` → 迁移 `--dry-run` 后再 `--apply` → API → Worker（至少 1 个，推荐 2 个验租约）→ 前端 `build` / `start` → `GET /health`、`GET /health/detail`。
 
 ## 6. 已知限制与后续
 
@@ -93,7 +93,7 @@
 ## 7. 如何复跑验收
 
 ```bash
-# 后端全量（693）
+# 后端全量（697）
 cd backend && ../.venv/Scripts/python.exe -m unittest discover -s tests
 
 # 前端类型、用例、构建、冒烟

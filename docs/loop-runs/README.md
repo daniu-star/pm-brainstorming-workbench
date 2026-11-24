@@ -171,7 +171,13 @@
 | 「发消息一直没反应」无法定位：命令先落库排队等 Worker 领取，Worker 没起来时命令只会排队到 `QUEUE_TIMEOUT`（10 分钟）才失败；而 `/health/detail` 只报 `running_runs/queued_runs`，看不错「有排队但没人领」 | `/health/detail` 的 `worker` 块增加 `heartbeat_age_seconds` / `stalled` / `hint`：有排队任务且（无 running 或心跳超过 120s）即判 `stalled=true`，顶层 `status` 同步降级为 `degraded`，`hint` 直接给出 `start.bat` / `python -m workers.run_worker`；抽出纯函数 `_worker_stall_hint` 便于单测 | `tests/test_health_detail.py` 3 例（工作块一致性、stalled 判定 5 种输入、心跳时间解析容错） |
 | 排队状态对用户不可见：前端聊天区只显示消息条数，任务排队时用户不知道是「系统在忙」还是「Worker 没启动」，只能反复点发送 | `frontend/lib/chatNotices.ts` 新增 `queuedRunHint(runs, sessionId, {nowMs, thresholdSeconds=45})`（按最早排队 Run 的 `createdAt` 计时）；`ChatPanel` 只在存在 queued Run 时启动 5s tick，超阈值渲染灰色状态条「任务已排队 N 秒，Worker 可能未启动：请运行 start.bat…」 | `frontend/tests/chat-notices.test.cjs` 新增 5 例（未超阈值不提示、超阈值提示含命令、多任务按最早计时、跨会话/非排队/缺时间不提示）；`npm test` 254 pass + `tsc --noEmit` 0 错 |
 
-当前基线：**后端 693 用例 OK / 前端 254 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示**。
+## 第 21 批热修（发版备份 / 校验 / 恢复演练，2026-11-24）
+
+| 问题 | 修复 | 证据 |
+| --- | --- | --- |
+| 发版第一步「备份 `app.db` + `data/sessions/`」只有手工 `copy` 的建议：库正被 Worker 写入时 `copy` 可能拿到半页状态；备份是否可用也从没演练过，真出事才发现缺表/损坏 | 新增 `scripts/backup_restore.py`：`backup` 用 SQLite online backup API（写入进行中也能拿一致性快照）+ 复制 `data/sessions/` + 写 `manifest.json`（db sha256/字节数/逐表计数/JSON 指纹），支持 `--keep N` 轮转；`verify` 校验哈希/manifest 计数/`integrity_check`/外键；`drill` 把备份恢复到临时目录、`initialize_database()` 后逐个会话走 `get_session` + `list_session_runs` 读路径 | 实测：`BACKUP_OK`（585,728 字节 / 19 个 JSON 文件）→ `VERIFY_OK sessions=14 messages=25 runs=25 integrity=ok fk=0` → `RESTORE_DRILL_OK sessions=14 readable_sessions=14`；命令已进 `docs/v4-release-checklist.md` 第 1 节；回归 `tests/test_backup_restore.py` 4 例（备份后 manifest 计数一致、篡改后 verify 必须失败、drill 恢复后应用层可读、`--keep` 轮转）；期间修掉脚本自身缺陷：同一秒内连续备份会 `FileExistsError`（改为时间戳 + 序号后缀） |
+
+当前基线：**后端 697 用例 OK / 前端 254 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK`**。
 
 ## 运行方式
 
