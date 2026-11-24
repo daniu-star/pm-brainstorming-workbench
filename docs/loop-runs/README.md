@@ -143,7 +143,14 @@
 
 证据：`cd backend && ../.venv/Scripts/python.exe ../scripts/ac20_number_provenance.py` → `run_status=succeeded`、`claim_count=19`、`unverified_nodes=7`、`calls=8 / prompt=19460 / completion=5786`；报告 `docs/ac20-number-provenance.md`，人工核对结论 `docs/ac20-number-provenance.annotation.md`（无来源数字 100% 标注、有来源数字 100% 未误标、`evidence_refs` 未编造）。
 
-当前基线：**后端 682 用例 OK / 前端 249 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对）**。
+## 第 17 批热修（结项报告形状容错 + 真实模型报告路径验收，2026-11-24）
+
+| 问题 | 修复 | 证据 |
+| --- | --- | --- |
+| 结项报告 100% 落兜底：模型多输出 `type` 等元字段、`limitations` 写成数组，`StrictModel(extra="forbid")` 校验失败 → `build_fallback_report`，真实审计报告从不来自模型（旅程 `end_audit` 3 次调用 / 8,326 tokens 仍 `fallback`） | `ReportDraft` 增加 `@model_validator(mode="before")` 有界归一（白名单字段、数组/文本互相容错、长度上限仍生效）；`_report_instruction` 明确「不要额外字段、`limitations`/`summary` 为单字符串」 | `tests/test_audit_report_draft.py` 5 例；`scripts/audit_report_e2e.py` 真模型 `generated_by=model`（8,078 tokens）；`docs/audit-report-e2e.md` |
+| 缺一条「真实模型全链路」证据（clarify→brief→四角色→synthesis→审计→报告） | 新增 `scripts/full_journey_e2e.py`：7 步真模型旅程，输出产物/来源/成本表 | `docs/full-journey-e2e.md`：53,910 tokens、18 条论断、8 个分支、5 个未验证节点、审计 2 问 completed |
+
+当前基线：**后端 687 用例 OK / 前端 249 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model`**。
 
 ## 运行方式
 

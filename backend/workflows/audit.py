@@ -32,7 +32,7 @@ import json
 import time
 from typing import Any, Iterable, Sequence
 
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, model_validator
 
 from core.llm_client import LLMError
 from core.role_prompts import PROMPT_VERSION, build_role_messages
@@ -154,13 +154,50 @@ class AnswerDraft(StrictModel):
 
 
 class ReportDraft(StrictModel):
-    """结项报告的模型部分；无法确定的维度不得凭空补齐。"""
+    """结项报告的模型部分；无法确定的维度不得凭空补齐。
+
+    真实模型常在同一份报告里带出多余字段（如 ``type``），或把
+    ``limitations`` 写成字符串数组、把数组字段写成单个字符串 —— 这些都属于
+    「形状偏差」而不是语义错误，直接判失败会让每次真实审计都落到确定性兜底报告
+    （第 17 批实测：end_audit 三次调用后 ``generated_by=fallback``）。因此这里在
+    校验前做**有界**归一：只保留白名单字段、把数组/字符串互相纠偏，其余仍交给
+    pydantic 严格校验（长度上限不变）。
+    """
 
     supported_points: list[str] = Field(default_factory=list, max_length=16)
     unresolved_gaps: list[str] = Field(default_factory=list, max_length=16)
     recommended_experiments: list[str] = Field(default_factory=list, max_length=8)
     limitations: str = Field(default="", max_length=2000)
     summary: str = Field(default="", max_length=4000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _tolerate_shape_drift(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        allowed = {name for name in cls.model_fields}
+        cleaned = {key: value for key, value in data.items() if key in allowed}
+        for key in ("supported_points", "unresolved_gaps", "recommended_experiments"):
+            value = cleaned.get(key)
+            if isinstance(value, str):
+                cleaned[key] = [value.strip()] if value.strip() else []
+            elif value is None:
+                cleaned[key] = []
+            elif isinstance(value, (list, tuple)):
+                cleaned[key] = [
+                    str(item).strip() for item in value if str(item).strip()
+                ]
+        for key in ("limitations", "summary"):
+            value = cleaned.get(key)
+            if isinstance(value, (list, tuple)):
+                cleaned[key] = "；".join(
+                    str(item).strip() for item in value if str(item).strip()
+                )
+            elif value is None:
+                cleaned[key] = ""
+            elif not isinstance(value, str):
+                cleaned[key] = str(value)
+        return cleaned
 
 
 # --------------------------------------------------------------------------- #
@@ -1159,9 +1196,11 @@ def _report_instruction(
     lines.extend(
         [
             "",
-            "请输出 JSON：supported_points（只保留有证据支撑的结论，最多 16 条）/ "
-            "unresolved_gaps（最多 16 条）/ recommended_experiments（最多 8 条）/ "
-            "limitations（本次审计的局限，<=2000 字）/ summary（给用户的中文总结，<=4000 字）。",
+            "只输出一个 JSON 对象，不要 markdown 代码块，也不要额外字段。字段必须是："
+            "supported_points（字符串数组，只保留有证据支撑的结论，最多 16 条）/ "
+            "unresolved_gaps（字符串数组，最多 16 条）/ recommended_experiments（字符串数组，最多 8 条）/ "
+            "limitations（**单个字符串**，本次审计的局限，<=2000 字）/ "
+            "summary（**单个字符串**，给用户的中文总结，<=4000 字）。",
             "不得凭空补齐未讨论维度的评价；若没有任何 supported 结论，supported_points 必须为空数组。",
         ]
     )

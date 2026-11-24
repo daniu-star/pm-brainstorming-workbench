@@ -25,9 +25,9 @@
 ## 2. 实际执行的验证命令与结果
 
 ```bash
-# 后端全量（682 用例，含 M2/M3 + QA Loop 收口 + 闭环/数据生命周期/崩溃注入/旧 ID 别名/AC-14 多失败重试/AC-10 预算预留热修/AC-20 数字守卫新增用例）
+# 后端全量（687 用例，含 M2/M3 + QA Loop 收口 + 闭环/数据生命周期/崩溃注入/旧 ID 别名/AC-14 多失败重试/AC-10 预算预留热修/AC-20 数字守卫/结项报告形状容错新增用例）
 cd backend && ../.venv/Scripts/python.exe -m unittest discover -s tests
-# → Ran 682 tests / OK / exit 0（含 tests/test_audit_runner.py 的 3 个真 runner 审计用例、tests/test_control_crash.py 的 3 个真 kill/restart 用例、tests/test_session_alias.py 的 6 个旧 ID 别名用例、tests/test_brainstorm_runner.py 的 AC-14 多失败重试用例、tests/test_budget_crash.py 的 4 个预算预留崩溃用例、tests/test_number_guard.py 的 18 个数字可追溯性用例、tests/test_evidence_guard.py 的 3 个「#seq → 真实消息 ID」规范化用例）
+# → Ran 687 tests / OK / exit 0（含 tests/test_audit_report_draft.py 的 5 个报告形状容错用例、tests/test_audit_runner.py 的 3 个真 runner 审计用例、tests/test_control_crash.py 的 3 个真 kill/restart 用例、tests/test_session_alias.py 的 6 个旧 ID 别名用例、tests/test_brainstorm_runner.py 的 AC-14 多失败重试用例、tests/test_budget_crash.py 的 4 个预算预留崩溃用例、tests/test_number_guard.py 的 18 个数字可追溯性用例、tests/test_evidence_guard.py 的 3 个「#seq → 真实消息 ID」规范化用例）
 
 # 跨进程（真 subprocess + 共享 SQLite）
 cd backend && ../.venv/Scripts/python.exe -m unittest tests.test_run_repo tests.test_cross_process
@@ -147,7 +147,9 @@ cd backend && ../.venv/Scripts/python.exe ../scripts/ac20_number_provenance.py
 13. **推理型模型的 completion 预算问题 — 已解决（第 16 批，AC-20 真模型联调发现）**：`deepseek-flash` 会把 `max_tokens` 先花在 `reasoning_content` 上，导致结构化输出的 `content` 为空（实测 1500 tokens 全为 reasoning、`content=""`、耗时 16s），四角色因此全部 `MODEL_OUTPUT_INVALID`。修复：`Settings.llm_disable_reasoning`（默认 `True`，`LLM_DISABLE_REASONING=false` 可关闭）→ `LLMClient._reasoning_extra_body()` 对含 `deepseek` 的模型发送 `extra_body={"thinking": {"type": "disabled"}}`（实测 completion 1500→380、content 恢复）；同时 `SCHEMA_REMINDER` 在对话末尾复述精确字段名与长度上限（display_text ≤320 字、claims 3–5 条、每条 ≤100 字），把单角色输出压到 ~750–1050 tokens。覆盖 `test_context_builder.py` / `test_brainstorm.py`（48 例）。
 
 14. **供应商不支持 `json_schema` → 自动降级并缓存结论；模型会写 `#seq` 序号引用 — 已解决（第 16 批）**：`https://api.deepseek.com/v1` 对 `response_format={"type": "json_schema"}` 返回 400（`This response_format type is unavailable now`），原实现每次调用都先吃一次 400 再降级，四角色即白花 4 次上游调用并触发 `BUDGET_EXCEEDED`；现 `LLMClient._json_schema_supported` 缓存「该供应商不支持」，同进程后续直接走 `json_object`（`test_llm_client.py::test_json_schema_downgrade_is_cached_per_client`）。另外上下文把消息渲染成 `[#seq]`，模型会把 `#3` 写进 `source_message_ids` 而被归属校验拒绝；现 `evidence_guard.normalize_message_refs` + `session_repo.list_session_message_refs` 把序号确定性解析为本会话真实消息 ID（只映射本会话，映射不到仍拒绝），覆盖 `test_evidence_guard.py::NormalizeMessageRefsTests`(3)。
-13. **本机 8000 端口运行旧进程**：手工验证 `/api/v2` 前需重启后端；前端已做 404→legacy 回落。
+15. **本机 8000 端口运行旧进程**：手工验证 `/api/v2` 前需重启后端；前端已做 404→legacy 回落。
+
+16. **结项报告曾 100% 落兜底 — 已解决（第 17 批，完整用户旅程真模型联调发现）**：`workflows/audit.py::ReportDraft` 继承 `StrictModel`（`extra="forbid"`），模型常额外输出 `type` 之类的元字段、并把 `limitations` 写成数组，于是 `_structured` 里 `model_validate` 抛 `ValidationError`，回喂一次仍失败 → `build_fallback_report`，真实报告（`supported_points`/`unresolved_gaps`）从不落模型路径（旅程里 `end_audit` 已花 3 次调用、8326 tokens 仍 `generated_by=fallback`）。修复：`ReportDraft` 加 `@model_validator(mode="before")` 有界归一（只保留声明的字段；数组字段接受单字符串/None/list；文本字段接受 list 合并/None/强转 str；长度上限仍由 `max_length` 强制），并在 `_report_instruction` 末尾明确「不要额外字段、`limitations`/`summary` 是单个字符串」。覆盖 `tests/test_audit_report_draft.py` 5 例 + 真实模型验收 `scripts/audit_report_e2e.py`（`generated_by=model`、`unresolved_gaps=9`、成本 8,078 tokens）。
 
 ## 5. NFR（§9）抽查
 
@@ -161,7 +163,7 @@ cd backend && ../.venv/Scripts/python.exe ../scripts/ac20_number_provenance.py
 ## 6. 结论
 
 - M1（WP-00～05）、M2（WP-06～08）、M3（WP-09）与 WP-10 的发布件（CI、迁移演练、健康诊断、前端 e2e 冒烟）均已交付。
-- 真实执行结果：后端 **682 用例 OK**、前端 **249 用例 pass** + `tsc` 0 错 + `build` 成功、`test:e2e` 1 pass、真实浏览器 E2E **AC-01/19/31/33 全部 PASS**（CDP，零新依赖，7 张截图）、跨进程 6 用例 OK + 崩溃注入 3 用例 OK、旧 ID 别名 6 用例 OK、AC-14 多失败重试 1 用例 OK、预算预留崩溃 4 用例 OK、真 Worker 审计端到端 **30 项 ALL PASS**、迁移演练 **DRILL_OK**、新构建回滚演练 **ROLLBACK_DRILL_OK**（临时副本上模拟坏构建→回滚：注入的排队任务仍可被领取、消息/任务计数不变、`integrity_check=ok`、`data/sessions` JSON 指纹不变）、AC-20 数字可追溯性真模型端到端（19 条论断中 7 个无来源数字节点全部被标注，人工核对）。
+- 真实执行结果：后端 **687 用例 OK**、前端 **249 用例 pass** + `tsc` 0 错 + `build` 成功、`test:e2e` 1 pass、真实浏览器 E2E **AC-01/19/31/33 全部 PASS**（CDP，零新依赖，7 张截图）、跨进程 6 用例 OK + 崩溃注入 3 用例 OK、旧 ID 别名 6 用例 OK、AC-14 多失败重试 1 用例 OK、预算预留崩溃 4 用例 OK、真 Worker 审计端到端 **30 项 ALL PASS**、迁移演练 **DRILL_OK**、新构建回滚演练 **ROLLBACK_DRILL_OK**（临时副本上模拟坏构建→回滚：注入的排队任务仍可被领取、消息/任务计数不变、`integrity_check=ok`、`data/sessions` JSON 指纹不变）、AC-20 数字可追溯性真模型端到端（19 条论断中 7 个无来源数字节点全部被标注，人工核对）、完整用户旅程真模型端到端 **53,910 tokens / 18 条论断 / 8 个分支 / 5 个未验证节点**（`scripts/full_journey_e2e.py` → `docs/full-journey-e2e.md`）、结项报告真实模型路径 **`generated_by=model`**（`scripts/audit_report_e2e.py` → `docs/audit-report-e2e.md`）。
 - AC 统计（按 §3 表）：**通过 42 条**（AC-01 … AC-42 全部）、**部分通过 0 条**、**未实现 0 条**。
 - 无未闭合验收项：AC-20 已由真模型端到端 + 人工标注覆盖（第 16 批），AC-34 由回滚演练覆盖（第 15 批）。仍未纳入自动化 CI 的是「真模型调用类」与「真浏览器/回滚演练」验收（需本机 Chrome、需消耗模型额度、需独占 8001/3001 栈），各自都有可复现命令与留痕；未通过修改期望值或预填结果取得任何「通过」。
 
