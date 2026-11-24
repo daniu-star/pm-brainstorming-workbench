@@ -71,3 +71,32 @@ export function displayChatError(
   if (!failure) return null;
   return failure.errorMessage ?? "上一次任务执行失败，可重试上一步";
 }
+
+/**
+ * 排队过久提示（可观测性 → 用户可见）。
+ *
+ * 背景：命令先落库再等 Worker 领取（ADR-04）。Worker 没起来时命令只会一直排队，
+ * 用户看到的是「点了没反应」，直到 QUEUE_TIMEOUT（10 分钟）才失败——这段时间
+ * 没有任何提示。这里按 ``run.queued`` 事件的 createdAt 计时，超过阈值就明确
+ * 告诉用户「大概率是 Worker 没启动」，并给出可执行的命令。
+ */
+export function queuedRunHint(
+  runs: Record<string, ChatRunFailure | undefined>,
+  sessionId: string | null | undefined,
+  options: { nowMs?: number; thresholdSeconds?: number } = {}
+): string | null {
+  if (!sessionId) return null;
+  const nowMs = options.nowMs ?? Date.now();
+  const thresholdSeconds = options.thresholdSeconds ?? 45;
+  let earliest = Number.POSITIVE_INFINITY;
+  for (const run of Object.values(runs)) {
+    if (!run || run.status !== "queued" || run.sessionId !== sessionId) continue;
+    const createdMs = run.createdAt ? Date.parse(run.createdAt) : Number.NaN;
+    if (!Number.isFinite(createdMs)) continue;
+    if (createdMs < earliest) earliest = createdMs;
+  }
+  if (!Number.isFinite(earliest)) return null;
+  const waitedSeconds = Math.max(0, Math.round((nowMs - earliest) / 1000));
+  if (waitedSeconds < thresholdSeconds) return null;
+  return `任务已排队 ${waitedSeconds} 秒，Worker 可能未启动：请运行 start.bat，或在 backend 目录执行 python -m workers.run_worker`;
+}

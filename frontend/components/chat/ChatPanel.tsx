@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useSessionStore } from "@/store/sessionStore";
-import { displayChatError, latestChatFailure, latestPartialBrainstormRun } from "@/lib/chatNotices";
+import { displayChatError, latestChatFailure, latestPartialBrainstormRun, queuedRunHint } from "@/lib/chatNotices";
 import { shouldShowStartDiscussion } from "@/lib/phaseRouter";
 import { MessageList } from "./MessageList";
 import { RoleSelector } from "./RoleSelector";
@@ -31,6 +31,8 @@ export function ChatPanel() {
   const [discussionRequested, setDiscussionRequested] = useState(false);
   // 部分成功提示条被用户手动关闭的 Run（按 runId 记，换会话/换 Run 自动重新出现）
   const [dismissedPartialRunId, setDismissedPartialRunId] = useState<string | null>(null);
+  // 排队计时：只在真的有 queued Run 时才启动定时器（5s tick），避免无意义重渲染
+  const [queuedNowMs, setQueuedNowMs] = useState(() => Date.now());
 
   useEffect(() => {
     setDiscussionRequested(false);
@@ -84,6 +86,18 @@ export function ChatPanel() {
   };
   // 部分成功的脑暴 Run：有专家本轮失败（AC-14），给「重试失败专家」入口；
   // 它不是失败，不能塞进错误条（会显示空错误文案），单独用琥珀色提示条。
+  const hasQueuedRun = Object.values(runs).some(
+    (run) => run.sessionId === currentSessionId && run.status === "queued"
+  );
+  useEffect(() => {
+    if (!hasQueuedRun) return;
+    setQueuedNowMs(Date.now());
+    const timer = setInterval(() => setQueuedNowMs(Date.now()), 5000);
+    return () => clearInterval(timer);
+  }, [hasQueuedRun]);
+  // Worker 没起来时命令会一直排队：超过 45s 明确提示可执行的启动命令
+  const queuedHint = queuedRunHint(runs, currentSessionId, { nowMs: queuedNowMs });
+
   const partialBrainstormRunId = latestPartialBrainstormRun(runs, currentSessionId);
   const showPartialBrainstorm =
     partialBrainstormRunId !== null && partialBrainstormRunId !== dismissedPartialRunId;
@@ -187,6 +201,15 @@ export function ChatPanel() {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
             </button>
           </span>
+        </div>
+      )}
+
+      {queuedHint && (
+        <div
+          role="status"
+          className="mx-3 mt-2 px-3 py-2 bg-zinc-800/60 border border-zinc-700/60 rounded-xl text-zinc-300 text-sm break-words"
+        >
+          {queuedHint}
         </div>
       )}
 

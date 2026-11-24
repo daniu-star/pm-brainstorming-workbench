@@ -1,12 +1,12 @@
 # V4.0 发布就绪清单（WP-10）
 
 - 分支：`feat/prd-v4-m1`；对应 PRD：`docs/superpowers/specs/2026-11-18-pm-brainstorm-agent-architecture-prd-v4.md`
-- 验收记录：`docs/v4-acceptance-report.md`（690 后端用例 / 249 前端用例 / 契约 parity 13 / 跨进程 6 + 崩溃注入 3 + 预算崩溃 4 / 真 Worker E2E 30 项 + Loop 闭环 29 项 / 迁移演练 / 回滚演练（AC-34，`scripts/ac34_rollback_drill.py`）/ 真实浏览器 E2E AC-01/19/31/33（docs/browser-qa.md + docs/browser-qa/e2e/ 7 张截图）/ AC-20 数字可追溯性真模型端到端（`scripts/ac20_number_provenance.py` + `docs/ac20-number-provenance.md`） / 完整用户旅程真模型端到端（`scripts/full_journey_e2e.py` + `docs/full-journey-e2e.md`） / 结项报告真实模型路径（`scripts/audit_report_e2e.py` + `docs/audit-report-e2e.md`，含报告摘要落库）；文档索引见 docs/README.md；QA Loop 记录见 docs/qa-loop-runs/README.md，多角色 Loop 记录见 docs/loop-runs/README.md）
+- 验收记录：`docs/v4-acceptance-report.md`（693 后端用例 / 254 前端用例 / 契约 parity 13 / 跨进程 6 + 崩溃注入 3 + 预算崩溃 4 / 真 Worker E2E 30 项 + Loop 闭环 29 项 / 迁移演练 / 回滚演练（AC-34，`scripts/ac34_rollback_drill.py`）/ 真实浏览器 E2E AC-01/19/31/33（docs/browser-qa.md + docs/browser-qa/e2e/ 7 张截图）/ AC-20 数字可追溯性真模型端到端（`scripts/ac20_number_provenance.py` + `docs/ac20-number-provenance.md`） / 完整用户旅程真模型端到端（`scripts/full_journey_e2e.py` + `docs/full-journey-e2e.md`） / 结项报告真实模型路径（`scripts/audit_report_e2e.py` + `docs/audit-report-e2e.md`，含报告摘要落库）；文档索引见 docs/README.md；QA Loop 记录见 docs/qa-loop-runs/README.md，多角色 Loop 记录见 docs/loop-runs/README.md）
 
 ## 1. 发布前必须通过的命令
 
 ```bash
-# 后端（690 用例，含 Loop Studio 65 项 + 数据生命周期/预算档位/审计并发 13 项；第 9 批删 v1 死代码 27 例，新增引用归属 7 + 崩溃注入 3；第 10 批新增旧 ID 别名 6；第 11 批新增 AC-14 多失败重试 1；第 12 批新增 AC-10 预算预留崩溃 4；第 16 批新增 AC-20 数字守卫 18 + 序号引用规范化 3 + json_schema 降级缓存 1；第 17 批新增结项报告形状容错 5；第 18 批新增报告摘要断言 + health/detail 模型层诊断 3）
+# 后端（693 用例，含 Loop Studio 65 项 + 数据生命周期/预算档位/审计并发 13 项；第 9 批删 v1 死代码 27 例，新增引用归属 7 + 崩溃注入 3；第 10 批新增旧 ID 别名 6；第 11 批新增 AC-14 多失败重试 1；第 12 批新增 AC-10 预算预留崩溃 4；第 16 批新增 AC-20 数字守卫 18 + 序号引用规范化 3 + json_schema 降级缓存 1；第 17 批新增结项报告形状容错 5；第 18 批新增报告摘要断言 + health/detail 模型层诊断 3；第 20 批新增 Worker 卡死诊断 3 + 前端排队提示 5）
 cd backend && ../.venv/Scripts/python.exe -m unittest discover -s tests
 
 # 前端类型检查 + 逻辑用例 + 生产构建 + 冒烟 e2e
@@ -46,7 +46,7 @@ CI 配置见 `.github/workflows/ci.yml`（backend：安装依赖 → 全量测�
 4. **启动 API**：`uvicorn main:app --host 0.0.0.0 --port 8000`（`backend/` 为工作目录，`backend/.env` 提供配置）。
 5. **启动 Worker**（独立进程，至少 1 个；推荐 2 个验证租约）：`python -m workers.run_worker`；调试用 `--once`。
 6. **前端**：`cd frontend && npm ci && npm run build && npm start`（或静态导出部署）；`NEXT_PUBLIC_API_URL` 指向 API。
-7. **健康检查**：`GET /health`、`GET /health/detail`（`worker.running_runs/queued_runs/last_heartbeat_at`；DB 不可用时 `status=degraded`）。
+7. **健康检查**：`GET /health`、`GET /health/detail`（`worker.running_runs/queued_runs/last_heartbeat_at`；DB 不可用、或「有排队任务但 Worker 无心跳」时 `status=degraded` 且 `worker.stalled=true` + `worker.hint` 给出启动命令）。
 
 ## 3. 发布后验证（手工 5 分钟）
 

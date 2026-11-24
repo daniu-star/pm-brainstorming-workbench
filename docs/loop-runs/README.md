@@ -164,7 +164,14 @@
 | 文档没有总索引：根 `README.md` 平铺十余条，`docs/` 下 17 个条目（含 5 个子目录）只能靠猜，新读者不知道先读哪份、哪份已过期 | 新增 `docs/README.md`：按「发布与验收 / 架构与接口 / 运行与真实链路证据 / 逐批记录 / 历史审计」五组，表格列「文档 / 内容 / 何时读」；根 `README.md` 的 `### 文档` 段改为索引指针 + 最常用 8 条 | `docs/README.md`（5 组 17 条 + 维护约定）、`README.md` |
 | 文档引用会腐烂：已删除的 v1 模块（`~~backend/db/session_store.py~~` 等）、改名后的截图路径仍以「现存文件」形式出现在文档里，人工 review 逐条点不现实 | 新增 `scripts/verify_docs_refs.py`（零依赖）：扫 `docs/**/*.md` + `README.md`/`AGENTS.md`，校验 Markdown 链接与反引号里的仓库路径；支持花括号展开 `{a,b}.py`、剥离 `::name` 与 `:12-30` 行号、跳过 `~~删除线~~`、已删除模块白名单、唯一 basename 兜底；默认报告模式、`--strict` 失败 | 实测 25 个文件 / 601 条引用 / 0 断链；坏引用注入探针同时命中 `[code]` 与 `[link]`；已接入 CI（backend job 的 `docs reference check` 步骤） |
 
-当前基线：**后端 690 用例 OK / 前端 249 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入）**。
+## 第 20 批热修（Worker 卡死可见 + 排队提示，2026-11-24）
+
+| 问题 | 修复 | 证据 |
+| --- | --- | --- |
+| 「发消息一直没反应」无法定位：命令先落库排队等 Worker 领取，Worker 没起来时命令只会排队到 `QUEUE_TIMEOUT`（10 分钟）才失败；而 `/health/detail` 只报 `running_runs/queued_runs`，看不错「有排队但没人领」 | `/health/detail` 的 `worker` 块增加 `heartbeat_age_seconds` / `stalled` / `hint`：有排队任务且（无 running 或心跳超过 120s）即判 `stalled=true`，顶层 `status` 同步降级为 `degraded`，`hint` 直接给出 `start.bat` / `python -m workers.run_worker`；抽出纯函数 `_worker_stall_hint` 便于单测 | `tests/test_health_detail.py` 3 例（工作块一致性、stalled 判定 5 种输入、心跳时间解析容错） |
+| 排队状态对用户不可见：前端聊天区只显示消息条数，任务排队时用户不知道是「系统在忙」还是「Worker 没启动」，只能反复点发送 | `frontend/lib/chatNotices.ts` 新增 `queuedRunHint(runs, sessionId, {nowMs, thresholdSeconds=45})`（按最早排队 Run 的 `createdAt` 计时）；`ChatPanel` 只在存在 queued Run 时启动 5s tick，超阈值渲染灰色状态条「任务已排队 N 秒，Worker 可能未启动：请运行 start.bat…」 | `frontend/tests/chat-notices.test.cjs` 新增 5 例（未超阈值不提示、超阈值提示含命令、多任务按最早计时、跨会话/非排队/缺时间不提示）；`npm test` 254 pass + `tsc --noEmit` 0 错 |
+
+当前基线：**后端 693 用例 OK / 前端 254 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示**。
 
 ## 运行方式
 

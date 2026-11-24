@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 
 const build = path.join(__dirname, "..", "node_modules", ".cache", "test-build");
-const { displayChatError, latestChatFailure, latestPartialBrainstormRun } = require(
+const { displayChatError, latestChatFailure, latestPartialBrainstormRun, queuedRunHint } = require(
   path.join(build, "lib", "chatNotices.js")
 );
 
@@ -84,4 +84,49 @@ test("没有会话或没有部分成功任务时入口不出现", () => {
   assert.equal(latestPartialBrainstormRun({ run_1: partial() }, null), null);
   assert.equal(latestPartialBrainstormRun({}, "s1"), null);
   assert.equal(latestPartialBrainstormRun({ run_1: run() }, "s1"), null);
+});
+
+const queued = (overrides) => ({
+  sessionId: "s1",
+  action: "clarify",
+  status: "queued",
+  errorMessage: null,
+  createdAt: "2026-11-24T10:00:00Z",
+  ...overrides,
+});
+
+test("排队未超过阈值时不给提示", () => {
+  const nowMs = Date.parse("2026-11-24T10:00:10Z");
+  assert.equal(queuedRunHint({ run_1: queued() }, "s1", { nowMs }), null);
+});
+
+test("排队超过阈值时提示 Worker 可能未启动并给出可执行命令", () => {
+  const nowMs = Date.parse("2026-11-24T10:01:30Z");
+  const value = queuedRunHint({ run_1: queued() }, "s1", { nowMs });
+  assert.ok(value);
+  assert.match(value, /任务已排队 90 秒/);
+  assert.match(value, /start\.bat/);
+  assert.match(value, /python -m workers\.run_worker/);
+});
+
+test("多条排队任务按最早那条计时", () => {
+  const nowMs = Date.parse("2026-11-24T10:02:00Z");
+  const runs = {
+    run_new: queued({ createdAt: "2026-11-24T10:01:50Z" }),
+    run_old: queued({ createdAt: "2026-11-24T10:00:00Z" }),
+  };
+  assert.match(queuedRunHint(runs, "s1", { nowMs }), /任务已排队 120 秒/);
+});
+
+test("别的会话、非排队状态、缺 createdAt 的 Run 都不触发提示", () => {
+  const nowMs = Date.parse("2026-11-24T11:00:00Z");
+  assert.equal(queuedRunHint({ run_1: queued({ sessionId: "s2" }) }, "s1", { nowMs }), null);
+  assert.equal(queuedRunHint({ run_1: queued({ status: "running" }) }, "s1", { nowMs }), null);
+  assert.equal(queuedRunHint({ run_1: queued({ createdAt: undefined }) }, "s1", { nowMs }), null);
+  assert.equal(queuedRunHint({}, "s1", { nowMs }), null);
+});
+
+test("没有会话时排队提示不出现", () => {
+  const nowMs = Date.parse("2026-11-24T11:00:00Z");
+  assert.equal(queuedRunHint({ run_1: queued() }, null, { nowMs }), null);
 });

@@ -141,18 +141,65 @@ def _service_status() -> dict:
     }
 
 
+WORKER_STALL_SECONDS = 120.0
+
+
+def _parse_iso_seconds(value: str | None) -> float | None:
+    """把 ``runs.heartbeat_at``（``%Y-%m-%dT%H:%M:%SZ``）转成 epoch 秒；解析失败返回 None。"""
+
+    if not value:
+        return None
+    from datetime import datetime
+
+    try:
+        return float(datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").timestamp())
+    except (TypeError, ValueError):
+        return None
+
+
+def _worker_stall_hint(
+    *, queued_runs: int, running_runs: int, heartbeat_age_seconds: float | None
+) -> str | None:
+    """有排队任务但没有 Worker 在跑/心跳过旧时的可操作提示（否则 None）。
+
+    历史故障：Worker 进程没起来时，命令只会一直排队到 QUEUE_TIMEOUT（10 分钟）才失败，
+    用户看到的是「点了没反应」。这里把「排队 + 无心跳」直接判成 stalled，
+    让 /health/detail 与监控能在几秒内定位，而不是等超时。
+    """
+
+    if queued_runs <= 0:
+        return None
+    if running_runs > 0 and heartbeat_age_seconds is not None:
+        if heartbeat_age_seconds <= WORKER_STALL_SECONDS:
+            return None
+        reason = f"最近心跳在 {int(heartbeat_age_seconds)} 秒前（阈值 {int(WORKER_STALL_SECONDS)} 秒）"
+    elif running_runs > 0:
+        reason = "有任务在跑但读不到心跳时间"
+    else:
+        reason = "没有任何 Worker 领取任务"
+    return (
+        f"{queued_runs} 个任务在排队但没有 Worker 在工作：{reason}。"
+        "请启动 Worker（start.bat，或在 backend 目录执行 python -m workers.run_worker）。"
+    )
+
+
 def _worker_status() -> dict:
     """Worker 实时状态（WP-10 可观测性）。
 
     只做只读聚合：未领取的排队数、正在执行的 run 数、最近一次心跳时间。
     心跳由 ``run_repo.claim_next_run``/``renew_lease`` 写入 ``runs.heartbeat_at``，
     因此它反映的是「真实有 Worker 在跑」而不只是进程存在。
+
+    第 20 批：增加 ``stalled``/``hint``——「排队中但没有 Worker」是最常见的
+    「发消息一直没反应」根因，必须能一眼看出来。
     """
 
     from sqlalchemy import func, select
 
     from repositories.database import new_session
     from repositories.database import RunRow
+
+    import time as _time
 
     db = new_session()
     try:
@@ -165,11 +212,31 @@ def _worker_status() -> dict:
         heartbeat = db.execute(
             select(func.max(RunRow.heartbeat_at)).where(RunRow.status == "running")
         ).scalar_one()
-        return {"db": True, "running_runs": int(running), "queued_runs": int(queued),
-                "last_heartbeat_at": heartbeat}
+        heartbeat_epoch = _parse_iso_seconds(heartbeat)
+        age = None if heartbeat_epoch is None else max(0.0, _time.time() - heartbeat_epoch)
+        hint = _worker_stall_hint(
+            queued_runs=int(queued), running_runs=int(running), heartbeat_age_seconds=age
+        )
+        return {
+            "db": True,
+            "running_runs": int(running),
+            "queued_runs": int(queued),
+            "last_heartbeat_at": heartbeat,
+            "heartbeat_age_seconds": None if age is None else round(age, 1),
+            "stalled": hint is not None,
+            "hint": hint,
+        }
     except Exception:  # pragma: no cover - 诊断接口不应让健康检查崩溃
         logger.exception("worker status unavailable")
-        return {"db": False, "running_runs": 0, "queued_runs": 0, "last_heartbeat_at": None}
+        return {
+            "db": False,
+            "running_runs": 0,
+            "queued_runs": 0,
+            "last_heartbeat_at": None,
+            "heartbeat_age_seconds": None,
+            "stalled": False,
+            "hint": None,
+        }
     finally:
         db.close()
 
@@ -201,7 +268,9 @@ async def health_detail(request: Request):
     services = _service_status()
     worker = _worker_status()
     return {
-        "status": "ok" if all(services.values()) and worker.get("db") else "degraded",
+        "status": "ok"
+        if all(services.values()) and worker.get("db") and not worker.get("stalled")
+        else "degraded",
         "services": {**services, "worker": bool(worker.get("db"))},
         "worker": worker,
         "budget_profile": (settings.llm_budget_profile or "standard"),
