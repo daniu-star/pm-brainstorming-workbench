@@ -11,6 +11,7 @@
 每轮顺序：``recover_expired_leases`` → ``requeue_interrupted`` →
 ``expire_queued_runs`` → ``reconcile_control_intents``（审计结束/取消的回执）→
 ``compact_events``（每小时一次，清理 7 天前已终结 Run 的历史事件）→
+``prune_idempotency`` / ``prune_expired_codes``（每 6 小时一次，清掉过窗的幂等记录与过期验证码）→
 检查运行中数量 → ``claim_next_run`` → ``execute_run``。
 收到 SIGINT 后停止领取新任务，等待当前 Run 执行完再退出。
 """
@@ -92,6 +93,7 @@ class RunWorker:
         self._stop = threading.Event()
         self.processed = 0
         self._last_compaction = 0.0
+        self._last_maintenance = 0.0
 
     # -- 生命周期 ---------------------------------------------------------- #
 
@@ -166,6 +168,32 @@ class RunWorker:
                     logger.info(
                         "event=worker.compacted worker=%s events=%d cutoff=%s",
                         self.worker_id, compacted, cutoff_iso,
+                    )
+            # 维护性清理：幂等记录与过期验证码只增不减，长期运行会把库撑大（没有读者）。
+            # 与事件压缩同一模式：按间隔触发、失败只记日志，绝不阻塞任务执行。
+            if now_epoch - self._last_maintenance >= C.MAINTENANCE_INTERVAL_SECONDS:
+                from repositories import auth_repo
+
+                try:
+                    pruned_idempotency = int(
+                        run_repo.prune_idempotency(
+                            db, before_iso=_iso_days_ago(C.IDEMPOTENCY_RETENTION_DAYS)
+                        )
+                    )
+                    pruned_codes = int(
+                        auth_repo.prune_expired_codes(db, now_epoch=now_epoch)
+                    )
+                except Exception:  # pragma: no cover - 清理失败不应阻塞任务执行
+                    logger.exception(
+                        "event=worker.maintenance_failed worker=%s", self.worker_id
+                    )
+                    pruned_idempotency = 0
+                    pruned_codes = 0
+                self._last_maintenance = now_epoch
+                if pruned_idempotency or pruned_codes:
+                    logger.info(
+                        "event=worker.maintenance worker=%s idempotency=%d auth_codes=%d",
+                        self.worker_id, pruned_idempotency, pruned_codes,
                     )
             # 控制意图只登记、不回执（PRD FR-07）：在活跃 Run 上提交 end_audit / cancel_audit 时
             # 命令层只写 control 行，保留旧 Run 正常收尾；必须由 Worker 每轮扫描、在旧 Run 终结后

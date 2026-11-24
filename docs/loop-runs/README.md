@@ -177,7 +177,13 @@
 | --- | --- | --- |
 | 发版第一步「备份 `app.db` + `data/sessions/`」只有手工 `copy` 的建议：库正被 Worker 写入时 `copy` 可能拿到半页状态；备份是否可用也从没演练过，真出事才发现缺表/损坏 | 新增 `scripts/backup_restore.py`：`backup` 用 SQLite online backup API（写入进行中也能拿一致性快照）+ 复制 `data/sessions/` + 写 `manifest.json`（db sha256/字节数/逐表计数/JSON 指纹），支持 `--keep N` 轮转；`verify` 校验哈希/manifest 计数/`integrity_check`/外键；`drill` 把备份恢复到临时目录、`initialize_database()` 后逐个会话走 `get_session` + `list_session_runs` 读路径 | 实测：`BACKUP_OK`（585,728 字节 / 19 个 JSON 文件）→ `VERIFY_OK sessions=14 messages=25 runs=25 integrity=ok fk=0` → `RESTORE_DRILL_OK sessions=14 readable_sessions=14`；命令已进 `docs/v4-release-checklist.md` 第 1 节；回归 `tests/test_backup_restore.py` 4 例（备份后 manifest 计数一致、篡改后 verify 必须失败、drill 恢复后应用层可读、`--keep` 轮转）；期间修掉脚本自身缺陷：同一秒内连续备份会 `FileExistsError`（改为时间戳 + 序号后缀） |
 
-当前基线：**后端 709 用例 OK / 前端 254 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（7 步 101s） / 磁盘清理脚本（报告 + `--apply`）**。
+## 第 24 批（维护性数据清理：幂等记录 + 过期验证码，2026-11-24）
+
+| 问题 | 修复 | 证据 |
+| --- | --- | --- |
+| `idempotency_records` 每条命令一行、`auth_codes` 每次登录一行，两者过期后都没有读者；长期运行会随使用量线性增长，把库撑大并拖慢索引 | 新增 `run_repo.prune_idempotency`（按 `created_at < now-7d`，单次上限 5000 行）与 `auth_repo.prune_expired_codes`（`expires_at < now`，单次 2000 行）；`RunWorker.tick()` 每 `MAINTENANCE_INTERVAL_SECONDS`（6 小时）调一次，异常只记日志、绝不阻塞任务执行（与事件压缩同一模式） | 新增 `backend/tests/test_worker_maintenance.py` 4 例（只清窗口外、单次上限 + 幂等、保留未过期验证码、tick 按间隔触发且第二轮跳过）；后端全量 713 用例 OK；`scripts/disk_cleanup.py` 报告可直接看到 `backend/data/app.db` 体积变化 |
+
+当前基线：**后端 713 用例 OK / 前端 254 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（7 步 101s） / 磁盘清理脚本（报告 + `--apply`）**。
 
 ## 第 22 批（发版前一键体检，2026-11-24）
 

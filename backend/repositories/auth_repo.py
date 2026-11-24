@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import hmac
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
@@ -33,6 +33,7 @@ __all__ = [
     "hit_rate_limit",
     "invalidate_codes",
     "issue_code",
+    "prune_expired_codes",
     "record_attempt",
     "verify_code",
 ]
@@ -223,3 +224,24 @@ def hit_rate_limit(
     )
     granted = db.execute(stmt).scalar_one_or_none()
     return granted is not None
+
+
+def prune_expired_codes(db: Session, *, now_epoch: int, limit: int = 2000) -> int:
+    """删除已过期的一次性验证码，返回删除行数。
+
+    验证码 10 分钟过期，过期后 ``verify_code`` 不会再读它；不清理时每次登录都会留一行。
+    只删 ``expires_at < now_epoch`` 的行，未过期（含刚签发）的一行不动。
+    """
+
+    cutoff = int(now_epoch)
+    result = db.execute(
+        delete(AuthCodeRow)
+        .where(
+            AuthCodeRow.id.in_(
+                select(AuthCodeRow.id)
+                .where(AuthCodeRow.expires_at < cutoff)
+                .limit(max(1, int(limit)))
+            )
+        )
+    )
+    return int(result.rowcount or 0)

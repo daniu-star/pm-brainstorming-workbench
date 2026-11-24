@@ -47,6 +47,12 @@ QUEUE_WAIT_LIMIT_SECONDS = 600
 EVENT_RETENTION_DAYS = 7
 EVENT_COMPACT_INTERVAL_SECONDS = 3600
 
+#: 幂等记录保留天数（PRD §5.3 原写 30 天；这里按「可重放窗口」收紧到 7 天，
+#: 因为客户端只会在秒级窗口内重试同一 request_id，7 天足以覆盖跨天故障排查）。
+IDEMPOTENCY_RETENTION_DAYS = 7
+#: 维护性清理（幂等记录 / 过期验证码）的触发间隔，默认 6 小时。
+MAINTENANCE_INTERVAL_SECONDS = 6 * 3600
+
 # FR-08 预算档位：只允许在默认限额基础上**收紧**，用于低成本环境（如个人额度）。
 # 通过环境变量 LLM_BUDGET_PROFILE=standard|lean|frugal 选择，写入 Run.budget_json 后可复现。
 BUDGET_PROFILE_STANDARD = "standard"

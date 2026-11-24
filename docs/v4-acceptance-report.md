@@ -25,9 +25,9 @@
 ## 2. 实际执行的验证命令与结果
 
 ```bash
-# 后端全量（709 用例，含 M2/M3 + QA Loop 收口 + 闭环/数据生命周期/崩溃注入/旧 ID 别名/AC-14 多失败重试/AC-10 预算预留热修/AC-20 数字守卫/结项报告形状容错新增用例）
+# 后端全量（713 用例，含 M2/M3 + QA Loop 收口 + 闭环/数据生命周期/崩溃注入/旧 ID 别名/AC-14 多失败重试/AC-10 预算预留热修/AC-20 数字守卫/结项报告形状容错/Worker 维护性清理新增用例）
 cd backend && ../.venv/Scripts/python.exe -m unittest discover -s tests
-# → Ran 709 tests / OK / exit 0（含 tests/test_health_detail.py 的 6 个诊断用例（模型层 3 + Worker 卡死 3）、tests/test_audit_report_draft.py 的 5 个报告形状容错用例、tests/test_audit_runner.py 的 3 个真 runner 审计用例、tests/test_control_crash.py 的 3 个真 kill/restart 用例、tests/test_session_alias.py 的 6 个旧 ID 别名用例、tests/test_brainstorm_runner.py 的 AC-14 多失败重试用例、tests/test_budget_crash.py 的 4 个预算预留崩溃用例、tests/test_number_guard.py 的 18 个数字可追溯性用例、tests/test_evidence_guard.py 的 3 个「#seq → 真实消息 ID」规范化用例）
+# → Ran 713 tests / OK / exit 0（含 tests/test_worker_maintenance.py 的 4 个维护清理用例（幂等记录 7 天窗口、过期验证码、按间隔触发）、tests/test_health_detail.py 的 6 个诊断用例（模型层 3 + Worker 卡死 3）、tests/test_audit_report_draft.py 的 5 个报告形状容错用例、tests/test_audit_runner.py 的 3 个真 runner 审计用例、tests/test_control_crash.py 的 3 个真 kill/restart 用例、tests/test_session_alias.py 的 6 个旧 ID 别名用例、tests/test_brainstorm_runner.py 的 AC-14 多失败重试用例、tests/test_budget_crash.py 的 4 个预算预留崩溃用例、tests/test_number_guard.py 的 18 个数字可追溯性用例、tests/test_evidence_guard.py 的 3 个「#seq → 真实消息 ID」规范化用例）
 
 # 跨进程（真 subprocess + 共享 SQLite）
 cd backend && ../.venv/Scripts/python.exe -m unittest tests.test_run_repo tests.test_cross_process
@@ -140,6 +140,7 @@ cd backend && ../.venv/Scripts/python.exe ../scripts/ac20_number_provenance.py
 7. **`MigrationRecord` 无 detail 列**：迁移细节写入 `warnings_json`。12-hex 旧 ID 的旧链接兼容 — 已解决（第 10 批）：`session_id_aliases` 表（`repositories/database.py::SessionIdAliasRow`）由迁移器在重映射时写入，`session_repo.resolve_session_id` 只读解析，`api/v2/common.py::require_owned_session` 在归属校验前解析别名；别名不参与写路径、不放宽权限、软删后同样 404。覆盖 `tests/test_session_alias.py` 6 例。
 8. **brainstorm 的 step 事件粒度**：role 步骤不写 `step.started`（只有顶层 `brainstorm.generate` 有，角色完成以 `role.completed` 表达）；预算中止时个别 role step 可能停留 running（run 仍 failed 且恰好一个终结事件）。最小调整：role step 也发 `step.started`，并在 `_force_terminal` 中把残留 running step 标 interrupted。
 9. **事件压缩作业 — 已解决（第 8 批）**：`repositories/run_repo.py::compact_events` 只删终态 Run 的旧事件并保留每 Run 最后一个（活动 Run 不动），`workers/run_worker.py` 每小时驱动一次且异常不阻塞任务；`api/sse.py::resolve_start_cursor` 按「第一个仍可回放的 seq」判定 410，`api/v2/runs.py` 取 `max(全局水位, 该 Run 最早保留)`。覆盖 `tests/test_data_lifecycle.py` 5 例。
+10. **维护性数据只增不减 — 已解决（第 24 批）**：`idempotency_records`（每条命令一行）与 `auth_codes`（每次登录一行）都没有过期读者；`run_repo.prune_idempotency`（按 `created_at` 清 7 天前）与 `auth_repo.prune_expired_codes`（按 `expires_at < now`）由 Worker 每 6 小时驱动一次，同样失败只记日志不阻塞任务。覆盖 `tests/test_worker_maintenance.py` 4 例。
 10. **未登录访问未知 `/api/v2/*` 返回 401 而非 404**：鉴权是中间件，在路由匹配前短路；PRD 未要求，前端已按 401/404 双兼容处理。
 11. **审计回答消息由命令层写入**：`command_service._submit_async` 在建 Run 前写 human 消息（stage=audit）并回填 `audit_questions.answer_message_id`，`workflows/audit.py` 只做评估与下一问。这是「用户消息+序号+Run+占位同事务」的必然结果，workflow 再写会双写，属设计说明而非偏差。
 12. **`audit_repo` 缺评估修订读取 API**：只有 `add_assessment_revision`，前端暂不需要评估修订历史；将来要展示时由 storage 补 `list_assessment_revisions`（只读）。
@@ -163,7 +164,7 @@ cd backend && ../.venv/Scripts/python.exe ../scripts/ac20_number_provenance.py
 ## 6. 结论
 
 - M1（WP-00～05）、M2（WP-06～08）、M3（WP-09）与 WP-10 的发布件（CI、迁移演练、健康诊断、前端 e2e 冒烟）均已交付。
-- 真实执行结果：后端 **709 用例 OK**、前端 **254 用例 pass** + `tsc` 0 错 + `build` 成功、`test:e2e` 1 pass、真实浏览器 E2E **AC-01/19/31/33 全部 PASS**（CDP，零新依赖，7 张截图）、跨进程 6 用例 OK + 崩溃注入 3 用例 OK、旧 ID 别名 6 用例 OK、AC-14 多失败重试 1 用例 OK、预算预留崩溃 4 用例 OK、真 Worker 审计端到端 **30 项 ALL PASS**、迁移演练 **DRILL_OK**、新构建回滚演练 **ROLLBACK_DRILL_OK**（临时副本上模拟坏构建→回滚：注入的排队任务仍可被领取、消息/任务计数不变、`integrity_check=ok`、`data/sessions` JSON 指纹不变）、AC-20 数字可追溯性真模型端到端（19 条论断中 7 个无来源数字节点全部被标注，人工核对）、完整用户旅程真模型端到端 **53,910 tokens / 18 条论断 / 8 个分支 / 5 个未验证节点**（`scripts/full_journey_e2e.py` → `docs/full-journey-e2e.md`）、结项报告真实模型路径 **`generated_by=model`**（`scripts/audit_report_e2e.py` → `docs/audit-report-e2e.md`）。
+- 真实执行结果：后端 **713 用例 OK**、幂等记录与过期验证码由 Worker 每 6 小时清理一次（4 用例）、前端 **254 用例 pass** + `tsc` 0 错 + `build` 成功、`test:e2e` 1 pass、真实浏览器 E2E **AC-01/19/31/33 全部 PASS**（CDP，零新依赖，7 张截图）、跨进程 6 用例 OK + 崩溃注入 3 用例 OK、旧 ID 别名 6 用例 OK、AC-14 多失败重试 1 用例 OK、预算预留崩溃 4 用例 OK、真 Worker 审计端到端 **30 项 ALL PASS**、迁移演练 **DRILL_OK**、新构建回滚演练 **ROLLBACK_DRILL_OK**（临时副本上模拟坏构建→回滚：注入的排队任务仍可被领取、消息/任务计数不变、`integrity_check=ok`、`data/sessions` JSON 指纹不变）、AC-20 数字可追溯性真模型端到端（19 条论断中 7 个无来源数字节点全部被标注，人工核对）、完整用户旅程真模型端到端 **53,910 tokens / 18 条论断 / 8 个分支 / 5 个未验证节点**（`scripts/full_journey_e2e.py` → `docs/full-journey-e2e.md`）、结项报告真实模型路径 **`generated_by=model`**（`scripts/audit_report_e2e.py` → `docs/audit-report-e2e.md`）。
 - AC 统计（按 §3 表）：**通过 42 条**（AC-01 … AC-42 全部）、**部分通过 0 条**、**未实现 0 条**。
 - 无未闭合验收项：AC-20 已由真模型端到端 + 人工标注覆盖（第 16 批），AC-34 由回滚演练覆盖（第 15 批）。仍未纳入自动化 CI 的是「真模型调用类」与「真浏览器/回滚演练」验收（需本机 Chrome、需消耗模型额度、需独占 8001/3001 栈），各自都有可复现命令与留痕；未通过修改期望值或预填结果取得任何「通过」。
 

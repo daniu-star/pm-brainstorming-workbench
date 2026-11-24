@@ -13,7 +13,7 @@ import logging
 import time
 from typing import Any, Sequence
 
-from sqlalchemy import tuple_, and_, func, or_, select, update
+from sqlalchemy import tuple_, and_, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from domain import state_machine as SM
@@ -957,3 +957,28 @@ def complete_idempotency(
     row.related_control_id = related_control_id
     db.flush()
     return row
+
+
+def prune_idempotency(db: Session, *, before_iso: str, limit: int = 5000) -> int:
+    """删除早于 ``before_iso`` 的幂等记录，返回删除行数。
+
+    幂等记录只在「客户端可能重试同一 request_id」的时间窗内有价值；不清理时它按命令
+    数量线性增长，长期运行会把库撑大而没有任何读者。单次最多删 ``limit`` 行，避免一次
+    长事务长时间持有 SQLite 写锁。
+    """
+
+    rows = list(
+        db.execute(
+            select(IdempotencyRow.owner_email, IdempotencyRow.request_id)
+            .where(IdempotencyRow.created_at < before_iso)
+            .limit(max(1, int(limit)))
+        )
+    )
+    if not rows:
+        return 0
+    result = db.execute(
+        delete(IdempotencyRow).where(
+            tuple_(IdempotencyRow.owner_email, IdempotencyRow.request_id).in_(rows)
+        )
+    )
+    return int(result.rowcount or 0)
