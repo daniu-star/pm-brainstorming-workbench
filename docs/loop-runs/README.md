@@ -157,7 +157,14 @@
 | 模型生成的 `summary` 被直接丢弃：`ReportDraft.summary` 有值，但 `AuditReport` 契约没有该字段，`_apply_report_draft` 也不透传 → 报告页只有维度/论据/缺口，没有一段话总结（白花输出 token） | `AuditReport` 增加 `summary`（≤4000 字）；`_apply_report_draft` 透传模型摘要、为空时回退兜底摘要；`build_fallback_report` 生成确定性摘要（问题数 + 已支撑/缺口/未讨论计数）；前端 `NormalizedReport.summary` + 「报告摘要」Section | `test_audit_workflow.py`（模型摘要原样落库、兜底摘要含计数）、`test_audit_runner.py`（closing Run 报告必须有摘要）、`frontend/tests/audit-page.test.cjs`（摘要归一化 2 处）；真模型 `scripts/audit_report_e2e.py`：`generated_by=model`、摘要 562 字、8,054 tokens |
 | 模型层问题不可诊断：`/health/detail` 只有服务/预算，出了「结构化输出为空」只能翻 `.env` | 新增 `llm` 诊断块（模型名、base_url 主机名、`disable_reasoning`、超时/重试）且不泄露 Key | `tests/test_health_detail.py` 3 例（字段存在 + 无 `sk-`/`api_key` + 未登录 401 + `_url_host` 只留主机名） |
 
-当前基线：**后端 690 用例 OK / 前端 249 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字）**。
+## 第 19 批热修（文档索引 + 引用体检，2026-11-24）
+
+| 问题 | 修复 | 证据 |
+| --- | --- | --- |
+| 文档没有总索引：根 `README.md` 平铺十余条，`docs/` 下 17 个条目（含 5 个子目录）只能靠猜，新读者不知道先读哪份、哪份已过期 | 新增 `docs/README.md`：按「发布与验收 / 架构与接口 / 运行与真实链路证据 / 逐批记录 / 历史审计」五组，表格列「文档 / 内容 / 何时读」；根 `README.md` 的 `### 文档` 段改为索引指针 + 最常用 8 条 | `docs/README.md`（5 组 17 条 + 维护约定）、`README.md` |
+| 文档引用会腐烂：已删除的 v1 模块（`~~backend/db/session_store.py~~` 等）、改名后的截图路径仍以「现存文件」形式出现在文档里，人工 review 逐条点不现实 | 新增 `scripts/verify_docs_refs.py`（零依赖）：扫 `docs/**/*.md` + `README.md`/`AGENTS.md`，校验 Markdown 链接与反引号里的仓库路径；支持花括号展开 `{a,b}.py`、剥离 `::name` 与 `:12-30` 行号、跳过 `~~删除线~~`、已删除模块白名单、唯一 basename 兜底；默认报告模式、`--strict` 失败 | 实测 25 个文件 / 601 条引用 / 0 断链；坏引用注入探针同时命中 `[code]` 与 `[link]`；已接入 CI（backend job 的 `docs reference check` 步骤） |
+
+当前基线：**后端 690 用例 OK / 前端 249 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入）**。
 
 ## 运行方式
 

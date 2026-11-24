@@ -1,7 +1,7 @@
 # V4.0 发布就绪清单（WP-10）
 
 - 分支：`feat/prd-v4-m1`；对应 PRD：`docs/superpowers/specs/2026-11-18-pm-brainstorm-agent-architecture-prd-v4.md`
-- 验收记录：`docs/v4-acceptance-report.md`（690 后端用例 / 249 前端用例 / 契约 parity 13 / 跨进程 6 + 崩溃注入 3 + 预算崩溃 4 / 真 Worker E2E 30 项 + Loop 闭环 29 项 / 迁移演练 / 回滚演练（AC-34，`scripts/ac34_rollback_drill.py`）/ 真实浏览器 E2E AC-01/19/31/33（docs/browser-qa.md + docs/browser-qa/e2e/ 7 张截图）/ AC-20 数字可追溯性真模型端到端（`scripts/ac20_number_provenance.py` + `docs/ac20-number-provenance.md`） / 完整用户旅程真模型端到端（`scripts/full_journey_e2e.py` + `docs/full-journey-e2e.md`） / 结项报告真实模型路径（`scripts/audit_report_e2e.py` + `docs/audit-report-e2e.md`，含报告摘要落库）；QA Loop 记录见 docs/qa-loop-runs/README.md，多角色 Loop 记录见 docs/loop-runs/README.md）
+- 验收记录：`docs/v4-acceptance-report.md`（690 后端用例 / 249 前端用例 / 契约 parity 13 / 跨进程 6 + 崩溃注入 3 + 预算崩溃 4 / 真 Worker E2E 30 项 + Loop 闭环 29 项 / 迁移演练 / 回滚演练（AC-34，`scripts/ac34_rollback_drill.py`）/ 真实浏览器 E2E AC-01/19/31/33（docs/browser-qa.md + docs/browser-qa/e2e/ 7 张截图）/ AC-20 数字可追溯性真模型端到端（`scripts/ac20_number_provenance.py` + `docs/ac20-number-provenance.md`） / 完整用户旅程真模型端到端（`scripts/full_journey_e2e.py` + `docs/full-journey-e2e.md`） / 结项报告真实模型路径（`scripts/audit_report_e2e.py` + `docs/audit-report-e2e.md`，含报告摘要落库）；文档索引见 docs/README.md；QA Loop 记录见 docs/qa-loop-runs/README.md，多角色 Loop 记录见 docs/loop-runs/README.md）
 
 ## 1. 发布前必须通过的命令
 
@@ -25,9 +25,12 @@ cd backend && ../.venv/Scripts/python.exe ../scripts/browser_e2e/run_browser_e2e
 
 # 迁移回滚演练（AC-34；生产库一致性快照到临时副本，模拟坏构建→回滚，不碰生产库）
 cd backend && ../.venv/Scripts/python.exe ../scripts/ac34_rollback_drill.py
+
+# 文档引用体检（校验文档里写的仓库路径是否仍存在；--strict 有断链即失败）
+../.venv/Scripts/python.exe scripts/verify_docs_refs.py --strict
 ```
 
-CI 配置见 `.github/workflows/ci.yml`（backend：安装依赖 → 全量测试 → `import main` 冒烟；frontend：`npm ci` → tsc → test → build → test:e2e）。
+CI 配置见 `.github/workflows/ci.yml`（backend：安装依赖 → 全量测试 → `import main` 冒烟 → 文档引用体检；frontend：`npm ci` → tsc → test → build → test:e2e）。
 
 ## 2. 部署顺序
 

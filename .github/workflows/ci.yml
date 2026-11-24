@@ -34,6 +34,11 @@ jobs:
       - name: import smoke
         run: python -c "import main; print('routes ok')"
 
+      - name: docs reference check
+        # 校验文档里引用的仓库路径是否仍然存在（删掉的模块、写错的截图路径）
+        working-directory: .
+        run: python scripts/verify_docs_refs.py --strict
+
   frontend:
     name: frontend (node 20)
     runs-on: ubuntu-latest

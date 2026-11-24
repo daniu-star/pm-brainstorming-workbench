@@ -220,16 +220,15 @@ cd frontend && npm run test:e2e                                             # �
 
 ### 文档
 
-- 验收报告（逐 AC-01…AC-42 + 已知偏差）：`docs/v4-acceptance-report.md`
+完整索引（按用途分组，含「何时读」）：`docs/README.md`。最常用的几份：
+
+- 发版说明（一页纸）：`docs/v4-release-notes.md`
+- 验收报告（AC-01…AC-42 逐条 + 已知偏差）：`docs/v4-acceptance-report.md`
 - 发布就绪清单（部署顺序、回滚、验收命令）：`docs/v4-release-checklist.md`
 - 模块接口契约（仓储/服务/SSE 语义）：`docs/v4-m1-interfaces.md`
-- QA Loop 方法学与首次运行结果：`docs/qa-loop-engineering.md`
-- QA Loop 逐轮归档（5 轮分数/发现/修复）：`docs/qa-loop-runs/README.md`
-- 可复用闭环脚本：`scripts/qa-loop.workflow.js`
-- Loop Studio（v5，闭环工作台：设想→检验→开发→测试→评测）：`docs/v5-loop-studio.md`
-- Loop Studio 接口与文件归属：`docs/loop-studio-interfaces.md`
-- 多角色 Loop Engineering 运行索引（5 轮分数 / 硬上限 / 复跑方式）：`docs/loop-runs/README.md`
-- 多角色 Loop Engineering 逐轮运行记录（7 角色 / 8 维评分 / 逐轮发现与修复）：`docs/loop-runs/product-loop-2026-11-19.md`
-- 浏览器交互验收协议与归档截图（页面级真实点击/输入/路由）：`docs/browser-qa.md`
+- 逐批热修总表 + 当前基线：`docs/loop-runs/README.md`
+- 真实链路证据（浏览器 e2e / 完整旅程 / 报告路径 / 数字标注）：`docs/browser-qa.md`、
+  `docs/full-journey-e2e.md`、`docs/audit-report-e2e.md`、`docs/ac20-number-provenance.md`
 - 可复用 Loop 技能包（可开源）：`skills/loop-engineering-product/SKILL.md`
 - 模型连通性自检：`python scripts/check_llm.py`
+- 文档引用体检（CI 已接入）：`python scripts/verify_docs_refs.py --strict`
