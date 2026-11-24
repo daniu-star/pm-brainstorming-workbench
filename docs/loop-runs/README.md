@@ -209,7 +209,13 @@
 | 真实浏览器验收（AC-01/19/31）只在本机跑过，CI 里没有，回归靠人记；且 `cdp.py` 只认 Windows 的 Chrome 路径、只按 `taskkill` 清理进程树，Linux runner 上跑不起来 | `cdp.find_chrome()` 改为 `CHROME_PATH` → Windows 常见路径 → PATH（`google-chrome`/`chromium` 等）；POSIX 下 Chrome 以独立进程组启动、关闭时 `killpg(SIGKILL)`；新增 CI job `browser-e2e`（ubuntu 自带 Chrome，起 API + Next 后跑三场景，截图作 artifact） | `scripts/browser_e2e/run_browser_e2e.py AC-01 AC-19 AC-31` 本机仍全 PASS（AC-01 单跑 9.4s）；`yaml.safe_load` 校验通过（backend 6 / browser-e2e 11 / frontend 9 步） |
 | 发版体检不看库增长，删了一堆数据也不知道文件有没有瘦 | `pre_release_check.py` 新增 `db-report` 步骤（`db_maintenance.py report`，只读；输出库大小与空闲页），排在 backup-drill 之后 | `python scripts/pre_release_check.py --only docs,db-report` → `PRE_RELEASE_OK 2 步 / 2.3s`，`db-report` 报「库大小 504.0KB，空闲页 0」；自检 7 例仍 OK |
 
-当前基线：**后端 723 用例 OK / 前端 262 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（8 步，含 db-report） / 磁盘清理脚本（报告 + `--apply`） / 中间载荷 90 天保留策略 + `db_maintenance.py report|vacuum`**。
+## 第 29 批（数字未验证 → 补充来源闭环，2026-11-24）
+
+| 问题 | 修复 | 证据 |
+| --- | --- | --- |
+| 徽标只能看不能处理：前端没有证据录入入口，且补了证据也不会反映到已落库的报告 | 徽标旁加「补充来源」按钮 → `EvidenceForm`（摘录必填、≥8 字）→ store 新增 `addEvidence`（走 `add_evidence` 命令）；`audit_repo._remark_report_numbers` 在**读取时**按最新消息/证据重算标注，补完证据徽标即消失（零模型成本） | `test_audit_report_recompute.py`(3)、`evidence-form.test.cjs`(3)、`pages-render` 入口 1 例；726 后端 / 266 前端 |
+
+当前基线：**后端 726 用例 OK / 前端 266 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（8 步，含 db-report） / 磁盘清理脚本（报告 + `--apply`） / 中间载荷 90 天保留策略 + `db_maintenance.py report|vacuum`**。
 
 ## 第 22 批（发版前一键体检，2026-11-24）
 

@@ -177,7 +177,29 @@ test("审计页：报告含未验证数字时顶部给徽标与补充建议", ()
 
   assert.match(html, /数字未验证/);
   assert.match(html, /2、66/);
-  assert.match(html, /补充来源后可重新生成报告/);
+});
+
+test("审计页：未验证数字旁有「补充来源」入口（可点开表单）", () => {
+  const audit = JSON.parse(JSON.stringify(COMPLETED_AUDIT));
+  audit.report.unverified_numbers = ["2", "66"];
+
+  resetStore({
+    sessionView: {
+      id: SESSION_ID,
+      phase: "audit_completed",
+      session_version: 4,
+      current_product_version: 2,
+      current_audit_id: "audit-1",
+      active_run_id: null,
+    },
+    audits: { "audit-1": audit },
+  });
+
+  const html = render(React.createElement(AuditPage));
+  // 徽标旁必须是按钮而不是纯文字：第 29 批把它变成可操作入口
+  assert.match(html, /<button[^>]*>补充来源<\/button>/);
+  // 默认收起，因此首屏不渲染表单字段
+  assert.doesNotMatch(html, /aria-label="证据摘录"/);
 });
 
 test("审计页：读取失败渲染错误态与重试入口，不渲染「开始审计」", () => {

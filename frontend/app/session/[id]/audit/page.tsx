@@ -4,6 +4,8 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useSessionStore } from "@/store/sessionStore";
+import { EvidenceForm } from "@/components/evidence/EvidenceForm";
+import { toast } from "@/components/Toast";
 import { isApiError } from "@/lib/api";
 import type { CommandReceipt, StartAuditRecovery } from "@/lib/contracts.generated";
 import {
@@ -95,6 +97,10 @@ function ReportView({
 }) {
   const report = audit.report;
   const cancelled = audit.status === "cancelled";
+  const addEvidence = useSessionStore((state) => state.addEvidence);
+  const hydrateAuditById = useSessionStore((state) => state.hydrateAuditById);
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const [evidenceBusy, setEvidenceBusy] = useState(false);
 
   return (
     <div className="space-y-3">
@@ -158,8 +164,41 @@ function ReportView({
             >
               <span className="font-medium">数字未验证</span>
               <span>{report.unverifiedNumbers.join("、")}</span>
-              <span className="text-orange-200/70">补充来源后可重新生成报告</span>
+              <button
+                type="button"
+                className="ml-1 rounded border border-orange-500/50 px-2 py-0.5 text-[11px] text-orange-200 underline-offset-2 hover:underline"
+                onClick={() => setEvidenceOpen((open) => !open)}
+              >
+                {evidenceOpen ? "收起" : "补充来源"}
+              </button>
             </div>
+          ) : null}
+          {evidenceOpen ? (
+            <EvidenceForm
+              numbers={report.unverifiedNumbers}
+              suggestion={report.verificationSuggestion}
+              busy={evidenceBusy}
+              onCancel={() => setEvidenceOpen(false)}
+              onSubmit={async (values) => {
+                setEvidenceBusy(true);
+                const saved = await addEvidence({
+                  title: values.title,
+                  excerpt: values.excerpt,
+                  source_uri: values.source_uri || null,
+                  source_date: values.source_date || null,
+                  kind: "user_statement",
+                });
+                setEvidenceBusy(false);
+                if (!saved) return;
+                const refreshed = await hydrateAuditById(audit.id);
+                toast.success(
+                  refreshed && audit.report && audit.report.unverifiedNumbers.length === 0
+                    ? "证据已保存，报告里的数字现在都有来源了"
+                    : "证据已保存，报告标注已按最新证据重算"
+                );
+                setEvidenceOpen(false);
+              }}
+            />
           ) : null}
           <Section title="维度评估">
             {report.dimensionStates.length === 0 ? (

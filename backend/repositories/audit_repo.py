@@ -575,6 +575,44 @@ def list_report_revisions(db: Session, audit_id: str) -> list[AuditReportRevisio
 # --------------------------------------------------------------------------- #
 
 
+def _remark_report_numbers(
+    db: Session, session_id: str, report: Any
+) -> Any:
+    """按**当前**消息/证据重新标注报告里的数字（第 29 批）。
+
+    报告是那一刻的快照，但用户可能在报告生成**之后**补了证据。若只在生成时标注，
+    补完来源徽标也不会消失，闭环断在这里。这里在读取时用同一套确定性规则重算：
+    不调模型、不改报告文字，只更新 ``unverified_numbers`` / ``verification_suggestion``。
+    兜底报告（``generated_by=fallback``）不参与：其中的计数来自结构化记录。
+    """
+
+    from repositories import session_repo  # 局部导入避免仓储间循环依赖
+    from services import number_guard
+
+    if getattr(report, "generated_by", "model") != "model":
+        return report
+    try:
+        message_texts, evidence_texts = session_repo.load_reference_texts(db, session_id)
+    except Exception:  # noqa: BLE001 - 重算是增强，失败时保留落库时的标注
+        return report
+    reference = chr(10).join([*message_texts.values(), *evidence_texts.values()])
+    numbers, suggestion = number_guard.audit_report_texts(
+        texts=[
+            *list(report.supported_points),
+            *list(report.unresolved_gaps),
+            *list(report.recommended_experiments),
+            report.limitations,
+            report.summary,
+        ],
+        source_text=reference,
+    )
+    if numbers == list(report.unverified_numbers) and suggestion == report.verification_suggestion:
+        return report
+    return report.model_copy(
+        update={"unverified_numbers": numbers, "verification_suggestion": suggestion}
+    )
+
+
 def audit_to_snapshot(db: Session, audit: AuditRow) -> AuditSnapshot:
     """把审计行组装为 ``AuditSnapshot``（dimension_states + 可选报告）。
 
@@ -600,6 +638,9 @@ def audit_to_snapshot(db: Session, audit: AuditRow) -> AuditSnapshot:
             report = AuditReport.model_validate(raw_report)
         except ValueError:
             logger.warning("审计报告 JSON 校验失败，快照降级为无报告（audit=%s）", audit.id)
+        if report is not None:
+            # 报告落库后用户可能补了来源：读取时按当前证据重算标注（第 29 批）。
+            report = _remark_report_numbers(db, audit.session_id, report)
 
     last_error_code: str | None = None
     last_error_message: str | None = None

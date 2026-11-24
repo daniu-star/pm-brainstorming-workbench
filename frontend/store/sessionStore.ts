@@ -45,6 +45,7 @@ import type {
   CanvasProjection,
   CommandReceipt,
   ControlReceipt,
+  EvidenceKind,
   LoopDecisionKind,
   LoopDecisionPayload,
   LoopSnapshot,
@@ -230,6 +231,15 @@ export interface LoopLoadError {
 }
 
 /** `startLoop` 的入参（页面表单 → store，store 负责补 expected_product_version） */
+/** `addEvidence` 的入参：至少要有摘录正文（服务端会做长度/归属校验） */
+export interface AddEvidenceInput {
+  excerpt: string;
+  title?: string;
+  source_uri?: string | null;
+  source_date?: string | null;
+  kind?: EvidenceKind;
+}
+
 export interface StartLoopInput {
   scope?: "mvp" | "optimize";
   maxRounds?: number;
@@ -349,6 +359,8 @@ interface SessionState {
   resumeRunSubscription: () => void;
   cancelRun: (runId?: string) => Promise<boolean>;
   retryFailedRun: (runId?: string) => Promise<boolean>;
+  /** 录入一条证据（add_evidence）；成功返回 true，失败时错误写入 `error` */
+  addEvidence: (input: AddEvidenceInput) => Promise<boolean>;
   /**
    * 重取画布投影。返回 true 表示确实应用了新投影；失败/丢弃旧版本返回 false，
    * 便于调用方只在成功时提示「已刷新」（PROD-06）。
@@ -2161,6 +2173,34 @@ export const useSessionStore = create<SessionState>((set, get) => {
         return true;
       } catch (error) {
         setError(errorMessage(error));
+        toast.error(errorMessage(error));
+        return false;
+      }
+    },
+
+    addEvidence: async (input: AddEvidenceInput) => {
+      const captured = capture();
+      if (!captured.sessionId) return false;
+      const excerpt = input.excerpt.trim();
+      if (excerpt.length === 0) {
+        setError("证据内容不能为空");
+        return false;
+      }
+      try {
+        await dispatchCommand(
+          "add_evidence",
+          {
+            kind: input.kind ?? "user_statement",
+            title: input.title?.trim() || undefined,
+            excerpt,
+            source_uri: input.source_uri?.trim() || null,
+            source_date: input.source_date?.trim() || null,
+          },
+          captured
+        );
+        return true;
+      } catch (error) {
+        // dispatchCommand 已写入 error；这里补一条 toast，让用户知道这次录入没保存
         toast.error(errorMessage(error));
         return false;
       }
