@@ -181,6 +181,17 @@ async def health():
     return {"status": status}
 
 
+def _url_host(value: str) -> str:
+    """只取主机名用于诊断（避免把完整 URL 的凭据/路径写进日志或响应）。"""
+
+    try:
+        from urllib.parse import urlparse
+
+        return urlparse(value or "").hostname or ""
+    except ValueError:
+        return ""
+
+
 @app.get("/health/detail")
 async def health_detail(request: Request):
     """详细健康检查：需登录（走正常认证，B070）。"""
@@ -195,4 +206,13 @@ async def health_detail(request: Request):
         "worker": worker,
         "budget_profile": (settings.llm_budget_profile or "standard"),
         "budget_limits": C_budget_defaults(),
+        # 模型层诊断（第 18 批）：联调时最常问的两个问题——「用的哪个模型」和
+        # 「为什么结构化输出是空的」。只暴露模型名/主机名/开关，不暴露 Key。
+        "llm": {
+            "model": settings.llm_model,
+            "base_url_host": _url_host(settings.llm_base_url),
+            "disable_reasoning": bool(settings.llm_disable_reasoning),
+            "timeout_seconds": float(settings.llm_timeout_seconds),
+            "max_retries": int(settings.llm_max_retries),
+        },
     }
