@@ -25,9 +25,9 @@
 ## 2. 实际执行的验证命令与结果
 
 ```bash
-# 后端全量（657 用例，含 M2/M3 + QA Loop 收口 + 闭环/数据生命周期/崩溃注入/旧 ID 别名/AC-14 多失败重试/AC-10 预算预留热修新增用例）
+# 后端全量（682 用例，含 M2/M3 + QA Loop 收口 + 闭环/数据生命周期/崩溃注入/旧 ID 别名/AC-14 多失败重试/AC-10 预算预留热修/AC-20 数字守卫新增用例）
 cd backend && ../.venv/Scripts/python.exe -m unittest discover -s tests
-# → Ran 657 tests / OK / exit 0（含 tests/test_audit_runner.py 的 3 个真 runner 审计用例、tests/test_control_crash.py 的 3 个真 kill/restart 用例、tests/test_session_alias.py 的 6 个旧 ID 别名用例、tests/test_brainstorm_runner.py 的 AC-14 多失败重试用例、tests/test_budget_crash.py 的 4 个预算预留崩溃用例）
+# → Ran 682 tests / OK / exit 0（含 tests/test_audit_runner.py 的 3 个真 runner 审计用例、tests/test_control_crash.py 的 3 个真 kill/restart 用例、tests/test_session_alias.py 的 6 个旧 ID 别名用例、tests/test_brainstorm_runner.py 的 AC-14 多失败重试用例、tests/test_budget_crash.py 的 4 个预算预留崩溃用例、tests/test_number_guard.py 的 18 个数字可追溯性用例、tests/test_evidence_guard.py 的 3 个「#seq → 真实消息 ID」规范化用例）
 
 # 跨进程（真 subprocess + 共享 SQLite）
 cd backend && ../.venv/Scripts/python.exe -m unittest tests.test_run_repo tests.test_cross_process
@@ -75,6 +75,11 @@ cd backend && ../.venv/Scripts/python.exe ../scripts/ac34_rollback_drill.py
 #   integrity_check=ok 且外键无悬挂、data/sessions JSON 指纹不变（无 JSON 双写）
 #   截图 docs/browser-qa/e2e/ac-33-camera-denied.png、ac-33-voice-playing.png、
 #   ac-33-text-answer.png
+
+# AC-20 数字可追溯性端到端（真模型四角色 brainstorm，约 25K tokens；生成 docs/ac20-number-provenance.md）
+cd backend && ../.venv/Scripts/python.exe ../scripts/ac20_number_provenance.py
+# → run_status=succeeded，19 条论断，7 个画布节点被标注「未验证数字」（50/65/70/80/30/60/75/2/3/5/10）
+#   有来源数字 12/6/4 未被标注；人工核对结论见 docs/ac20-number-provenance.annotation.md
 ```
 
 ## 3. 逐条验收（§11 AC-01 … AC-42）
@@ -100,7 +105,7 @@ cd backend && ../.venv/Scripts/python.exe ../scripts/ac34_rollback_drill.py
 | AC-17 | 通过 | `test_context_builder.py::test_protected_content_is_never_dropped_by_budget`；`test_coach.py::test_confirmed_field_is_never_overwritten_by_model` | 受保护字段不因预算丢弃；模型不可改写已确认项 |
 | AC-18 | 通过 | `test_canvas_projector.py::test_two_calls_are_byte_identical`、`test_projection_does_not_mutate_state`；`test_reducer.py::test_merge_is_independent_of_arrival_order`；`frontend/tests/store.test.cjs`（acceptProductVersion 单调） | 投影纯函数、零模型调用、旧版本不覆盖；「待合并建议」UI 未单独做（角色结果仅在合并后进画布） |
 | AC-19 | 通过（真实浏览器） | `scripts/browser_e2e/run_browser_e2e.py::scenario_ac19`（播种出 8 个分支的产品状态）+ 截图 `docs/browser-qa/e2e/ac-19-eight-branches.png`；`test_canvas_projector.py::test_branch_order_follows_declared_order`、`test_every_node_carries_refs_and_status` | 8 个分支（技术/设计/商业/用户/方案/决策/未决/实验）全部渲染，无「+N 条更多」折叠；第 8 个分支节点原文可见、页面含「v2」版本徽标与「证据/消息」引用计数 |
-| AC-20 | 部分通过 | `test_retriever.py`（零相关→[]、同源去重、加权）；`test_context_builder_rag.py`（命中注入标「不可引用/未验证」、无命中不注入） | 检索已接入且不编造引用；**「模型是否编造数字」属模型行为，未做端到端人工标注** |
+| AC-20 | 通过（端到端人工标注） | `services/number_guard.py`（`extract_numbers` / `number_is_traceable` / `verification_suggestion` / `audit_role_result`，只标注不否决）；`test_number_guard.py`(18)、`test_canvas_projector.py::UnverifiedNumberTests`(2)、`test_brainstorm_runner.py::test_numbers_absent_from_sources_are_marked_unverified`；真模型 E2E `scripts/ac20_number_provenance.py` + `docs/ac20-number-provenance.md`（19 条论断、7 个未验证节点，人工核对） | 无来源数字 100% 标注为「未验证数字」并给出补来源/统计日期的验证建议（画布橙色徽标 + detail 末行 + `verification_suggestion`），有来源数字（12/6/4）100% 未被误标；论断 `evidence_refs` 全为空数组，未编造引用（零相关时检索返回空列表由 `test_retriever.py` 覆盖） |
 | AC-21 | 通过 | `test_audit_workflow.py::test_open_writes_first_question_and_activates_audit`、`test_open_uses_planned_dimension_when_model_disagrees`；`test_audit_runner.py::test_audit_open_via_runner_commits_question_and_activates_audit`；`.tmp/e2e_audit.py` | 开场输入锚定 ProductState，问题含维度与依据 |
 | AC-22 | 通过 | `test_audit_workflow.py::test_open_is_idempotent_when_question_already_exists`；`test_api_v2.py::AuditEndpointTests`（真实 `GET /api/v2/audits/{id}` 返回 questions/active_question_id；他会话 403 且不泄漏 questions）；`test_audit_runner.py`（answer 后 active_question_id 指向第 2 问）；前端 `hydrateAuditById` | 同一 audit_id/问题可恢复，不重建、不二次开场 |
 | AC-23 | 通过（跨进程） | `test_audit_workflow.py::test_answer_ignored_when_audit_not_active`、`test_answer_rejects_unknown_question`；`test_command_service.py::test_answer_audit_requires_open_question`；`test_cross_process.py::test_concurrent_answers_to_same_question_accept_exactly_one`（两进程真并发：恰好一个 accepted，问题只绑一条回答消息，Run 只多一条） | 单问题只接受一次回答（DB 层原子，跨进程成立） |
@@ -138,6 +143,10 @@ cd backend && ../.venv/Scripts/python.exe ../scripts/ac34_rollback_drill.py
 10. **未登录访问未知 `/api/v2/*` 返回 401 而非 404**：鉴权是中间件，在路由匹配前短路；PRD 未要求，前端已按 401/404 双兼容处理。
 11. **审计回答消息由命令层写入**：`command_service._submit_async` 在建 Run 前写 human 消息（stage=audit）并回填 `audit_questions.answer_message_id`，`workflows/audit.py` 只做评估与下一问。这是「用户消息+序号+Run+占位同事务」的必然结果，workflow 再写会双写，属设计说明而非偏差。
 12. **`audit_repo` 缺评估修订读取 API**：只有 `add_assessment_revision`，前端暂不需要评估修订历史；将来要展示时由 storage 补 `list_assessment_revisions`（只读）。
+
+13. **推理型模型的 completion 预算问题 — 已解决（第 16 批，AC-20 真模型联调发现）**：`deepseek-flash` 会把 `max_tokens` 先花在 `reasoning_content` 上，导致结构化输出的 `content` 为空（实测 1500 tokens 全为 reasoning、`content=""`、耗时 16s），四角色因此全部 `MODEL_OUTPUT_INVALID`。修复：`Settings.llm_disable_reasoning`（默认 `True`，`LLM_DISABLE_REASONING=false` 可关闭）→ `LLMClient._reasoning_extra_body()` 对含 `deepseek` 的模型发送 `extra_body={"thinking": {"type": "disabled"}}`（实测 completion 1500→380、content 恢复）；同时 `SCHEMA_REMINDER` 在对话末尾复述精确字段名与长度上限（display_text ≤320 字、claims 3–5 条、每条 ≤100 字），把单角色输出压到 ~750–1050 tokens。覆盖 `test_context_builder.py` / `test_brainstorm.py`（48 例）。
+
+14. **供应商不支持 `json_schema` → 自动降级并缓存结论；模型会写 `#seq` 序号引用 — 已解决（第 16 批）**：`https://api.deepseek.com/v1` 对 `response_format={"type": "json_schema"}` 返回 400（`This response_format type is unavailable now`），原实现每次调用都先吃一次 400 再降级，四角色即白花 4 次上游调用并触发 `BUDGET_EXCEEDED`；现 `LLMClient._json_schema_supported` 缓存「该供应商不支持」，同进程后续直接走 `json_object`（`test_llm_client.py::test_json_schema_downgrade_is_cached_per_client`）。另外上下文把消息渲染成 `[#seq]`，模型会把 `#3` 写进 `source_message_ids` 而被归属校验拒绝；现 `evidence_guard.normalize_message_refs` + `session_repo.list_session_message_refs` 把序号确定性解析为本会话真实消息 ID（只映射本会话，映射不到仍拒绝），覆盖 `test_evidence_guard.py::NormalizeMessageRefsTests`(3)。
 13. **本机 8000 端口运行旧进程**：手工验证 `/api/v2` 前需重启后端；前端已做 404→legacy 回落。
 
 ## 5. NFR（§9）抽查
@@ -152,9 +161,9 @@ cd backend && ../.venv/Scripts/python.exe ../scripts/ac34_rollback_drill.py
 ## 6. 结论
 
 - M1（WP-00～05）、M2（WP-06～08）、M3（WP-09）与 WP-10 的发布件（CI、迁移演练、健康诊断、前端 e2e 冒烟）均已交付。
-- 真实执行结果：后端 **657 用例 OK**、前端 **249 用例 pass** + `tsc` 0 错 + `build` 成功、`test:e2e` 1 pass、真实浏览器 E2E **AC-01/19/31/33 全部 PASS**（CDP，零新依赖，7 张截图）、跨进程 6 用例 OK + 崩溃注入 3 用例 OK、旧 ID 别名 6 用例 OK、AC-14 多失败重试 1 用例 OK、预算预留崩溃 4 用例 OK、真 Worker 审计端到端 **30 项 ALL PASS**、迁移演练 **DRILL_OK**、新构建回滚演练 **ROLLBACK_DRILL_OK**（临时副本上模拟坏构建→回滚：注入的排队任务仍可被领取、消息/任务计数不变、`integrity_check=ok`、`data/sessions` JSON 指纹不变）。
-- AC 统计（按 §3 表）：**通过 41 条**（AC-01/02/03/04/05/06/07/08/09/10/11/12/13/14/15/16/17/18/19/21/22/23/24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42）、**部分通过 1 条**（AC-20）、**未实现 0 条**。
-- 剩余差距集中在：AC-20（模型是否编造数字的端到端人工标注，需要人工标注样本）。AC-34 已由回滚演练覆盖（第 15 批，临时副本上模拟坏构建→回滚）。每条均给出最小调整方案，未通过修改期望值或预填结果取得任何「通过」。
+- 真实执行结果：后端 **682 用例 OK**、前端 **249 用例 pass** + `tsc` 0 错 + `build` 成功、`test:e2e` 1 pass、真实浏览器 E2E **AC-01/19/31/33 全部 PASS**（CDP，零新依赖，7 张截图）、跨进程 6 用例 OK + 崩溃注入 3 用例 OK、旧 ID 别名 6 用例 OK、AC-14 多失败重试 1 用例 OK、预算预留崩溃 4 用例 OK、真 Worker 审计端到端 **30 项 ALL PASS**、迁移演练 **DRILL_OK**、新构建回滚演练 **ROLLBACK_DRILL_OK**（临时副本上模拟坏构建→回滚：注入的排队任务仍可被领取、消息/任务计数不变、`integrity_check=ok`、`data/sessions` JSON 指纹不变）、AC-20 数字可追溯性真模型端到端（19 条论断中 7 个无来源数字节点全部被标注，人工核对）。
+- AC 统计（按 §3 表）：**通过 42 条**（AC-01 … AC-42 全部）、**部分通过 0 条**、**未实现 0 条**。
+- 无未闭合验收项：AC-20 已由真模型端到端 + 人工标注覆盖（第 16 批），AC-34 由回滚演练覆盖（第 15 批）。仍未纳入自动化 CI 的是「真模型调用类」与「真浏览器/回滚演练」验收（需本机 Chrome、需消耗模型额度、需独占 8001/3001 栈），各自都有可复现命令与留痕；未通过修改期望值或预填结果取得任何「通过」。
 
 ## 7. QA Loop Engineering 首次运行（用户要求，2026-11-19）
 

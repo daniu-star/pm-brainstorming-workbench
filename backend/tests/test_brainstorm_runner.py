@@ -211,6 +211,35 @@ class _FailRoleLLM(_BrainstormLLM):
         )
 
 
+class _NumberClaimLLM(_BrainstormLLM):
+    """返回固定论断文本的角色替身，用来验证 AC-20 的数字标注。"""
+
+    def __init__(self, *, claim_text: str, ref_ids: dict[str, list[str]] | None = None) -> None:
+        super().__init__(ref_ids=ref_ids)
+        self.claim_text = claim_text
+
+    async def complete_json(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        max_output_tokens: int | None = None,
+        timeout_seconds: float | None = None,
+        purpose: str = "",
+        json_schema: dict[str, Any] | None = None,
+        temperature: float = 0.2,
+    ) -> tuple[Any, LLMResult]:
+        payload, result = await super().complete_json(
+            messages=messages,
+            max_output_tokens=max_output_tokens,
+            timeout_seconds=timeout_seconds,
+            purpose=purpose,
+            json_schema=json_schema,
+            temperature=temperature,
+        )
+        payload["claims"][0]["text"] = self.claim_text
+        return payload, result
+
+
 class _ElevenCallLLM:
     """记录调用；供“第 11 次被拒”的端到端用例。"""
 
@@ -892,6 +921,53 @@ class BrainstormRunnerTests(RunnerTestCase):
         self.assertTrue(cto_claims)
         self.assertIn(evidence_id, cto_claims[0].evidence_refs)
         self.assertIn(message_id, cto_claims[0].source_message_ids)
+
+    def test_numbers_absent_from_sources_are_marked_unverified(self) -> None:
+        """AC-20：来源原文里找不到的数字必须标为未验证，可追溯的数字不标。"""
+
+        session_id = self._prepare_brainstorm_session()
+        receipt = self._submit_brainstorm("cto")
+        run_id = receipt.run_id
+
+        with database.session_scope() as db:
+            session = session_repo.get_session(db, session_id)
+            self.assertIsNotNone(session)
+            evidence = session_repo.add_evidence(
+                db,
+                session,
+                kind=C.EvidenceKind.user_statement,
+                title="种子用户访谈",
+                excerpt="访谈记录：我们访谈了 12 家中小企业财务团队。",
+                created_by=OWNER,
+            )
+            evidence_id = evidence.id
+
+        self.claim(run_id)
+        llm = _NumberClaimLLM(
+            claim_text="12 家客户每周节省 40% 对账时间",
+            ref_ids={"evidence": [evidence_id], "messages": []},
+        )
+        self.run_once(run_id, llm=llm)
+
+        run = self.get_run(run_id)
+        self.assertEqual(run.status, RunStatus.succeeded.value, run.error_message)
+
+        with database.session_scope() as db:
+            state = session_repo.get_product_state(db, session_id)
+        self.assertIsNotNone(state)
+        claims = [claim for claim in state.claims if claim.role_code is RoleCode.cto]
+        self.assertTrue(claims)
+        # 12 在证据原文里 → 可追溯；40 找不到 → 标未验证。
+        self.assertEqual(claims[0].unverified_numbers, ["40"])
+
+        projection = project_canvas(state)
+        nodes = [node for branch in projection.branches for node in branch.nodes]
+        self.assertTrue(nodes)
+        self.assertEqual(nodes[0].unverified_numbers, ["40"])
+        self.assertIn("未验证数字：40", nodes[0].detail)
+        assert nodes[0].verification_suggestion is not None
+        self.assertIn("统计日期", nodes[0].verification_suggestion)
+
 
 
 class WorkflowRegistryTests(unittest.TestCase):

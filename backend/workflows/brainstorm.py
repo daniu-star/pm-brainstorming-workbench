@@ -33,7 +33,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from repositories import session_repo
-from services.evidence_guard import assert_role_result_refs
+from services import number_guard
+from services.evidence_guard import assert_role_result_refs, normalize_message_refs
 from domain.contracts import (
     MAX_CONTEXT_INPUT_TOKENS,
     MAX_OUTPUT_TOKENS,
@@ -126,21 +127,39 @@ def _session_id(ctx: Any, state: ProductState) -> str:
     return getattr(session, "id", None) or state.session_id
 
 
-def _reference_sets(ctx: Any, state: ProductState) -> tuple[set[str], set[str]]:
-    """可引用集合：本会话 + 公开知识域的证据 ID、本会话消息 ID（FR-04C 归属校验）。
+def _reference_sets(
+    ctx: Any, state: ProductState
+) -> tuple[set[str], set[str], dict[str, str]]:
+    """可引用集合：证据 ID、本会话消息 ID、``seq -> message_id`` 映射（FR-04C 归属校验）。
 
     取不到 DB/会话时返回空集合 —— 此时任何引用都会被判为越权，宁可让角色产物作废，
     也不放过无法溯源的引用（公开知识域由 ``session_id IS NULL`` 判定）。
+    序号映射用于把模型写的 ``#3`` 解析成本会话真实消息 ID（上下文里就是这样展示的）。
     """
 
     db = getattr(ctx, "db", None)
     session_id = _session_id(ctx, state)
     if db is None or not session_id:
-        return set(), set()
+        return set(), set(), {}
     return (
         session_repo.list_referenceable_evidence_ids(db, session_id),
         session_repo.list_session_message_ids(db, session_id),
+        session_repo.list_session_message_refs(db, session_id),
     )
+
+
+def _reference_texts(ctx: Any, state: ProductState) -> tuple[dict[str, str], dict[str, str]]:
+    """可引用来源的原文：消息 ID → 正文、证据 ID → 标题/摘录/来源（AC-20 数字归属）。
+
+    取不到 DB/会话时返回两个空表 —— 此时所有数字都会被标为「未验证」，
+    与「模型推测」的处理一致（宁可标未验证，也不把无源数字当事实）。
+    """
+
+    db = getattr(ctx, "db", None)
+    session_id = _session_id(ctx, state)
+    if db is None or not session_id:
+        return {}, {}
+    return session_repo.load_reference_texts(db, session_id)
 
 
 def _current_message(ctx: Any) -> Any:
@@ -349,6 +368,8 @@ def _validate_role_result(
     *,
     allowed_evidence_ids: set[str] | None = None,
     allowed_message_ids: set[str] | None = None,
+    message_seq_to_id: dict[str, str] | None = None,
+    warnings: list[str] | None = None,
 ) -> RoleResult:
     """严格校验：字段协议 + 角色一致性 + 引用归属（未知角色/越权引用一律拒绝）。"""
 
@@ -358,6 +379,12 @@ def _validate_role_result(
             f"role_code 与当前角色不一致：期望 {role_code.value}，实际 {result.role_code}"
         )
     if allowed_evidence_ids is not None and allowed_message_ids is not None:
+        # 先把模型写的「#3」按会话序号解析成真实消息 ID（映射只覆盖本会话）。
+        result, ref_notes = normalize_message_refs(
+            result, message_seq_to_id=message_seq_to_id or {}
+        )
+        if ref_notes and warnings is not None:
+            warnings.extend(ref_notes)
         assert_role_result_refs(
             result,
             allowed_evidence_ids=allowed_evidence_ids,
@@ -428,6 +455,7 @@ async def _generate_role_result(
     label: str,
     allowed_evidence_ids: set[str] | None = None,
     allowed_message_ids: set[str] | None = None,
+    message_seq_to_id: dict[str, str] | None = None,
 ) -> tuple[RoleResult, Any, int]:
     """取一个角色的结构化产物：首轮 + 至多一次修复。返回 (result, llm_result, calls)。"""
 
@@ -456,6 +484,7 @@ async def _generate_role_result(
                 role_code,
                 allowed_evidence_ids=allowed_evidence_ids,
                 allowed_message_ids=allowed_message_ids,
+                message_seq_to_id=message_seq_to_id,
             )
         except Exception as exc:  # pydantic ValidationError / role 不一致
             last_error = exc
@@ -529,6 +558,9 @@ async def _run_role(
     usage: dict[str, Any],
     allowed_evidence_ids: set[str] | None = None,
     allowed_message_ids: set[str] | None = None,
+    message_seq_to_id: dict[str, str] | None = None,
+    message_texts: dict[str, str] | None = None,
+    evidence_texts: dict[str, str] | None = None,
 ) -> _RoleRun:
     """跑一个角色：建 step → 组装上下文 → 调模型（含修复）→ 登记候选 → 收尾 step。"""
 
@@ -546,7 +578,15 @@ async def _run_role(
             label=label,
             allowed_evidence_ids=allowed_evidence_ids,
             allowed_message_ids=allowed_message_ids,
+            message_seq_to_id=message_seq_to_id,
         )
+        # AC-20：论断里的数字必须能在它自己引用的来源原文里找到，否则标「未验证数字」。
+        result, number_warnings = number_guard.audit_role_result(
+            result,
+            message_texts=message_texts or {},
+            evidence_texts=evidence_texts or {},
+        )
+        warnings.extend(number_warnings)
     except ValueError as exc:
         outcome.error = str(exc)[:1000]
         _finish_role_step(
@@ -744,7 +784,11 @@ async def run_brainstorm(ctx: Any):
         )
 
     # FR-04C：引用归属校验（本会话 + 公开知识域），一次查询供本轮所有角色复用。
-    allowed_evidence_ids, allowed_message_ids = _reference_sets(ctx, state)
+    allowed_evidence_ids, allowed_message_ids, message_seq_to_id = _reference_sets(
+        ctx, state
+    )
+    # AC-20：来源原文（消息正文 + 证据摘录）也只需一次查询，用于数字可追溯性校验。
+    message_texts, evidence_texts = _reference_texts(ctx, state)
 
     role_runs: list[_RoleRun] = []
     for role_code in roles:
@@ -762,6 +806,9 @@ async def run_brainstorm(ctx: Any):
                     usage=usage,
                     allowed_evidence_ids=allowed_evidence_ids,
                     allowed_message_ids=allowed_message_ids,
+                    message_seq_to_id=message_seq_to_id,
+                    message_texts=message_texts,
+                    evidence_texts=evidence_texts,
                 )
             )
         except AppError as exc:

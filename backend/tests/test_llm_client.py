@@ -313,6 +313,46 @@ class LLMClientJsonTests(unittest.TestCase):
         self.assertEqual(sdk.calls[0]["response_format"]["type"], "json_schema")
         self.assertEqual(sdk.calls[1]["response_format"], {"type": "json_object"})
 
+    def test_json_schema_downgrade_is_cached_per_client(self) -> None:
+        """同一 client 已知供应商拒绝 json_schema 后，第二次直接 json_object。
+
+        真模型联调（AC-20）发现：每次角色调用都先吃一个 400，四角色就白花 4 次上游调用，
+        直接把 ``max_upstream_calls`` 预算打爆。
+        """
+
+        sdk = FakeSDK(
+            FakeStatusError(400),
+            make_response('{"answer": 1}'),
+            make_response('{"answer": 2}'),
+        )
+        client = LLMClient(sdk_client=sdk, model="fake-model")
+        schema = {"name": "answer", "schema": {"type": "object"}}
+
+        first, _ = _run(
+            client.complete_json(
+                messages=MESSAGES,
+                max_output_tokens=200,
+                timeout_seconds=5,
+                purpose="test.json.first",
+                json_schema=schema,
+            )
+        )
+        second, _ = _run(
+            client.complete_json(
+                messages=MESSAGES,
+                max_output_tokens=200,
+                timeout_seconds=5,
+                purpose="test.json.second",
+                json_schema=schema,
+            )
+        )
+
+        self.assertEqual((first, second), ({"answer": 1}, {"answer": 2}))
+        self.assertEqual(len(sdk.calls), 3, "第二次只应有 1 次上游调用")
+        self.assertEqual(sdk.calls[0]["response_format"]["type"], "json_schema")
+        self.assertEqual(sdk.calls[1]["response_format"], {"type": "json_object"})
+        self.assertEqual(sdk.calls[2]["response_format"], {"type": "json_object"})
+
     def test_bare_json_schema_is_wrapped_without_downgrade(self) -> None:
         """裸 schema 必须包成 {name, schema, strict}，第一次就成功、不浪费降级调用。"""
         bare_schema = {

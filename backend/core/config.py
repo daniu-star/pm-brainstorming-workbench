@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     llm_max_retries: int = 3
     # FR-08 预算档位：standard|lean|frugal，只收紧不放宽（见 domain.contracts.BUDGET_PROFILES）
     llm_budget_profile: str = "standard"
+    # 推理型模型（deepseek-flash/reasoner 等）会把 completion 预算先花在 reasoning_content 上，
+    # 导致结构化输出的 content 为空。默认关闭思考（LLM_DISABLE_REASONING=false 可恢复）。
+    llm_disable_reasoning: bool = True
 
     stt_api_key: str = ""
     stt_base_url: str = "https://api.openai.com/v1"

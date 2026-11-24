@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import re
+
 from domain import contracts as C
 
 __all__ = ["check_role_result_refs", "assert_role_result_refs", "RefViolation"]
@@ -38,6 +40,45 @@ class RefViolation:
             isinstance(other, RefViolation)
             and (self.path, self.ref, self.reason) == (other.path, other.ref, other.reason)
         )
+
+
+_ORDINAL_REF_RE = re.compile(r"^#?([0-9]{1,9})$")
+
+
+def normalize_message_refs(
+    result: C.RoleResult, *, message_seq_to_id: dict[str, str]
+) -> tuple[C.RoleResult, list[str]]:
+    """把模型常用的 ``#3`` 序号引用映射为本会话真实消息 ID。
+
+    上下文里消息渲染为 ``[#seq]``，模型会把序号当引用写进
+    ``claims[i].source_message_ids``。序号只在本会话内有意义，映射是确定性的；
+    映射不到的引用原样保留，交给归属校验拒绝。返回 (规范化结果, 警告列表)。
+    """
+
+    if not message_seq_to_id:
+        return result, []
+    notes: list[str] = []
+    changed = False
+    claims = []
+    for index, claim in enumerate(result.claims):
+        refs = []
+        for ref in claim.source_message_ids:
+            match = _ORDINAL_REF_RE.match(str(ref).strip()) if ref is not None else None
+            mapped = message_seq_to_id.get(match.group(1)) if match else None
+            if mapped is not None and mapped != ref:
+                refs.append(mapped)
+                changed = True
+                notes.append(f"claims[{index}].source_message_ids: {ref} → {mapped}（按会话序号解析）")
+            else:
+                refs.append(ref)
+        if list(claim.source_message_ids) != refs:
+            claims.append(claim.model_copy(update={"source_message_ids": refs}))
+        else:
+            claims.append(claim)
+    if not changed:
+        return result, []
+    updated = result.model_copy(update={"claims": claims})
+    return updated, notes
 
 
 def check_role_result_refs(

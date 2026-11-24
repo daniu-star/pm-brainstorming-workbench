@@ -27,9 +27,11 @@ from domain.contracts import (
     UnresolvedIssue,
 )
 from domain.errors import AppError, ErrorCode
+from services.number_guard import VERIFICATION_HINT
 
 __all__ = [
     "BRANCH_TITLES",
+    "MAX_UNVERIFIED_NUMBERS",
     "NODE_DETAIL_MAX",
     "NODE_TITLE_MAX",
     "branch_key_for_claim",
@@ -39,6 +41,9 @@ __all__ = [
 #: 节点文本上限（与 ``CanvasNode`` 字段约束一致）。
 NODE_TITLE_MAX = 300
 NODE_DETAIL_MAX = 2000
+
+#: 单个节点最多展示多少个「未验证数字」（与 ``CanvasNode`` 字段上限一致）。
+MAX_UNVERIFIED_NUMBERS = MAX_REFS_PER_ITEM
 
 #: 分支顺序（= 输出顺序，也是前端渲染顺序）；空分支不输出。
 BRANCH_TITLES: tuple[tuple[str, str], ...] = (
@@ -156,6 +161,7 @@ def _claim_node(claim: Claim) -> CanvasNode:
     kind = CLAIM_NODE_KIND.get(str(claim.kind), "claim")
     sources = _refs(claim.source_message_ids)
     evidence = _refs(claim.evidence_refs)
+    unverified = [str(value) for value in claim.unverified_numbers][:MAX_UNVERIFIED_NUMBERS]
     node = CanvasNode(
         id=f"{kind}:{claim.id}",
         kind=kind,  # type: ignore[arg-type]
@@ -165,10 +171,18 @@ def _claim_node(claim: Claim) -> CanvasNode:
         claim_ids=[claim.id],
         source_message_ids=sources,
         evidence_refs=evidence,
+        unverified_numbers=unverified,
+        verification_suggestion=_number_suggestion(unverified),
     )
     # 既无来源消息也无证据 → 模型推测（FR-05 AC：不得把无来源主张当事实展示）。
     node.model_speculation = not _has_any_source(node)
     return node
+
+
+def _number_suggestion(unverified: list[str]) -> str | None:
+    if not unverified:
+        return None
+    return "未验证数字：" + "、".join(unverified) + "。" + VERIFICATION_HINT
 
 
 def _claim_detail(claim: Claim) -> str:
@@ -179,6 +193,8 @@ def _claim_detail(claim: Claim) -> str:
         parts.append(f"取代：{claim.supersedes_id}")
     if claim.role_code is not None:
         parts.append(f"提出角色：{_enum_value(claim.role_code)}")
+    if claim.unverified_numbers:
+        parts.append("未验证数字：" + "、".join(claim.unverified_numbers))
     if not (claim.source_message_ids or claim.evidence_refs):
         parts.append("来源：模型推测（无来源消息与证据）")
     return _clip("\n".join(parts), NODE_DETAIL_MAX)

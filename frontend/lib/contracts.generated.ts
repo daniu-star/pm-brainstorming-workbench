@@ -430,6 +430,9 @@ export interface CanvasNode {
   evidence_refs: string[];
   /** true = 无来源的模型推测，UI 必须显式标注 */
   model_speculation: boolean;
+  /** AC-20：来源原文里找不到的数字（UI 标「数字未验证」并展示验证建议） */
+  unverified_numbers?: string[];
+  verification_suggestion?: string | null;
 }
 
 export interface CanvasBranch {

@@ -375,5 +375,32 @@ class ProvenanceTests(ProjectorTestCase):
         self.assertIn("成功标准：周更 3 篇", root.detail)
 
 
+class UnverifiedNumberTests(ProjectorTestCase):
+    """AC-20：未验证数字必须投影到节点字段 + 详情 + 验证建议。"""
+
+    def test_unverified_numbers_reach_node_and_detail(self):
+        claim = make_claim(
+            "c1",
+            text="12 家客户每周节省 40% 对账时间",
+            source=("msg-1",),
+        ).model_copy(update={"unverified_numbers": ["40"]})
+        state = make_state(claims=[claim])
+        node = project_canvas(state).branches[0].nodes[0]
+        self.assertEqual(node.unverified_numbers, ["40"])
+        assert node.verification_suggestion is not None
+        self.assertIn("未验证数字：40", node.verification_suggestion)
+        self.assertIn("统计日期", node.verification_suggestion)
+        self.assertIn("未验证数字：40", node.detail)
+
+    def test_claim_without_unverified_numbers_has_no_badge_text(self):
+        state = make_state(
+            claims=[make_claim("c1", text="12 家客户每周节省时间", source=("m1",))]
+        )
+        node = project_canvas(state).branches[0].nodes[0]
+        self.assertEqual(node.unverified_numbers, [])
+        self.assertIsNone(node.verification_suggestion)
+        self.assertNotIn("未验证数字", node.detail)
+
+
 if __name__ == "__main__":
     unittest.main()

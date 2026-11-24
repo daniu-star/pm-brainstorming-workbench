@@ -633,6 +633,58 @@ def list_session_message_ids(db, session_id: str, *, limit: int = 500) -> set[st
     return {str(item) for item in rows}
 
 
+def list_session_message_refs(
+    db: Session, session_id: str, *, limit: int = 500
+) -> dict[str, str]:
+    """``str(seq) -> message_id`` 映射。
+
+    上下文里消息以 ``[#seq]`` 形式展示，模型会自然地把 ``#3`` 写进
+    ``source_message_ids``。这里提供序号到真实 ID 的确定性映射，
+    由 workfce 侧把序号规范化成 ID 后再做归属校验（不放大权限：
+    映射只覆盖本会话消息）。
+    """
+
+    clamped = max(1, min(int(limit), 2000))
+    rows = db.execute(
+        select(MessageRow.seq, MessageRow.id)
+        .where(MessageRow.session_id == session_id)
+        .order_by(MessageRow.seq.desc())
+        .limit(clamped)
+    ).all()
+    return {str(seq): message_id for seq, message_id in rows}
+
+
+def load_reference_texts(
+    db, session_id: str, *, limit: int = 500
+) -> tuple[dict[str, str], dict[str, str]]:
+    """取「消息 ID → 正文」「证据 ID → 标题/摘录/来源」两份文本表。
+
+    供 AC-20 数字可追溯性校验使用：论断里的数字必须能在它自己引用的
+    消息或证据原文里找到，否则标为「未验证数字」。
+    """
+
+    limit = max(1, min(int(limit), 2000))
+    message_rows = db.execute(
+        select(MessageRow.id, MessageRow.content)
+        .where(MessageRow.session_id == session_id)
+        .order_by(MessageRow.seq.desc())
+        .limit(limit)
+    ).all()
+    message_texts = {str(row[0]): str(row[1] or "") for row in message_rows}
+
+    evidence_rows = db.execute(
+        select(EvidenceRow.id, EvidenceRow.title, EvidenceRow.excerpt, EvidenceRow.source_uri)
+        .where(or_(EvidenceRow.session_id == session_id, EvidenceRow.session_id.is_(None)))
+        .order_by(EvidenceRow.retrieved_at.desc())
+        .limit(limit)
+    ).all()
+    evidence_texts = {
+        str(row[0]): "\n".join(part for part in (str(row[1] or ""), str(row[2] or ""), str(row[3] or "")) if part)
+        for row in evidence_rows
+    }
+    return message_texts, evidence_texts
+
+
 def evidence_to_model(row: EvidenceRow) -> Evidence:
     return Evidence(
         id=row.id,

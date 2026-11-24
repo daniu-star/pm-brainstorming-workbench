@@ -13,7 +13,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from domain import contracts as C  # noqa: E402
-from services.evidence_guard import (  # noqa: E402
+from services.evidence_guard import (
+    normalize_message_refs,  # noqa: E402
     RefViolation,
     assert_role_result_refs,
     check_role_result_refs,
@@ -123,3 +124,39 @@ class EvidenceGuardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class NormalizeMessageRefsTests(unittest.TestCase):
+    """上下文把消息渲染成 ``[#seq]``，模型据此写 ``#3``；序号必须解析为本会话真实 ID。"""
+
+    def test_ordinal_refs_are_mapped_to_real_ids(self) -> None:
+        result = _result(
+            _claim("c1", source_message_ids=["#2", "#7"]),
+            _claim("c2", source_message_ids=["msg-real"]),
+        )
+        updated, notes = normalize_message_refs(
+            result, message_seq_to_id={"2": "msg-2", "7": "msg-7"}
+        )
+
+        self.assertEqual(updated.claims[0].source_message_ids, ["msg-2", "msg-7"])
+        self.assertEqual(updated.claims[1].source_message_ids, ["msg-real"])
+        self.assertEqual(len(notes), 2)
+        self.assertTrue(all("按会话序号解析" in note for note in notes))
+
+    def test_unmapped_and_plain_ids_are_left_to_the_guard(self) -> None:
+        result = _result(_claim("c1", source_message_ids=["#99", "msg-real"]))
+        updated, notes = normalize_message_refs(result, message_seq_to_id={"2": "msg-2"})
+
+        self.assertEqual(updated.claims[0].source_message_ids, ["#99", "msg-real"])
+        self.assertEqual(notes, [])
+
+        violations = check_role_result_refs(
+            updated, allowed_evidence_ids=set(), allowed_message_ids={"msg-real"}
+        )
+        self.assertEqual([item.ref for item in violations], ["#99"])
+
+    def test_no_mapping_returns_same_object(self) -> None:
+        result = _result(_claim("c1", source_message_ids=["#2"]))
+        updated, notes = normalize_message_refs(result, message_seq_to_id={})
+
+        self.assertIs(updated, result)
+        self.assertEqual(notes, [])

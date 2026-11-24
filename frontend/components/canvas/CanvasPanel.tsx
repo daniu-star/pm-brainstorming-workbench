@@ -217,6 +217,7 @@ function CanvasNodeCard({ node, root = false }: { node: CanvasNode; root?: boole
   const statusLabel = NODE_STATUS_LABELS[node.status ?? ""] ?? node.status;
   // 无来源节点 = 模型推测（后端已显式标记时也视为推测）
   const speculative = node.model_speculation === true || sourceCount(node) === 0;
+  const unverifiedNumbers = node.unverified_numbers ?? [];
 
   return (
     <div
@@ -240,6 +241,14 @@ function CanvasNodeCard({ node, root = false }: { node: CanvasNode; root?: boole
             {speculative ? (
               <span className="text-[10px] leading-none px-1.5 py-0.5 rounded-full border border-amber-500/40 bg-amber-500/10 text-amber-300">
                 模型推测
+              </span>
+            ) : null}
+            {unverifiedNumbers.length > 0 ? (
+              <span
+                className="text-[10px] leading-none px-1.5 py-0.5 rounded-full border border-orange-500/40 bg-orange-500/10 text-orange-300"
+                title={node.verification_suggestion ?? "来源中找不到这些数字，请补充出处与统计日期"}
+              >
+                数字未验证 {unverifiedNumbers.join("、")}
               </span>
             ) : null}
           </div>

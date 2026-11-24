@@ -289,6 +289,8 @@ class LLMClient:
                 max_retries=0,
             )
         self._sdk = sdk_client
+        #: None=未知；False=该供应商不支持 json_schema（缓存后直接降级，避免重复 400）。
+        self._json_schema_supported: bool | None = None
 
     @property
     def sdk_client(self) -> Any:
@@ -318,6 +320,18 @@ class LLMClient:
             total_tokens=prompt_tokens + completion_tokens,
             usage_source="estimated",
         )
+
+    def _reasoning_extra_body(self) -> dict[str, Any]:
+        """推理型模型（deepseek-flash/reasoner 等）关闭思考，避免 completion 预算被
+        ``reasoning_content`` 吃光、导致结构化输出的 ``content`` 为空（AC-20 真模型联调发现）。
+        """
+
+        if not getattr(settings, "llm_disable_reasoning", False):
+            return {}
+        model = (self.model or "").lower()
+        if "deepseek" not in model:
+            return {}
+        return {"extra_body": {"thinking": {"type": "disabled"}}}
 
     async def _create(self, *, kwargs: dict[str, Any], timeout_seconds: float):
         try:
@@ -372,24 +386,54 @@ class LLMClient:
             else:
                 spec = {"name": "structured_output", "schema": json_schema, "strict": True}
             schema_format = {"type": "json_schema", "json_schema": spec}
-            attempts += 1
-            try:
-                response = await self._create(
-                    kwargs={**kwargs, "response_format": schema_format}, timeout_seconds=timeout_seconds
-                )
-            except LLMRequestError as exc:
-                # 供应商不支持 json_schema（通常 400）：降级为 json_object，多一次尝试。
-                logger.info(
-                    "结构化输出降级 purpose=%s status=%s", purpose, getattr(exc, "status_code", None)
-                )
+            if self._json_schema_supported is False:
+                # 同一进程里已知该供应商拒绝 json_schema：直接走 json_object，
+                # 否则每次角色调用都要白付一次 400（AC-20 真模型联调：4 角色 ×2 = 8 次上游调用）。
                 attempts += 1
                 response = await self._create(
-                    kwargs={**kwargs, "response_format": {"type": "json_object"}},
+                    kwargs={
+                        **kwargs,
+                        **self._reasoning_extra_body(),
+                        "response_format": {"type": "json_object"},
+                    },
                     timeout_seconds=timeout_seconds,
                 )
+            else:
+                attempts += 1
+                try:
+                    response = await self._create(
+                        kwargs={
+                            **kwargs,
+                            **self._reasoning_extra_body(),
+                            "response_format": schema_format,
+                        },
+                        timeout_seconds=timeout_seconds,
+                    )
+                except LLMRequestError as exc:
+                    # 供应商不支持 json_schema（通常 400）：记下结论，本次降级为 json_object。
+                    logger.info(
+                        "结构化输出降级 purpose=%s status=%s",
+                        purpose,
+                        getattr(exc, "status_code", None),
+                    )
+                    self._json_schema_supported = False
+                    attempts += 1
+                    response = await self._create(
+                        kwargs={
+                            **kwargs,
+                            **self._reasoning_extra_body(),
+                            "response_format": {"type": "json_object"},
+                        },
+                        timeout_seconds=timeout_seconds,
+                    )
+                else:
+                    self._json_schema_supported = True
         else:
             attempts += 1
-            response = await self._create(kwargs=kwargs, timeout_seconds=timeout_seconds)
+            response = await self._create(
+                kwargs={**kwargs, **self._reasoning_extra_body()},
+                timeout_seconds=timeout_seconds,
+            )
 
         text = ""
         finish_reason: str | None = None

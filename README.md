@@ -139,6 +139,7 @@ Open http://localhost:3000
 | `LLM_BASE_URL` | API base URL | `https://api.openai.com/v1` |
 | `LLM_MODEL` | Model name | `gpt-4o` |
 | `LLM_BUDGET_PROFILE` | Token/call budget profile: `standard` / `lean` / `frugal` (only tightens contract limits) | `standard` |
+| `LLM_DISABLE_REASONING` | Disable provider-side reasoning/thinking for models that spend the completion budget on `reasoning_content` (currently auto-applied to `deepseek*`); set `false` to keep provider default | `true` |
 | `LLM_EMBEDDING_MODEL` | Embedding model | `text-embedding-3-small` |
 | `CORS_ORIGINS` | Comma-separated allowed frontend origins | local ports 3000/3001 |
 | `STT_API_KEY` | Optional API key for server-side speech recognition | (browser fallback when omitted) |

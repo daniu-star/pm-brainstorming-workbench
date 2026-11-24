@@ -424,6 +424,10 @@ def merge_role_results(
                 existing.evidence_refs = _merge_refs(
                     existing.evidence_refs, candidate.evidence_refs
                 )
+                if candidate.unverified_numbers:
+                    existing.unverified_numbers = _merge_refs(
+                        existing.unverified_numbers, candidate.unverified_numbers
+                    )
                 claim_ids[candidate.local_id] = existing.id
                 continue
             claim = Claim(
@@ -437,6 +441,7 @@ def merge_role_results(
                 created_product_version=state.version + 1,
                 confidence_level=str(candidate.confidence_level),
                 role_code=role_code,
+                unverified_numbers=list(candidate.unverified_numbers),
             )
             claims.append(claim)
             claim_by_key[key] = claim

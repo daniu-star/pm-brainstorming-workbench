@@ -376,6 +376,23 @@ def prompt_name_for_role(role_code: RoleCode | str) -> str:
     return name
 
 
+#: 结构化输出降级（供应商不支持 ``json_schema``）时，字段名只能靠提示词兜住：
+#: 真模型联调发现模型会自造 ``claim_id``/``content``/``confidence`` 等别名，
+#: 因此在对话最末尾再复述一次精确字段名（recency 比长 system 提示更有效）。
+SCHEMA_REMINDER = (
+    "再确认一次输出契约：只输出一个 JSON 对象（不要 markdown 代码块），顶层字段必须是 "
+    "role_code、display_text、claims、option_proposals、critical_issues、uncertainties、"
+    "suggested_experiments、simulated_perspective；其中 claims 的每一项必须使用 "
+    "local_id、kind、text、evidence_refs、source_message_ids、confidence_level、"
+    "confidence_reason 这些字段名，**不要**使用 claim_id/content/confidence/evidence "
+    "等别名；option_proposals 的每一项使用 local_id/title/summary。"
+    "为控制输出长度：display_text 不超过 320 字；claims 3 到 5 条、每条 text 不超过 100 字；"
+    "option_proposals 不超过 3 条、summary 不超过 80 字；critical_issues / uncertainties / "
+    "suggested_experiments 各不超过 3 条、每条不超过 60 字；confidence_reason 不超过 60 字。"
+    "宁可少给几条，也不要输出不完整的 JSON。"
+)
+
+
 def build_role_messages(
     role_code: RoleCode | str,
     context_bundle: ContextBundle,
@@ -395,6 +412,8 @@ def build_role_messages(
         if item.source_label and item.source_label != "role_protocol":
             content = f"【{item.source_label}】\n{content}"
         messages.append({"role": item.role, "content": content})
+    # 末尾复述字段名：供应商不支持 json_schema 时这是唯一可依赖的结构约束。
+    messages.append({"role": "user", "content": SCHEMA_REMINDER})
     return messages
 
 

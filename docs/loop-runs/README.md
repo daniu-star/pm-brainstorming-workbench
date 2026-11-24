@@ -132,7 +132,18 @@
 
 证据：`cd backend && ../.venv/Scripts/python.exe ../scripts/ac34_rollback_drill.py` → `ROLLBACK_DRILL_OK`，`ok: true`；基线 `sessions=14 / messages=25 / product_states=21 / runs=25 / steps=22 / events=96`，注入排队任务后 `runs=26 / events=97`，回滚后计数与注入后完全一致；`json_dir_fingerprint_before == after`。
 
-当前基线：**后端 657 用例 OK / 前端 249 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK**。
+## 第 16 批热修（AC-20 数字可追溯性 + 推理型模型适配，2026-11-24）
+
+| 修复 | 证据 | 验证 |
+| --- | --- | --- |
+| 无来源数字必须被标注，不能当事实 | 新增 `backend/services/number_guard.py`（`extract_numbers` / `number_is_traceable` / `verification_suggestion` / `audit_role_result`）；`CandidateClaim`/`Claim`/`CanvasNode` 增 `unverified_numbers`，节点增 `verification_suggestion`；画布橙色徽标「数字未验证 …」 | `test_number_guard.py`(18) + `test_canvas_projector.py`(2) + `test_brainstorm_runner.py`(1)；真模型 E2E 19 条论断中 7 个节点被标注，12/6/4 有来源未误标 |
+| 推理型模型把 completion 预算花在 reasoning 上导致 content 为空 | `Settings.llm_disable_reasoning`（默认开）+ `LLMClient._reasoning_extra_body()` → `extra_body={"thinking": {"type": "disabled"}}`；`SCHEMA_REMINDER` 在对话末尾复述字段名与长度上限 | 实测单角色 completion 1500→380，content 恢复；`test_llm_client.py` / `test_brainstorm*` 全绿 |
+| 供应商不支持 `json_schema` 时每次调用白付一次 400 | `LLMClient._json_schema_supported` 缓存降级结论，同进程后续直接 `json_object` | `test_json_schema_downgrade_is_cached_per_client`：3 次调用只有 1 次 400，上游调用从 8 降到 4–5 |
+| 模型把上下文里的 `[#seq]` 写进 `source_message_ids` 被误判越权 | `evidence_guard.normalize_message_refs` + `session_repo.list_session_message_refs`：序号确定性解析为本会话真实消息 ID（映射不到仍拒绝） | `test_evidence_guard.py::NormalizeMessageRefsTests`(3)；实跑四角色全部 `succeeded`（此前 3 个角色 `MODEL_OUTPUT_INVALID`） |
+
+证据：`cd backend && ../.venv/Scripts/python.exe ../scripts/ac20_number_provenance.py` → `run_status=succeeded`、`claim_count=19`、`unverified_nodes=7`、`calls=8 / prompt=19460 / completion=5786`；报告 `docs/ac20-number-provenance.md`，人工核对结论 `docs/ac20-number-provenance.annotation.md`（无来源数字 100% 标注、有来源数字 100% 未误标、`evidence_refs` 未编造）。
+
+当前基线：**后端 682 用例 OK / 前端 249 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对）**。
 
 ## 运行方式
 

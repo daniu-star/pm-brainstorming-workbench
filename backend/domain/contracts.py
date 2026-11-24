@@ -704,6 +704,8 @@ class Claim(StrictModel):
     created_product_version: int = 1
     confidence_level: Literal["low", "medium", "high"] | None = None
     role_code: RoleCode | None = None
+    # AC-20：论断里在来源原文中找不到的数字（未验证数字），由 services/number_guard.py 标注。
+    unverified_numbers: list[str] = Field(default_factory=list, max_length=MAX_REFS_PER_ITEM)
 
 
 class OptionItem(StrictModel):
@@ -858,6 +860,8 @@ class CandidateClaim(StrictModel):
     source_message_ids: list[str] = Field(default_factory=list, max_length=MAX_REFS_PER_ITEM)
     confidence_level: ConfidenceLevel = ConfidenceLevel.medium
     confidence_reason: str = Field(default="", max_length=300)
+    # AC-20：服务端在归并前标注的「来源原文里找不到的数字」（模型不填，由 number_guard 写）。
+    unverified_numbers: list[str] = Field(default_factory=list, max_length=MAX_REFS_PER_ITEM)
 
 
 class CandidateOption(StrictModel):
@@ -1001,6 +1005,9 @@ class CanvasNode(StrictModel):
     source_message_ids: list[str] = Field(default_factory=list, max_length=MAX_REFS_PER_ITEM)
     evidence_refs: list[str] = Field(default_factory=list, max_length=MAX_REFS_PER_ITEM)
     model_speculation: bool = False
+    # AC-20：来源原文里找不到的数字 + 给用户的验证建议（补来源与统计日期）。
+    unverified_numbers: list[str] = Field(default_factory=list, max_length=MAX_REFS_PER_ITEM)
+    verification_suggestion: str | None = Field(default=None, max_length=600)
 
 
 class CanvasBranch(StrictModel):
