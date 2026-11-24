@@ -230,5 +230,6 @@ cd frontend && npm run test:e2e                                             # �
 - 真实链路证据（浏览器 e2e / 完整旅程 / 报告路径 / 数字标注）：`docs/browser-qa.md`、
   `docs/full-journey-e2e.md`、`docs/audit-report-e2e.md`、`docs/ac20-number-provenance.md`
 - 可复用 Loop 技能包（可开源）：`skills/loop-engineering-product/SKILL.md`
+- **发版前一键体检**：`python scripts/pre_release_check.py`（文档体检 + 后端全量 + 前端类型/用例 + 真实浏览器 e2e + 备份校验恢复演练；服务没起时加 `--skip-browser`）
 - 模型连通性自检：`python scripts/check_llm.py`
 - 文档引用体检（CI 已接入）：`python scripts/verify_docs_refs.py --strict`
