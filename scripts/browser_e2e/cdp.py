@@ -14,7 +14,10 @@ import atexit
 import json
 import os
 import pathlib
+import shutil
+import signal
 import socket
+import shutil
 import subprocess
 import tempfile
 import time
@@ -29,12 +32,57 @@ CHROME_CANDIDATES = (
     os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
 )
 
+#: PATH 里可执行名（Linux/macOS CI：GitHub Actions 的 ubuntu 镜像自带 google-chrome）。
+CHROME_BINARIES = (
+    "google-chrome",
+    "google-chrome-stable",
+    "chromium",
+    "chromium-browser",
+    "chrome",
+    "Chrome",
+)
+
+
+def _user_data_base() -> pathlib.Path:
+    """Chrome 用户数据目录的父目录。
+
+    本机（以及部分 CI 镜像）``tempfile.gettempdir()`` 不可用时会回落到当前工作目录，
+    直接在那里建 ``browser-e2e-*`` 会把临时目录漏进仓库根。这里统一改放到
+    ``backend/.tmp_tests``（已 gitignore），并用 ``PM_BROWSER_E2E_TMP`` 可覆盖。
+    """
+
+    override = os.environ.get("PM_BROWSER_E2E_TMP")
+    if override:
+        base = pathlib.Path(override)
+    else:
+        tempdir = pathlib.Path(tempfile.gettempdir())
+        repo_root = pathlib.Path(__file__).resolve().parents[2]
+        if tempdir.resolve() == repo_root.resolve():
+            base = repo_root / "backend" / ".tmp_tests"
+        else:
+            base = tempdir
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
 
 def find_chrome() -> str:
+    """定位 Chrome 可执行文件：``CHROME_PATH`` → Windows 常见路径 → PATH 查找。"""
+
+    override = os.environ.get("CHROME_PATH", "").strip()
+    if override:
+        if not pathlib.Path(override).is_file():
+            raise RuntimeError(f"CHROME_PATH 指向的文件不存在：{override}")
+        return override
     for candidate in CHROME_CANDIDATES:
         if pathlib.Path(candidate).is_file():
             return candidate
-    raise RuntimeError("未找到 Chrome，可设 CHROME_PATH 环境变量指定")
+    for name in CHROME_BINARIES:
+        located = shutil.which(name)
+        if located:
+            return located
+    raise RuntimeError(
+        "未找到 Chrome：可设 CHROME_PATH 环境变量，或安装 google-chrome / chromium"
+    )
 
 
 def _free_port() -> int:
@@ -188,6 +236,12 @@ _OPEN_BROWSERS: set["Browser"] = set()
 
 
 def _kill_process_tree(process: subprocess.Popen) -> None:
+    """连同子进程一起结束 Chrome。
+
+    Windows：``taskkill /F /T``；POSIX：浏览器以独立进程组（``start_new_session``）
+    启动，直接对进程组发 SIGKILL，否则 renderer/zygote 子进程会挂住临时目录。
+    """
+
     if process.poll() is not None:
         return
     if os.name == "nt":
@@ -200,6 +254,11 @@ def _kill_process_tree(process: subprocess.Popen) -> None:
             )
         except Exception:  # noqa: BLE001 - 关闭期尽力而为
             pass
+    else:
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        except Exception:  # noqa: BLE001 - 关闭期尽力而为
+            pass
     try:
         process.kill()
     except Exception:  # noqa: BLE001 - 关闭期尽力而为
@@ -208,6 +267,21 @@ def _kill_process_tree(process: subprocess.Popen) -> None:
         process.wait(timeout=15)
     except Exception:  # noqa: BLE001 - 关闭期尽力而为
         pass
+
+
+def _remove_tree(path: pathlib.Path, attempts: int = 3) -> None:
+    """尽量删除临时目录：Windows 上行方句柄释放有延迟，重试几次再放弃。"""
+
+    for index in range(attempts):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            if index == attempts - 1:
+                return
+            time.sleep(0.25)
 
 
 def _shutdown_all_open_browsers() -> None:
@@ -228,11 +302,12 @@ class Browser:
         self._tmpdir = None
         self._closed = False
         if user_data_dir is None:
-            self._tmpdir = tempfile.TemporaryDirectory(
-                prefix="browser-e2e-", ignore_cleanup_errors=True
+            self._tmpdir = pathlib.Path(
+                tempfile.mkdtemp(prefix="browser-e2e-", dir=str(_user_data_base()))
             )
-            user_data_dir = self._tmpdir.name
-        self._log_path = pathlib.Path(tempfile.gettempdir()) / f"chrome-e2e-{self.port}.log"
+            user_data_dir = str(self._tmpdir)
+        log_base = self._tmpdir.parent if self._tmpdir is not None else _user_data_base()
+        self._log_path = log_base / f"chrome-e2e-{self.port}.log"
         self._log = self._log_path.open("w", encoding="utf-8", errors="replace")
         self.process = subprocess.Popen(
             [
@@ -258,6 +333,8 @@ class Browser:
             ],
             stdout=self._log,
             stderr=subprocess.STDOUT,
+            # POSIX 上让 Chrome 自成进程组，关闭时按组清理（CI 里尤其重要）。
+            start_new_session=(os.name != "nt"),
         )
         try:
             self._ws = self._connect()
@@ -286,7 +363,7 @@ class Browser:
         except Exception:  # noqa: BLE001 - 关闭期
             pass
         if self._tmpdir is not None:
-            self._tmpdir.cleanup()
+            _remove_tree(self._tmpdir)
 
     def _endpoint(self) -> str:
         deadline = time.time() + 45

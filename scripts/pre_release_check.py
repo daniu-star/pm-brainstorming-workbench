@@ -48,6 +48,7 @@ ALL_STEPS = (
     "frontend-tests",
     "browser-e2e",
     "backup-drill",
+    "db-report",
 )
 
 # 单步超时（秒）：给足 CI/慢盘余量
@@ -59,6 +60,7 @@ TIMEOUTS = {
     "frontend-tests": 600,
     "browser-e2e": 600,
     "backup-drill": 300,
+    "db-report": 120,
 }
 
 TAIL_LINES = 3
@@ -234,6 +236,24 @@ def step_browser_e2e() -> Result:
     return Result("browser-e2e", ok, time.time() - started, detail, _tail(out, lines=6))
 
 
+def step_db_report() -> Result:
+    """库增长快照：只读报告，不清理也不阻塞（体积异常由人判断）。"""
+
+    started = time.time()
+    code, out = _run(
+        [sys.executable, "scripts/db_maintenance.py", "report"],
+        cwd=REPO,
+        timeout=TIMEOUTS["db-report"],
+    )
+    ok = code == 0 and "数据库：" in out
+    match = re.search(r"文件大小：([0-9.]+KB)", out)
+    freelist = re.search(r"空闲页=(\d+) / ([0-9.]+KB)", out)
+    detail = "库大小 " + (match.group(1) if match else "未知")
+    if freelist:
+        detail += f"，空闲页 {freelist.group(1)}（{freelist.group(2)}）"
+    return Result("db-report", ok, time.time() - started, detail, _tail(out))
+
+
 def step_backup_drill() -> Result:
     started = time.time()
     code, out = _run(
@@ -284,6 +304,7 @@ STEPS = {
     "frontend-tests": step_frontend_tests,
     "browser-e2e": step_browser_e2e,
     "backup-drill": step_backup_drill,
+    "db-report": step_db_report,
 }
 
 

@@ -83,7 +83,8 @@
 - 事件保留：未压缩事件默认保留 7 天，压缩由 Worker 每小时驱动；Worker 不常驻时压缩与 410 水位都不推进，`end_audit` / `cancel_audit` 也会停在 `scheduled`。
 - 未登录访问未知 `/api/v2/*` 返回 **401** 而非 404：鉴权是中间件，在路由匹配前短路；PRD 未要求，前端已按 401/404 双兼容。
 - 前端测试栈仍是 `node --test`（另加 `react-dom/server` 真渲染），不是 vitest/RTL；本机 `registry.npmjs.org` 不可达，暂时没有组件级快照测试，浏览器级证据由 CDP 脚本补足。
-- 真模型调用、真浏览器 E2E、迁移与回滚演练不进 CI：需要模型额度、本机 Chrome 与独占的 8001/3001，只在发版前手工执行并留痕。
+- 真模型调用、迁移与回滚演练、AC-33/34 不进 CI：需要模型额度、本机权限演练与独占的 8001/3001，只在发版前手工执行并留痕。
+- 浏览器 e2e 的 **AC-01/19/31** 已进 CI（`browser-e2e` job：ubuntu 自带 Chrome，起 API + Next 后跑三场景，截图上传为 artifact）；这些场景只播种数据、不花模型额度。
 - 成本：真模型四角色一轮约 **25K tokens**（calls=8，prompt 19460 + completion 5786 = 25246）；AC-33 语音降级场景另耗 6–8K tokens。
 - Loop 技能包 `skills/loop-engineering-product/` 只在本仓库，尚未导出为独立仓库或推 GitHub（`scripts/export_loop_skill.py` 可导出）。
 - Loop Studio 的「测试执行」是模拟执行：产物带 `simulated=true` 且必须注明「未实际执行」，真实沙箱尚未实现。

@@ -39,6 +39,74 @@ jobs:
         working-directory: .
         run: python scripts/verify_docs_refs.py --strict
 
+  browser-e2e:
+    name: browser e2e (AC-01/19/31, real Chrome)
+    # 真浏览器验收：起 API + Next 前端 + 无头 Chrome（CDP），跑三个不花模型额度的场景。
+    # AC-33（摄像头拒绝后完成文字审计）需要真模型生成开场问题，因此不进 CI。
+    runs-on: ubuntu-latest
+    env:
+      # 播种脚本与 API 必须指向同一个库；用独立文件避免污染其它 job。
+      DATABASE_URL: sqlite:///./data/e2e.db
+      PYTHONPATH: .
+      PYTHONIOENCODING: utf-8
+      LLM_API_KEY: ""
+      NEXT_PUBLIC_API_URL: http://127.0.0.1:8001
+      PM_API_URL: http://127.0.0.1:8001
+      PM_WEB_URL: http://127.0.0.1:3001
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: install backend deps
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: install frontend deps
+        working-directory: frontend
+        run: npm ci
+      - name: chrome version
+        # ubuntu-latest 自带 google-chrome-stable；cdp.find_chrome() 会从 PATH 里找到它。
+        run: google-chrome --version
+      - name: start api
+        working-directory: backend
+        run: |
+          mkdir -p data
+          nohup python -m uvicorn main:app --host 127.0.0.1 --port 8001 > ../api.log 2>&1 &
+      - name: start web
+        working-directory: frontend
+        run: |
+          nohup npm run dev -- --hostname 127.0.0.1 --port 3001 > ../web.log 2>&1 &
+      - name: wait for services
+        run: |
+          for _ in $(seq 1 60); do
+            api=$(curl -s -o /dev/null -w "%{http_code}" "$PM_API_URL/health" || true)
+            web=$(curl -s -o /dev/null -w "%{http_code}" "$PM_WEB_URL/" || true)
+            if [ "$api" = "200" ] && [ "$web" = "200" ]; then echo "services ready"; exit 0; fi
+            sleep 2
+          done
+          echo "--- api.log ---"; tail -n 60 api.log || true
+          echo "--- web.log ---"; tail -n 60 web.log || true
+          exit 1
+      - name: run AC-01 / AC-19 / AC-31
+        # 播种会话走真实仓储（不调模型），场景用真 Chrome 断言页面行为。
+        working-directory: backend
+        run: python ../scripts/browser_e2e/run_browser_e2e.py AC-01 AC-19 AC-31
+      - name: upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-e2e-screenshots
+          path: docs/browser-qa/e2e/*.png
+          if-no-files-found: ignore
+          retention-days: 7
+
   frontend:
     name: frontend (node 20)
     runs-on: ubuntu-latest

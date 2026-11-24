@@ -39,7 +39,7 @@ cd backend && ../.venv/Scripts/python.exe ../scripts/ac34_rollback_drill.py
 ../.venv/Scripts/python.exe scripts/db_maintenance.py vacuum
 ```
 
-CI 配置见 `.github/workflows/ci.yml`（backend：安装依赖 → 全量测试 → `import main` 冒烟 → 文档引用体检；frontend：`npm ci` → tsc → test → build → test:e2e）。
+CI 配置见 `.github/workflows/ci.yml`（backend：安装依赖 → 全量测试 → `import main` 冒烟 → 文档引用体检；frontend：`npm ci` → tsc → test → build → test:e2e；browser-e2e：起 API + Next 后用真 Chrome 跑 AC-01/19/31，截图作为 artifact 上传）。
 
 ## 2. 部署顺序
 

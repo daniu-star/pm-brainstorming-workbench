@@ -154,5 +154,7 @@ cd backend
 - 本机 venv 的 Python 3.12 会把子进程句柄继承列表收窄，Chrome 的沙箱子进程会以
   `STATUS_BREAKPOINT(0x80000003)` 立刻退出，因此 headless 启动追加 `--no-sandbox`
   （只影响验收浏览器，不影响被测应用的安全模型）；
-- 该脚本不进 CI（CI 无图形栈/Chrome），属于发布前本地必跑项，见
-  `docs/v4-release-checklist.md` §1。
+- CI 里有一个独立 job 跑 **AC-01 / AC-19 / AC-31**（`.github/workflows/ci.yml` 的 `browser-e2e`：
+  ubuntu 自带 google-chrome，起 API + Next 后直接跑脚本；`cdp.find_chrome()` 会从 PATH 找到
+  `google-chrome`，POSIX 下用独立进程组 `SIGKILL` 清理子进程）。AC-33（摄像头拒绝后完成文字审计）
+  需要真模型生成开场问题，仍属发布前本地必跑项，见 `docs/v4-release-checklist.md` §1。

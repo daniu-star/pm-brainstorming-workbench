@@ -196,13 +196,20 @@
 | 每轮头脑风暴会写 4-8 条 `steps.input_snapshot_json`（发给模型的完整上下文）与角色结果 `output_json`，候选表另有 `payload_json`；这些只是「重试复用 + 排查」用的中间数据，长期不清理会让库随任务量线性增长（用户可见的正文只有 messages / product_states） | 契约新增 `LLM_PAYLOAD_RETENTION_DAYS = 90`（0 关闭）；`run_repo.prune_intermediate_payloads` 只清「终态 + 已结束 + 早于窗口」的 Run，**跳过**重试父 Run（AC-14 复用）与 `loops.latest_run_id`（Loop 重试），做法是删 `step_candidates` 行 + 把 `input_snapshot_json`/`output_json` 置 `"{}"`，Run/Step 骨架与状态、错误码全部保留；`RunWorker.tick()` 在维护阶段按同一间隔调用 | `backend/tests/test_payload_retention.py` 3 例（只清窗口外、跳过重试父 Run、跳过 loop latest、limit 分批且幂等）+ `test_worker_maintenance.py` 补 1 例；后端全量 720 用例 OK |
 | SQLite 删除行后不会自动缩小文件（`freelist` 页一直占着磁盘），此前没有任何工具能回答「库为什么这么大、还能不能变小」 | 新增 `scripts/db_maintenance.py`：`report` 用 `dbstat` 输出每表字节 + 行数 + 文本列总长（无 dbstat 时按页数估算），`vacuum` 执行 VACUUM 并回报前后体积、回收空闲页 | `backend/tests/test_db_maintenance.py` 3 例（报告含表名/行数、VACUUM 后 `freelist_pages=0` 且 `integrity_check=ok`、JSON 可序列化）；线上库实测 `freelist=16 页` → VACUUM 后 0 页 |
 
-当前基线：**后端 720 用例 OK / 前端 260 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（7 步 101s） / 磁盘清理脚本（报告 + `--apply`） / 中间载荷 90 天保留策略 + `db_maintenance.py report|vacuum`**。
+## 第 27 批（浏览器 e2e 进 CI + 体检加库增长步骤，2026-11-24）
+
+| 问题 | 修复 | 证据 |
+| --- | --- | --- |
+| 真实浏览器验收（AC-01/19/31）只在本机跑过，CI 里没有，回归靠人记；且 `cdp.py` 只认 Windows 的 Chrome 路径、只按 `taskkill` 清理进程树，Linux runner 上跑不起来 | `cdp.find_chrome()` 改为 `CHROME_PATH` → Windows 常见路径 → PATH（`google-chrome`/`chromium` 等）；POSIX 下 Chrome 以独立进程组启动、关闭时 `killpg(SIGKILL)`；新增 CI job `browser-e2e`（ubuntu 自带 Chrome，起 API + Next 后跑三场景，截图作 artifact） | `scripts/browser_e2e/run_browser_e2e.py AC-01 AC-19 AC-31` 本机仍全 PASS（AC-01 单跑 9.4s）；`yaml.safe_load` 校验通过（backend 6 / browser-e2e 11 / frontend 9 步） |
+| 发版体检不看库增长，删了一堆数据也不知道文件有没有瘦 | `pre_release_check.py` 新增 `db-report` 步骤（`db_maintenance.py report`，只读；输出库大小与空闲页），排在 backup-drill 之后 | `python scripts/pre_release_check.py --only docs,db-report` → `PRE_RELEASE_OK 2 步 / 2.3s`，`db-report` 报「库大小 504.0KB，空闲页 0」；自检 7 例仍 OK |
+
+当前基线：**后端 720 用例 OK / 前端 260 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（8 步，含 db-report） / 磁盘清理脚本（报告 + `--apply`） / 中间载荷 90 天保留策略 + `db_maintenance.py report|vacuum`**。
 
 ## 第 22 批（发版前一键体检，2026-11-24）
 
 | 问题 | 修复 | 证据 |
 | --- | --- | --- |
-| 发版前要记住 7 条命令、逐个判断结果容易漏项：文档体检、后端全量、前端类型/用例、真实浏览器 e2e、备份演练各自有输出格式，人工汇总易出错 | 新增 `scripts/pre_release_check.py`：按 `docs → backend-import → backend-tests → frontend-types → frontend-tests → browser-e2e → backup-drill` 串行执行，逐步打印 `[OK]/[FAIL]` 与耗时，末尾给 `PRE_RELEASE_OK` / `PRE_RELEASE_FAILED`；支持 `--list`、`--only`、`--skip`、`--skip-browser`、`--json`、`--keep-going` | 实测 `PRE_RELEASE_OK  7 步 / 101.3s`（docs 0.7s、backend-import 1.6s、backend-tests 69.4s、frontend-types 2.7s、frontend-tests 9.9s、browser-e2e 14.7s 3/3、backup-drill 2.3s） |
+| 发版前要记住 7 条命令、逐个判断结果容易漏项：文档体检、后端全量、前端类型/用例、真实浏览器 e2e、备份演练各自有输出格式，人工汇总易出错 | 新增 `scripts/pre_release_check.py`：按 `docs → backend-import → backend-tests → frontend-types → frontend-tests → browser-e2e → backup-drill → db-report` 串行执行，逐步打印 `[OK]/[FAIL]` 与耗时，末尾给 `PRE_RELEASE_OK` / `PRE_RELEASE_FAILED`；支持 `--list`、`--only`、`--skip`、`--skip-browser`、`--json`、`--keep-going` | 实测 `PRE_RELEASE_OK  8 步`（docs 0.7s、backend-import 1.6s、backend-tests 69.4s、frontend-types 2.7s、frontend-tests 9.9s、browser-e2e 14.7s 3/3、backup-drill 2.3s、db-report 1.1s） |
 | 服务没启动时浏览器 e2e 会白等到超时，且报错只剩「连接被拒绝」 | `step_browser_e2e` 先探 `API/health` 与 Web 首页，未就绪直接失败并提示「先运行 start.bat，或用 --skip-browser」 | `backend/tests/test_pre_release_check.py` 7 例（步骤/超时表一致、`--list`、未知步骤退出 2、`--only`/`--skip` 过滤、输出裁剪、未就绪提示） |
 
 ## 第 23 批（磁盘卫生：清理脚本 + 浏览器进程树泄漏修复，2026-11-24）
