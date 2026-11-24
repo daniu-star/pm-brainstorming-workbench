@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import base64
+import atexit
 import json
 import os
 import pathlib
@@ -179,11 +180,53 @@ class Page:
         return errors
 
 
+
+# 打开中的浏览器实例：进程异常退出（Ctrl-C、断言失败、被强杀）时也要收掉 Chrome 进程树，
+# 否则 headless Chrome 的 crashpad/gpu/renderer 子进程会继续持有 user-data-dir，
+# 临时配置目录删不掉、还会持续占内存与磁盘。
+_OPEN_BROWSERS: set["Browser"] = set()
+
+
+def _kill_process_tree(process: subprocess.Popen) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=20,
+            )
+        except Exception:  # noqa: BLE001 - 关闭期尽力而为
+            pass
+    try:
+        process.kill()
+    except Exception:  # noqa: BLE001 - 关闭期尽力而为
+        pass
+    try:
+        process.wait(timeout=15)
+    except Exception:  # noqa: BLE001 - 关闭期尽力而为
+        pass
+
+
+def _shutdown_all_open_browsers() -> None:
+    for browser in list(_OPEN_BROWSERS):
+        try:
+            browser._shutdown_process()
+        except Exception:  # noqa: BLE001 - 解释器退出期
+            pass
+
+
+atexit.register(_shutdown_all_open_browsers)
+
+
 class Browser:
     def __init__(self, *, user_data_dir: str | None = None, window_size: str = "1440,960"):
         self.chrome_path = os.environ.get("CHROME_PATH") or find_chrome()
         self.port = _free_port()
         self._tmpdir = None
+        self._closed = False
         if user_data_dir is None:
             self._tmpdir = tempfile.TemporaryDirectory(
                 prefix="browser-e2e-", ignore_cleanup_errors=True
@@ -207,6 +250,7 @@ class Browser:
                 "--disable-gpu",
                 "--disable-dev-shm-usage",
                 "--disable-features=Translate,MediaRouter",
+                "--disk-cache-size=1048576",
                 # 验收需要验证 TTS 播放态（麦克风随之禁用），headless 下放开自动播放限制
                 "--autoplay-policy=no-user-gesture-required",
                 f"--window-size={window_size}",
@@ -222,6 +266,7 @@ class Browser:
             raise
         self._counter = 0
         self._pending: dict[int, dict[str, Any]] = {}
+        _OPEN_BROWSERS.add(self)
 
     def _log_tail(self, limit: int = 1200) -> str:
         try:
@@ -231,12 +276,11 @@ class Browser:
             return ""
 
     def _shutdown_process(self) -> None:
-        try:
-            if self.process.poll() is None:
-                self.process.kill()
-            self.process.wait(timeout=10)
-        except Exception:  # noqa: BLE001 - 关闭期
-            pass
+        if self._closed:
+            return
+        _OPEN_BROWSERS.discard(self)
+        _kill_process_tree(self.process)
+        self._closed = True
         try:
             self._log.close()
         except Exception:  # noqa: BLE001 - 关闭期

@@ -151,11 +151,11 @@ node -e "…"   # 或直接在工作流工具里执行 skills/loop-engineering-p
 - **P0（SRV-01）**：`command_service.reconcile_control_intents` 只在测试里被手工调用，生产代码无人驱动 →
   活跃 Run 上 `end_audit` 后审计永久停在 `closing`、`control.related_run_id=None`；`cancel_audit` 后会话永久
   停在 `auditing`（`start_audit`→AUDIT_ACTIVE、`end/cancel_audit`→AUDIT_CLOSED，会话彻底不可用）。
-  复现：`backend/.tmp_tests/proof_a_control_intents.py`。
+  复现：一次性探针脚本 proof_a_control_intents.py（当时临时放在 backend 的 .tmp_tests 目录下运行，未入库；对应回归用例已固化在 tests/test_worker_controls.py）。
 - **P1（SRV-02）**：`workflows/runner.py` 先把 step 标 `succeeded` 再提交 outcome，租约丢失时丢弃结果 →
-  `run.status=succeeded` 但无 assistant 消息、product_state 未推进（空成功）。复现 `backend/.tmp_tests/proof_b_step_before_commit.py`。
+  `run.status=succeeded` 但无 assistant 消息、product_state 未推进（空成功）。复现：一次性探针脚本 proof_b_step_before_commit.py（临时目录下运行，未入库；对应回归用例已固化为 tests/test_crash_atomicity.py 的崩溃注入）。
 - **P1（SRV-03）**：`_force_terminal` 不处理 loops/loop_rounds，提交失败后闭环永久 `running`
-  （`start_loop`→LOOP_ACTIVE、`loop_decision`→LOOP_NOT_AWAITING_DECISION）。复现 `backend/.tmp_tests/proof_c_loop_stuck.py`。
+  （`start_loop`→LOOP_ACTIVE、`loop_decision`→LOOP_NOT_AWAITING_DECISION）。复现：一次性探针脚本 proof_c_loop_stuck.py（临时目录下运行，未入库；对应回归用例已固化在 tests/test_worker_controls.py 的闭环收口用例）。
 - **P1（FE-DX-01）**：`retryFailedRun`/`cancelRun` 只 toast 不抛错，loop/audit 页无条件提示成功 → 失败被当成功。
 - **P1（FE-DX-02）**：历史闭环下拉未按 session 过滤，混入其他会话的闭环。
 - **P1（FE-AUDIT-01）**：`hydrateLoop` 无 `loop_version` 单调守卫，并发 GET 乱序会把 `awaiting_decision` 回退成

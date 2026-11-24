@@ -177,7 +177,7 @@
 | --- | --- | --- |
 | 发版第一步「备份 `app.db` + `data/sessions/`」只有手工 `copy` 的建议：库正被 Worker 写入时 `copy` 可能拿到半页状态；备份是否可用也从没演练过，真出事才发现缺表/损坏 | 新增 `scripts/backup_restore.py`：`backup` 用 SQLite online backup API（写入进行中也能拿一致性快照）+ 复制 `data/sessions/` + 写 `manifest.json`（db sha256/字节数/逐表计数/JSON 指纹），支持 `--keep N` 轮转；`verify` 校验哈希/manifest 计数/`integrity_check`/外键；`drill` 把备份恢复到临时目录、`initialize_database()` 后逐个会话走 `get_session` + `list_session_runs` 读路径 | 实测：`BACKUP_OK`（585,728 字节 / 19 个 JSON 文件）→ `VERIFY_OK sessions=14 messages=25 runs=25 integrity=ok fk=0` → `RESTORE_DRILL_OK sessions=14 readable_sessions=14`；命令已进 `docs/v4-release-checklist.md` 第 1 节；回归 `tests/test_backup_restore.py` 4 例（备份后 manifest 计数一致、篡改后 verify 必须失败、drill 恢复后应用层可读、`--keep` 轮转）；期间修掉脚本自身缺陷：同一秒内连续备份会 `FileExistsError`（改为时间戳 + 序号后缀） |
 
-当前基线：**后端 704 用例 OK / 前端 254 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（7 步 101s）**。
+当前基线：**后端 709 用例 OK / 前端 254 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（7 步 101s） / 磁盘清理脚本（报告 + `--apply`）**。
 
 ## 第 22 批（发版前一键体检，2026-11-24）
 
@@ -185,6 +185,13 @@
 | --- | --- | --- |
 | 发版前要记住 7 条命令、逐个判断结果容易漏项：文档体检、后端全量、前端类型/用例、真实浏览器 e2e、备份演练各自有输出格式，人工汇总易出错 | 新增 `scripts/pre_release_check.py`：按 `docs → backend-import → backend-tests → frontend-types → frontend-tests → browser-e2e → backup-drill` 串行执行，逐步打印 `[OK]/[FAIL]` 与耗时，末尾给 `PRE_RELEASE_OK` / `PRE_RELEASE_FAILED`；支持 `--list`、`--only`、`--skip`、`--skip-browser`、`--json`、`--keep-going` | 实测 `PRE_RELEASE_OK  7 步 / 101.3s`（docs 0.7s、backend-import 1.6s、backend-tests 69.4s、frontend-types 2.7s、frontend-tests 9.9s、browser-e2e 14.7s 3/3、backup-drill 2.3s） |
 | 服务没启动时浏览器 e2e 会白等到超时，且报错只剩「连接被拒绝」 | `step_browser_e2e` 先探 `API/health` 与 Web 首页，未就绪直接失败并提示「先运行 start.bat，或用 --skip-browser」 | `backend/tests/test_pre_release_check.py` 7 例（步骤/超时表一致、`--list`、未知步骤退出 2、`--only`/`--skip` 过滤、输出裁剪、未就绪提示） |
+
+## 第 23 批（磁盘卫生：清理脚本 + 浏览器进程树泄漏修复，2026-11-24）
+
+| 问题 | 修复 | 证据 |
+| --- | --- | --- |
+| 本机 D 盘只剩 1.2GB：`npm config get cache` 指向 `D:\trae\node_cache`，实测 **18.1GB / 22.8 万个文件**，且每次安装依赖只增不减 | 清理 npm 缓存（`npm cache clean --force`）释放约 24GB；新增 `scripts/disk_cleanup.py`：默认只报告本项目可重建产物（e2e 临时 user-data-dir、`backend/.tmp_tests`、`.tmp_*` 脚本、超期备份、可选 npm 缓存 / `.next`），`--apply` 才删除，`--keep-backups N` 控制备份轮转 | 实测 D 盘 1.2GB → 25.5GB 空闲；`--apply` 清空遗留 e2e 日志与临时目录；`backend/tests/test_disk_cleanup.py` 5 例（文件/字节统计、备份轮转、类别过滤、临时产物识别、`--json` 报告） |
+| e2e 崩溃/中断后无头 Chrome 子进程成树残留：`process.kill()` 只杀父进程，crashpad/gpu/renderer 继续持有 `user-data-dir`，临时配置目录删不掉（`Device or resource busy`），还持续占内存 | `scripts/browser_e2e/cdp.py`：Windows 下用 `taskkill /F /T /PID` 杀整棵进程树；新增 `atexit` 兜底关闭所有打开中的 Browser；`_shutdown_process` 幂等；加 `--disk-cache-size=1048576` 限制临时缓存 | 手工清掉 1 棵 8 进程的遗留树后，跑 `run_browser_e2e.py AC-01 AC-19 AC-31` 退出码 0，且事后 `browser-e2e-*` 临时目录 0 个、残留 Chrome 进程 0 个 |
 
 ## 运行方式
 
