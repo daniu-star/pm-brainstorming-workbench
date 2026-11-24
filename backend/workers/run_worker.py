@@ -183,17 +183,25 @@ class RunWorker:
                     pruned_codes = int(
                         auth_repo.prune_expired_codes(db, now_epoch=now_epoch)
                     )
+                    pruned_payloads = 0
+                    if int(C.LLM_PAYLOAD_RETENTION_DAYS) > 0:
+                        payload_stats = run_repo.prune_intermediate_payloads(
+                            db,
+                            before_iso=_iso_days_ago(C.LLM_PAYLOAD_RETENTION_DAYS),
+                        )
+                        pruned_payloads = int(payload_stats.get("steps", 0))
                 except Exception:  # pragma: no cover - 清理失败不应阻塞任务执行
                     logger.exception(
                         "event=worker.maintenance_failed worker=%s", self.worker_id
                     )
                     pruned_idempotency = 0
                     pruned_codes = 0
+                    pruned_payloads = 0
                 self._last_maintenance = now_epoch
-                if pruned_idempotency or pruned_codes:
+                if pruned_idempotency or pruned_codes or pruned_payloads:
                     logger.info(
-                        "event=worker.maintenance worker=%s idempotency=%d auth_codes=%d",
-                        self.worker_id, pruned_idempotency, pruned_codes,
+                        "event=worker.maintenance worker=%s idempotency=%d auth_codes=%d payloads=%d",
+                        self.worker_id, pruned_idempotency, pruned_codes, pruned_payloads,
                     )
             # 控制意图只登记、不回执（PRD FR-07）：在活跃 Run 上提交 end_audit / cancel_audit 时
             # 命令层只写 control 行，保留旧 Run 正常收尾；必须由 Worker 每轮扫描、在旧 Run 终结后

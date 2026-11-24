@@ -189,7 +189,14 @@
 | --- | --- | --- |
 | 两个页面只有「纯函数 + 文件 token 正则」断言（`tests/audit-page.test.cjs`、`tests/loop-page.test.cjs`）：页面里的条件渲染分支整段删掉，测试仍然是绿的 | 新增 `frontend/tests/pages-render.test.cjs`，用 `react-dom/server` 渲染**整个页面组件**；为 `next/navigation`（useParams/useSearchParams/useRouter）与 `next/link` 提供零依赖替身，并用 `useSyncExternalStore` 的 server snapshot 指向真实 snapshot，使 SSR 能读到播种的 store 状态；`tsconfig.render.json` 纳入两个页面 | 6 例全绿：完成态审计渲染「报告摘要」「维度评估」与问题原文；读取失败渲染错误态且不出现「开始审计」；会话未加载禁用开始按钮并给「重新加载会话」；闭环页阶段门文案；允许启动时的启动面板（含范围/轮次/目标分）；加载中态。前端 254 → **260** 用例、`tsc --noEmit` 0 错 |
 
-当前基线：**后端 713 用例 OK / 前端 260 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（7 步 101s） / 磁盘清理脚本（报告 + `--apply`）**。
+## 第 26 批（中间载荷保留策略 + 数据库增长报告，2026-11-24）
+
+| 问题 | 修复 | 证据 |
+| --- | --- | --- |
+| 每轮头脑风暴会写 4-8 条 `steps.input_snapshot_json`（发给模型的完整上下文）与角色结果 `output_json`，候选表另有 `payload_json`；这些只是「重试复用 + 排查」用的中间数据，长期不清理会让库随任务量线性增长（用户可见的正文只有 messages / product_states） | 契约新增 `LLM_PAYLOAD_RETENTION_DAYS = 90`（0 关闭）；`run_repo.prune_intermediate_payloads` 只清「终态 + 已结束 + 早于窗口」的 Run，**跳过**重试父 Run（AC-14 复用）与 `loops.latest_run_id`（Loop 重试），做法是删 `step_candidates` 行 + 把 `input_snapshot_json`/`output_json` 置 `"{}"`，Run/Step 骨架与状态、错误码全部保留；`RunWorker.tick()` 在维护阶段按同一间隔调用 | `backend/tests/test_payload_retention.py` 3 例（只清窗口外、跳过重试父 Run、跳过 loop latest、limit 分批且幂等）+ `test_worker_maintenance.py` 补 1 例；后端全量 720 用例 OK |
+| SQLite 删除行后不会自动缩小文件（`freelist` 页一直占着磁盘），此前没有任何工具能回答「库为什么这么大、还能不能变小」 | 新增 `scripts/db_maintenance.py`：`report` 用 `dbstat` 输出每表字节 + 行数 + 文本列总长（无 dbstat 时按页数估算），`vacuum` 执行 VACUUM 并回报前后体积、回收空闲页 | `backend/tests/test_db_maintenance.py` 3 例（报告含表名/行数、VACUUM 后 `freelist_pages=0` 且 `integrity_check=ok`、JSON 可序列化）；线上库实测 `freelist=16 页` → VACUUM 后 0 页 |
+
+当前基线：**后端 720 用例 OK / 前端 260 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（7 步 101s） / 磁盘清理脚本（报告 + `--apply`） / 中间载荷 90 天保留策略 + `db_maintenance.py report|vacuum`**。
 
 ## 第 22 批（发版前一键体检，2026-11-24）
 

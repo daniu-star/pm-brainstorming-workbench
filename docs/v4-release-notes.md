@@ -8,7 +8,7 @@
 
 | 检查项 | 结果 |
 | --- | --- |
-| 后端全量 | `Ran 713 tests` / OK（含 M2/M3、闭环、数据生命周期、崩溃注入、旧 ID 别名、AC-20 数字守卫、结项报告容错、Worker 卡死诊断、维护性清理） |
+| 后端全量 | `Ran 720 tests` / OK（含 M2/M3、闭环、数据生命周期、崩溃注入、旧 ID 别名、AC-20 数字守卫、结项报告容错、Worker 卡死诊断、维护性清理） |
 | 前端类型 + 用例 | `npx tsc --noEmit` 0 错；`npm test` **260** 用例 pass（含页面级渲染 6 例） |
 | 前端构建 + 冒烟 | `npm run build` exit 0（7 条路由，含 `/session/[id]/audit` 8.11 kB）；`npm run test:e2e` 1 pass |
 | 契约 parity | `tests.test_contract_parity` **13** 例，前后端枚举/常量/Literal 按序比对 |
@@ -93,7 +93,7 @@
 ## 7. 如何复跑验收
 
 ```bash
-# 后端全量（713）
+# 后端全量（720）
 cd backend && ../.venv/Scripts/python.exe -m unittest discover -s tests
 
 # 前端类型、用例、构建、冒烟

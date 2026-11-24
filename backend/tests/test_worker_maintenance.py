@@ -19,10 +19,12 @@ import unittest
 from sqlalchemy import select
 
 import domain.contracts as C
-from repositories import auth_repo, database, run_repo
+from repositories import auth_repo, database, run_repo, session_repo
 from repositories.database import (
     AuthCodeRow,
     IdempotencyRow,
+    RunRow,
+    StepRow,
     session_scope,
 )
 from workers.run_worker import RunWorker
@@ -167,6 +169,58 @@ class WorkerMaintenanceTests(unittest.TestCase):
         self._add_idempotency("old-2", created_at="2020-01-01T00:00:00Z")
         worker.tick()
         self.assertEqual(self._idempotency_ids(), {"old-2"})
+
+
+
+    def test_tick_prunes_intermediate_payloads(self) -> None:
+        """第 26 批：老 Run 的上下文快照/角色结果由同一维护阶段清掉（保留骨架）。"""
+
+        with session_scope() as db:
+            session = session_repo.create_session(
+                db, owner_email=OWNER, problem_statement="载荷清理"
+            )
+            db.add(
+                RunRow(
+                    id="run-old-payload",
+                    session_id=session.id,
+                    owner_email=OWNER,
+                    request_id="req-old-payload",
+                    action="brainstorm",
+                    input_hash="hash",
+                    base_session_version=1,
+                    base_product_version=1,
+                    status=C.RunStatus.succeeded.value,
+                    created_at="2020-01-01T00:00:00Z",
+                    finished_at="2020-01-02T00:00:00Z",
+                )
+            )
+            db.add(
+                StepRow(
+                    id="step-old-payload",
+                    run_id="run-old-payload",
+                    logical_key="brainstorm.generate",
+                    kind="brainstorm",
+                    status=C.StepStatus.succeeded.value,
+                    attempt_count=1,
+                    input_hash="hash",
+                    input_snapshot_json='{"messages": [{"content": "长上下文"}]}',
+                    output_json='{"result": {"claims": []}}',
+                    created_at="2020-01-01T00:00:00Z",
+                    finished_at="2020-01-02T00:00:00Z",
+                )
+            )
+
+        worker = _NoExecWorker()
+        worker._last_maintenance = 0.0
+        self.assertFalse(worker.tick())
+
+        with session_scope() as db:
+            step = db.get(StepRow, "step-old-payload")
+            self.assertEqual(step.input_snapshot_json, "{}")
+            self.assertEqual(step.output_json, "{}")
+            # 骨架仍在：Run 行、Step 行与状态都没有丢。
+            self.assertEqual(db.get(RunRow, "run-old-payload").status, C.RunStatus.succeeded.value)
+        self.assertGreater(worker._last_maintenance, 0.0)
 
 
 if __name__ == "__main__":  # pragma: no cover

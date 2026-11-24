@@ -52,6 +52,10 @@ EVENT_COMPACT_INTERVAL_SECONDS = 3600
 IDEMPOTENCY_RETENTION_DAYS = 7
 #: 维护性清理（幂等记录 / 过期验证码）的触发间隔，默认 6 小时。
 MAINTENANCE_INTERVAL_SECONDS = 6 * 3600
+#: 中间载荷（步骤上下文快照 / 角色结果 JSON / 候选表）保留天数，默认 90 天；``0`` 表示关闭。
+#: 这些数据只服务于「重试复用」与故障排查，不属于用户可见记录；长期保留会让库随任务量
+#: 线性增长（一次四角色头脑风暴就有 4-8 条上下文快照 + 候选 JSON）。
+LLM_PAYLOAD_RETENTION_DAYS = 90
 
 # FR-08 预算档位：只允许在默认限额基础上**收紧**，用于低成本环境（如个人额度）。
 # 通过环境变量 LLM_BUDGET_PROFILE=standard|lean|frugal 选择，写入 Run.budget_json 后可复现。

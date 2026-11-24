@@ -234,3 +234,4 @@ cd frontend && npm run test:e2e                                             # �
 - 模型连通性自检：`python scripts/check_llm.py`
 - 文档引用体检（CI 已接入）：`python scripts/verify_docs_refs.py --strict`
 - 磁盘清理（可重建产物，默认只报告）：`python scripts/disk_cleanup.py`（确认后 `--apply`，npm 缓存用 `--npm-cache`）
+- 数据库增长与回收：`python scripts/db_maintenance.py report`（每表字节/行数/文本列），`python scripts/db_maintenance.py vacuum`（回收删除行留下的空闲页）

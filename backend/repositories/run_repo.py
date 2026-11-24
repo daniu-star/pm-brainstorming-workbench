@@ -24,6 +24,7 @@ from domain.contracts import (
     LoopUpdatedPayload,
     RunStatus,
     StepStatus,
+    TERMINAL_RUN_STATUSES,
     canonical_json,
     new_id,
     utc_now_iso,
@@ -32,6 +33,7 @@ from domain.errors import AppError, ErrorCode
 from repositories.database import (
     EventRow,
     IdempotencyRow,
+    LoopRow,
     RunRow,
     StepCandidateRow,
     StepRow,
@@ -982,3 +984,76 @@ def prune_idempotency(db: Session, *, before_iso: str, limit: int = 5000) -> int
         )
     )
     return int(result.rowcount or 0)
+
+def prune_intermediate_payloads(
+    db: Session, *, before_iso: str, limit: int = 200
+) -> dict[str, int]:
+    """清掉老 Run 的中间载荷，返回 ``{"runs","steps","candidates"}`` 计数。
+
+    只动「终态 + 已结束 + 早于 ``before_iso``」的 Run，并且**跳过**两类 Run：
+
+    * 被任何子 Run 引用为 ``parent_run_id``（AC-14 重试要复用父 Run 已成功角色的
+      ``steps.output_json``，清掉就退化成整轮重跑）；
+    * 被 ``loops.latest_run_id`` 指向（Loop Studio 的重试要读最近一轮产物）。
+
+    清理内容：删除 ``step_candidates`` 行（候选 ID 已被合并进 ProductState，画布只读
+    ProductState 里的字符串 ID，不再回查候选表），并把 ``steps.input_snapshot_json``
+    （发给模型的上下文快照）与 ``steps.output_json``（角色结果 JSON）置为 ``"{}"``。
+    Run/Step 行本身保留，状态与错误码仍可查——这是「保留审计骨架、丢中间正文」。
+    """
+
+    # 只挑「还有中间载荷可清」的 Run：否则同一批 Run 会被反复选中，limit 失去意义
+    # （第二次调用仍返回同样的 runs 计数，看起来像刚清过又清了一次）。
+    ids = list(
+        db.execute(
+            select(RunRow.id)
+            .where(
+                or_(
+                    RunRow.id.in_(
+                        select(StepRow.run_id).where(
+                            or_(
+                                StepRow.input_snapshot_json != "{}",
+                                and_(
+                                    StepRow.output_json.is_not(None),
+                                    StepRow.output_json != "{}",
+                                ),
+                            )
+                        )
+                    ),
+                    RunRow.id.in_(select(StepCandidateRow.run_id)),
+                )
+            )
+            .where(RunRow.status.in_([s.value for s in TERMINAL_RUN_STATUSES]))
+            .where(RunRow.finished_at.is_not(None))
+            .where(RunRow.finished_at < before_iso)
+            .where(RunRow.id.not_in(select(RunRow.parent_run_id).where(RunRow.parent_run_id.is_not(None))))
+            .where(RunRow.id.not_in(select(LoopRow.latest_run_id).where(LoopRow.latest_run_id.is_not(None))))
+            .order_by(RunRow.finished_at.asc())
+            .limit(max(1, int(limit)))
+        ).scalars()
+    )
+    if not ids:
+        return {"runs": 0, "steps": 0, "candidates": 0}
+
+    step_ids = list(db.execute(select(StepRow.id).where(StepRow.run_id.in_(ids))).scalars())
+    candidates = db.execute(
+        delete(StepCandidateRow).where(StepCandidateRow.run_id.in_(ids))
+    )
+    steps = db.execute(
+        update(StepRow)
+        .where(StepRow.id.in_(step_ids))
+        .where(
+            or_(
+                StepRow.input_snapshot_json != "{}",
+                StepRow.output_json.is_not(None),
+            )
+        )
+        .values(input_snapshot_json="{}", output_json="{}")
+    )
+    cleared = int(steps.rowcount or 0)
+    removed = int(candidates.rowcount or 0)
+    logger.info(
+        "event=run.intermediate_payloads_pruned runs=%d steps=%d candidates=%d before=%s",
+        len(ids), cleared, removed, before_iso,
+    )
+    return {"runs": len(ids), "steps": cleared, "candidates": removed}
