@@ -183,7 +183,13 @@
 | --- | --- | --- |
 | `idempotency_records` 每条命令一行、`auth_codes` 每次登录一行，两者过期后都没有读者；长期运行会随使用量线性增长，把库撑大并拖慢索引 | 新增 `run_repo.prune_idempotency`（按 `created_at < now-7d`，单次上限 5000 行）与 `auth_repo.prune_expired_codes`（`expires_at < now`，单次 2000 行）；`RunWorker.tick()` 每 `MAINTENANCE_INTERVAL_SECONDS`（6 小时）调一次，异常只记日志、绝不阻塞任务执行（与事件压缩同一模式） | 新增 `backend/tests/test_worker_maintenance.py` 4 例（只清窗口外、单次上限 + 幂等、保留未过期验证码、tick 按间隔触发且第二轮跳过）；后端全量 713 用例 OK；`scripts/disk_cleanup.py` 报告可直接看到 `backend/data/app.db` 体积变化 |
 
-当前基线：**后端 713 用例 OK / 前端 254 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（7 步 101s） / 磁盘清理脚本（报告 + `--apply`）**。
+## 第 25 批（audit / loop 页面的真实渲染测试，2026-11-24）
+
+| 问题 | 修复 | 证据 |
+| --- | --- | --- |
+| 两个页面只有「纯函数 + 文件 token 正则」断言（`tests/audit-page.test.cjs`、`tests/loop-page.test.cjs`）：页面里的条件渲染分支整段删掉，测试仍然是绿的 | 新增 `frontend/tests/pages-render.test.cjs`，用 `react-dom/server` 渲染**整个页面组件**；为 `next/navigation`（useParams/useSearchParams/useRouter）与 `next/link` 提供零依赖替身，并用 `useSyncExternalStore` 的 server snapshot 指向真实 snapshot，使 SSR 能读到播种的 store 状态；`tsconfig.render.json` 纳入两个页面 | 6 例全绿：完成态审计渲染「报告摘要」「维度评估」与问题原文；读取失败渲染错误态且不出现「开始审计」；会话未加载禁用开始按钮并给「重新加载会话」；闭环页阶段门文案；允许启动时的启动面板（含范围/轮次/目标分）；加载中态。前端 254 → **260** 用例、`tsc --noEmit` 0 错 |
+
+当前基线：**后端 713 用例 OK / 前端 260 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（7 步 101s） / 磁盘清理脚本（报告 + `--apply`）**。
 
 ## 第 22 批（发版前一键体检，2026-11-24）
 

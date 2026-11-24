@@ -43,7 +43,7 @@ cd backend && ../.venv/Scripts/python.exe -m unittest tests.test_session_alias
 
 # 前端（本机 registry.npmjs.org 不可达，用既有 node_modules）
 cd frontend && npx tsc --noEmit      # exit 0
-cd frontend && npm test              # 123/123 pass（tsc -p tsconfig.test.json + node --test）
+cd frontend && npm test              # 260/260 pass（tsc -p tsconfig.test.json + tsconfig.render.json + node --test）
 cd frontend && npm run build         # exit 0，7 条路由（含 /session/[id]/audit 8.11 kB）
 cd frontend && npm run test:e2e      # 1 pass（真起 uvicorn，401/404 语义断言）
 
@@ -134,7 +134,7 @@ cd backend && ../.venv/Scripts/python.exe ../scripts/ac20_number_provenance.py
 1. **主持人 synthesis/复核（AC-16）— 已解决（QA Loop 第 1 轮修复）**：新增 `backend/workflows/synthesis.py`（696 行）实现 `SynthesisResult`、冲突上限 2、「最多 1 轮修复 + 至多 2 位专家复核 + 复核专家不可再开复核」、预算不足 degraded 回退；brainstorm 成功后由 `command_service._enqueue_follow_up` 在同一事务排入 `TaskKind.synthesis` 子 Run；`backend/tests/test_synthesis.py` 8 例覆盖。
 2. **重试粒度 — 已解决（第 11 批，AC-14）**：`runner._retry_scope_for` 读子 Run 的 `failed_steps_json`，把父 Run 已成功 step 的 `RoleResult`/staging 候选交给 `brainstorm._reused_role_run` 直接复用，只对失败角色调模型；`brainstorm._run_role` 区分两类上游错误——`retryable=True`（超时/限流/5xx）记为角色级失败并继续其余角色（整轮以 `partial_succeeded` 收口），账号级（401/402 等不可重试、影响所有角色）才整轮失败并保留真实错误码；所有角色都因瞬时错误失败时仍上抛给 runner 做步骤级重试。部分成功不再自动排 synthesis（否则占住 `active_run_id` 让重试撞 `SESSION_BUSY`），重试成功后才由该 Run 排入「必要汇总」；`retry_run` 额外允许 `partial_succeeded` 且 `result_product_version == session.current_product_version` 的 Run 重试（归并按 claim 文本去重）。覆盖 `tests/test_brainstorm_runner.py` 3 例。
 3. **越权 evidence_id 归属校验 — 已解决（第 9 批）**：`services/evidence_guard.py::check_role_result_refs` / `assert_role_result_refs` + `session_repo.list_referenceable_evidence_ids` / `list_session_message_ids`，接到 `workflows/brainstorm.py::_validate_role_result`：逐条回查会话已有消息与已登记证据（含公开知识域 `session_id IS NULL`），越权引用先回喂修复一次，仍失败 → `MODEL_OUTPUT_INVALID`。覆盖 `tests/test_evidence_guard.py`(7) 与 `test_brainstorm_runner.py` 2 例。
-4. **前端单测仍是 `node --test` 而非 vitest/RTL**：本机 `registry.npmjs.org` 不可达，无法安装新依赖。影响：无组件级渲染快照测试。缓解（第 13 批）：新增 `scripts/browser_e2e/`（CDP + 本机 Chrome，零新依赖）提供真实浏览器验收，AC-01/19/31/33 已从「store/逻辑层」升级为真浏览器证据（第 13/14 批）；AC-34 由回滚演练覆盖。最小调整：网络恢复后补 vitest + RTL 组件测试。
+4. **前端单测仍是 `node --test` 而非 vitest/RTL**：本机 `registry.npmjs.org` 不可达，无法安装新依赖。影响：无交互式组件测试。缓解：① 第 13/14 批新增 `scripts/browser_e2e/`（CDP + 本机 Chrome，零新依赖）提供真实浏览器验收，AC-01/19/31/33 从「store/逻辑层」升级为真浏览器证据；② 第 25 批新增 `frontend/tests/pages-render.test.cjs`，用 `react-dom/server` 直接渲染 **audit / loop 两个页面组件**（替身 `next/navigation`、`next/link`），断言完成态报告摘要/维度评估、读取失败错误态、未加载禁用提示、闭环阶段门与启动面板——页面级条件渲染分支被删会立刻变红。仍缺：点击/输入等交互（由浏览器 e2e 覆盖）。最小调整：网络恢复后补 vitest + RTL。
 5. **软删不清正文 — 已解决（第 8 批）**：`repositories/session_repo.py::purge_session_content` 在软删时清空消息正文、证据摘要、产品状态（回骨架但保留版本链）、审计问答与报告、闭环产物，只保留 tombstone 与会话骨架；`soft_delete_session(..., purge_content=True)` 为默认。物理清理仍依赖运维脚本，属保留期策略而非功能缺口。
 6. **同步命令也建 Run 行**：`confirm_brief` 等同步命令各建一条 `succeeded` Run 用于回执与幂等审计（有意设计，非缺陷）；跨进程测试按 run_id 而非 `COUNT(*)` 断言。
 7. **`MigrationRecord` 无 detail 列**：迁移细节写入 `warnings_json`。12-hex 旧 ID 的旧链接兼容 — 已解决（第 10 批）：`session_id_aliases` 表（`repositories/database.py::SessionIdAliasRow`）由迁移器在重映射时写入，`session_repo.resolve_session_id` 只读解析，`api/v2/common.py::require_owned_session` 在归属校验前解析别名；别名不参与写路径、不放宽权限、软删后同样 404。覆盖 `tests/test_session_alias.py` 6 例。
@@ -164,7 +164,7 @@ cd backend && ../.venv/Scripts/python.exe ../scripts/ac20_number_provenance.py
 ## 6. 结论
 
 - M1（WP-00～05）、M2（WP-06～08）、M3（WP-09）与 WP-10 的发布件（CI、迁移演练、健康诊断、前端 e2e 冒烟）均已交付。
-- 真实执行结果：后端 **713 用例 OK**、幂等记录与过期验证码由 Worker 每 6 小时清理一次（4 用例）、前端 **254 用例 pass** + `tsc` 0 错 + `build` 成功、`test:e2e` 1 pass、真实浏览器 E2E **AC-01/19/31/33 全部 PASS**（CDP，零新依赖，7 张截图）、跨进程 6 用例 OK + 崩溃注入 3 用例 OK、旧 ID 别名 6 用例 OK、AC-14 多失败重试 1 用例 OK、预算预留崩溃 4 用例 OK、真 Worker 审计端到端 **30 项 ALL PASS**、迁移演练 **DRILL_OK**、新构建回滚演练 **ROLLBACK_DRILL_OK**（临时副本上模拟坏构建→回滚：注入的排队任务仍可被领取、消息/任务计数不变、`integrity_check=ok`、`data/sessions` JSON 指纹不变）、AC-20 数字可追溯性真模型端到端（19 条论断中 7 个无来源数字节点全部被标注，人工核对）、完整用户旅程真模型端到端 **53,910 tokens / 18 条论断 / 8 个分支 / 5 个未验证节点**（`scripts/full_journey_e2e.py` → `docs/full-journey-e2e.md`）、结项报告真实模型路径 **`generated_by=model`**（`scripts/audit_report_e2e.py` → `docs/audit-report-e2e.md`）。
+- 真实执行结果：后端 **713 用例 OK**、幂等记录与过期验证码由 Worker 每 6 小时清理一次（4 用例）、前端 **260 用例 pass**（含 audit / loop 两页的服务端真实渲染 6 例）+ `tsc` 0 错 + `build` 成功、`test:e2e` 1 pass、真实浏览器 E2E **AC-01/19/31/33 全部 PASS**（CDP，零新依赖，7 张截图）、跨进程 6 用例 OK + 崩溃注入 3 用例 OK、旧 ID 别名 6 用例 OK、AC-14 多失败重试 1 用例 OK、预算预留崩溃 4 用例 OK、真 Worker 审计端到端 **30 项 ALL PASS**、迁移演练 **DRILL_OK**、新构建回滚演练 **ROLLBACK_DRILL_OK**（临时副本上模拟坏构建→回滚：注入的排队任务仍可被领取、消息/任务计数不变、`integrity_check=ok`、`data/sessions` JSON 指纹不变）、AC-20 数字可追溯性真模型端到端（19 条论断中 7 个无来源数字节点全部被标注，人工核对）、完整用户旅程真模型端到端 **53,910 tokens / 18 条论断 / 8 个分支 / 5 个未验证节点**（`scripts/full_journey_e2e.py` → `docs/full-journey-e2e.md`）、结项报告真实模型路径 **`generated_by=model`**（`scripts/audit_report_e2e.py` → `docs/audit-report-e2e.md`）。
 - AC 统计（按 §3 表）：**通过 42 条**（AC-01 … AC-42 全部）、**部分通过 0 条**、**未实现 0 条**。
 - 无未闭合验收项：AC-20 已由真模型端到端 + 人工标注覆盖（第 16 批），AC-34 由回滚演练覆盖（第 15 批）。仍未纳入自动化 CI 的是「真模型调用类」与「真浏览器/回滚演练」验收（需本机 Chrome、需消耗模型额度、需独占 8001/3001 栈），各自都有可复现命令与留痕；未通过修改期望值或预填结果取得任何「通过」。
 
