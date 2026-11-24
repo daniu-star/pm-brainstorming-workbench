@@ -1093,6 +1093,8 @@ class AuditAnswerTests(AuditWorkflowTestCase):
         )
         report = __import__("json").loads(audit.report_json)
         self.assertTrue(report["limitations"])
+        self.assertTrue(report["summary"], "兜底报告也必须有摘要（结构化计数）")
+        self.assertIn("结构化审计记录", report["summary"])
         self.assertEqual(report["generated_by"], "fallback")
 
     async def test_answer_failure_marks_pending_continuation(self) -> None:
@@ -1334,6 +1336,11 @@ class AuditReportTests(AuditWorkflowTestCase):
         self.assertEqual(report["question_count"], 2)
         self.assertEqual(int(report["product_version"]), 1)
         self.assertIn("技术路线清晰", report["supported_points"])
+        self.assertEqual(
+            report["summary"],
+            "整体判断：方向可行，但用户证据仍需补齐。",
+            "模型给的摘要必须原样落库（第 18 批：之前被丢弃）",
+        )
 
         revisions = self.report_revisions(audit_id)
         self.assertEqual(len(revisions), 1)

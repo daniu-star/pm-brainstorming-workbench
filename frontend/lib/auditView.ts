@@ -228,6 +228,8 @@ export interface NormalizedReport {
   unresolvedGaps: string[];
   recommendedExperiments: string[];
   limitations: string;
+  /** 报告摘要（模型路径来自模型，兜底路径由结构化记录拼出） */
+  summary: string;
   humanRevised: boolean;
   generatedBy: string | null;
   /** 缺失的字段名（中文），用于「未生成提示」；空数组 = 报告完整 */
@@ -307,6 +309,8 @@ export function normalizeReport(raw: unknown): NormalizedReport | null {
   const unresolvedGaps = asStringArray(raw.unresolved_gaps);
   const recommendedExperiments = asStringArray(raw.recommended_experiments);
   const limitations = asString(raw.limitations).trim();
+  // 摘要是可选增强字段：旧报告没有它就不算「缺字段」，页面显示「未生成」即可。
+  const summary = asString(raw.summary).trim();
   const dimensionStates = Array.isArray(raw.dimension_states)
     ? raw.dimension_states.map(normalizeDimensionState)
     : [];
@@ -332,6 +336,7 @@ export function normalizeReport(raw: unknown): NormalizedReport | null {
     unresolvedGaps,
     recommendedExperiments,
     limitations,
+    summary,
     humanRevised: asBoolean(raw.human_revised),
     generatedBy: asNullableString(raw.generated_by),
     missingFields,

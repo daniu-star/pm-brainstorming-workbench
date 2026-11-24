@@ -157,6 +157,7 @@ test("normalizeReport 缺字段时列进 missingFields，不编造内容", () =>
     "维度评估",
   ]);
   assert.equal(report.limitations, "");
+  assert.equal(report.summary, "", "缺摘要时归一化为空串，页面显示「未生成」");
   assert.equal(view.NOT_GENERATED, "未生成");
 });
 
@@ -168,6 +169,7 @@ test("normalizeReport 完整报告 missingFields 为空", () => {
     unresolved_gaps: ["缺口一"],
     recommended_experiments: ["实验一"],
     limitations: "样本有限",
+    summary: "  方向可行，但用户证据仍需补齐。  ",
     dimension_states: [
       { key: "technical_risk", assessment: "gap", rationale: "缺少压测" },
     ],
@@ -179,6 +181,7 @@ test("normalizeReport 完整报告 missingFields 为空", () => {
   assert.equal(report.hasReports, true);
   assert.deepEqual(report.missingFields, []);
   assert.equal(report.humanRevised, true);
+  assert.equal(report.summary, "方向可行，但用户证据仍需补齐。", "摘要应去除首尾空白");
   assert.equal(report.dimensionStates[0].label, "技术风险");
   assert.equal(report.dimensionStates[0].assessmentLabel, "存在缺口");
 });

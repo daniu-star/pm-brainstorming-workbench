@@ -196,6 +196,7 @@ def write_report(rows: list[dict], snap: dict, elapsed: float) -> None:
         "```text",
         "PASS 报告由模型生成（generated_by=model）",
         "PASS 报告至少有一条 supported_points 或 unresolved_gaps",
+        "PASS 报告摘要非空",
         "PASS 审计 completed 且阶段 audit_completed",
         "PASS 报告修订表里有对应记录",
         "```",
@@ -283,6 +284,10 @@ def main() -> int:
         points = len(report.get("supported_points") or [])
         gaps = len(report.get("unresolved_gaps") or [])
         check(points + gaps > 0, "报告内容为空")
+        check(
+            str(report.get("summary") or "").strip() != "",
+            "报告摘要为空（第 18 批要求摘要必填）",
+        )
         check(snap["revision_count"] > 0, "报告修订表为空")
         check(
             snap["revision_generated_by"] == "model",

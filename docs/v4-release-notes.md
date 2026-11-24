@@ -49,7 +49,7 @@
 
 ## 4. 值得单独说明的修复
 
-以下 8 项是 16 批热修与 M1 验收期里影响面最大的缺陷，按「问题 → 修复 → 证据用例」列出；完整清单见 `docs/loop-runs/README.md`。
+以下 9 项是 18 批热修与 M1 验收期里影响面最大的缺陷，按「问题 → 修复 → 证据用例」列出；完整清单见 `docs/loop-runs/README.md`。
 
 | 问题（来源） | 修复 | 证据用例 |
 | --- | --- | --- |
@@ -60,6 +60,7 @@
 | 崩溃丢预算：用量只在调用结束后落盘，进程一崩这次调用的次数与 token 全丢（第 12 批） | 发请求前写 `reserved_prompt_tokens` / `reserved_completion_tokens`，接管方把上一 epoch 预留按已消耗计入 | `test_budget_crash.py` 4 例：崩溃一次 + 重跑一次 `upstream_calls == 2` |
 | 推理模型 content 空：`deepseek-flash` 把 1500 tokens 先花在 `reasoning_content`，四角色全部 `MODEL_OUTPUT_INVALID`（第 16 批） | `LLM_DISABLE_REASONING` 默认开，对 `deepseek*` 发送 `extra_body={"thinking": {"type": "disabled"}}`，并在对话末尾复述 `SCHEMA_REMINDER` | 实测 completion 1500→380、content 恢复；`test_llm_client.py` / `test_brainstorm*` 48 例 |
 | `json_schema` 400 白付：供应商不支持时每次调用先吃一次 400，四角色即触发 `BUDGET_EXCEEDED`（第 16 批） | `_json_schema_supported` 缓存降级结论，同进程后续直接走 `json_object` | `test_json_schema_downgrade_is_cached_per_client`（3 次调用仅 1 次 400，上游调用 8→4–5） |
+| 报告摘要被丢弃：模型给了 `summary`，但 `AuditReport` 契约里没有该字段，报告页只能看到空块（第 18 批） | 契约新增 `summary`（≤4000 字），模型漏写时用结构化兜底摘要（含问题数/维度计数），前端新增「报告摘要」区 | `test_audit_workflow.py` 2 处断言 + 真模型 `scripts/audit_report_e2e.py`（562 字摘要、8,054 tokens） |
 | 越权引用：模型写他会话的 `evidence_id` / `message_id` 也能通过校验（第 9 批） | `evidence_guard` 逐条回查会话归属，先回喂修复一次，仍失败 → `MODEL_OUTPUT_INVALID` | `test_evidence_guard.py` 7 例 + `test_brainstorm_runner.py::test_foreign_evidence_ref_fails_after_one_repair` |
 
 ## 5. 运行方式

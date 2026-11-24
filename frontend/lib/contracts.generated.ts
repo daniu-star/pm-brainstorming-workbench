@@ -488,6 +488,8 @@ export interface AuditReport {
   unresolved_gaps: string[];
   recommended_experiments: string[];
   limitations: string;
+  /** 一段话总结（第 18 批新增；旧报告可能缺失 → 可选） */
+  summary?: string | null;
   human_revised: boolean;
   generated_by: "model" | "fallback";
 }

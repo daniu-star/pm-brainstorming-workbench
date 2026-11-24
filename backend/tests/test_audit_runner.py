@@ -224,6 +224,7 @@ class AuditReportRunnerTests(AuditRunnerTestCase):
         report = json.loads(audit.report_json)
         self.assertEqual(report["generated_by"], "model")
         self.assertTrue(str(report.get("limitations") or "").strip(), "报告必须写局限性")
+        self.assertTrue(str(report.get("summary") or "").strip(), "报告必须写摘要")
         self.assertEqual(int(report["product_version"]), int(audit.product_version))
 
         self.assertEqual(self._session_phase(session_id), SessionPhase.audit_completed.value)

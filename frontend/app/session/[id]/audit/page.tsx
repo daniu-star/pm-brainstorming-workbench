@@ -141,6 +141,13 @@ function ReportView({
         </Section>
       ) : (
         <>
+          <Section title="报告摘要">
+            {report.summary.trim().length > 0 ? (
+              <div className="text-sm leading-relaxed text-zinc-300">{report.summary}</div>
+            ) : (
+              <div className="text-sm text-zinc-500">{NOT_GENERATED}</div>
+            )}
+          </Section>
           <Section title="维度评估">
             {report.dimensionStates.length === 0 ? (
               <div className="text-sm text-zinc-500">{NOT_GENERATED}</div>

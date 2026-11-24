@@ -1071,6 +1071,9 @@ class AuditReport(StrictModel):
     unresolved_gaps: list[str] = Field(default_factory=list, max_length=MAX_REFS_PER_ITEM * 2)
     recommended_experiments: list[str] = Field(default_factory=list, max_length=MAX_REFS_PER_ITEM)
     limitations: str = Field(default="", max_length=2000)
+    #: 一段话总结（AC-36/AC-40）。模型路径用模型给的摘要，兜底路径由结构化记录拼出，
+    #: 前端在「报告摘要」区展示；缺失时为空串，页面显示「未生成」而不是编内容。
+    summary: str = Field(default="", max_length=4000)
     human_revised: bool = False
     generated_by: Literal["model", "fallback"] = "model"
 

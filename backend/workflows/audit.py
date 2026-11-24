@@ -419,6 +419,18 @@ def build_fallback_report(
 
     question_count = int(getattr(audit, "question_count", 0) or 0)
     question_count = max(0, min(question_count, AUDIT_QUESTION_HARD_LIMIT))
+    supported_count = sum(1 for s in (states or []) if s.assessment is Assessment.supported)
+    gap_count = sum(
+        1
+        for s in (states or [])
+        if s.assessment in (Assessment.gap, Assessment.needs_clarification)
+    )
+    undiscussed = sum(1 for s in (states or []) if s.assessment is Assessment.not_discussed)
+    summary = (
+        f"本轮审计共提出 {question_count} 个问题，覆盖 {len(list(states or []))} 个维度："
+        f"{supported_count} 个已支撑、{gap_count} 个存在缺口或需澄清、{undiscussed} 个未讨论。"
+        "本摘要由结构化审计记录生成，未使用模型撰写。"
+    )
     return AuditReport(
         audit_id=str(getattr(audit, "id", "") or ""),
         product_version=int(getattr(audit, "product_version", 1) or 1),
@@ -430,6 +442,7 @@ def build_fallback_report(
         unresolved_gaps=gaps[:16],
         recommended_experiments=_experiment_methods(product_state)[:8],
         limitations=limitations[:2000],
+        summary=summary[:4000],
         generated_by="fallback",
     )
 
@@ -1239,6 +1252,9 @@ def _apply_report_draft(
         extra = "本次审计没有任何维度被评估为 supported，因此不列出已支撑结论。"
         limitations = (limitations + " " + extra).strip() if limitations else extra
 
+    # 摘要必须有内容：模型漏写时用结构化兜底摘要，避免报告页出现一块空白。
+    summary = str(draft.summary or "").strip()[:4000] or fallback.summary
+
     return AuditReport(
         audit_id=str(getattr(audit, "id", "") or ""),
         product_version=int(getattr(audit, "product_version", 1) or 1),
@@ -1250,6 +1266,7 @@ def _apply_report_draft(
         unresolved_gaps=gaps,
         recommended_experiments=experiments,
         limitations=limitations,
+        summary=summary,
         generated_by="model",
     )
 
