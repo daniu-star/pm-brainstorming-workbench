@@ -435,6 +435,10 @@ def main() -> int:
         print(f"未知场景：{unknown}；可用：{list(SCENARIOS)}", flush=True)
         return 2
 
+    # BYOK 闸门：先给两个 e2e 账户写假配置，否则登录后页面会被强制配置面板挡住。
+    for owner in (OWNER_A, OWNER_B):
+        seed.seed_llm_config(owner)
+
     results: dict[str, Any] = {}
     failures: list[str] = []
     started = time.time()
@@ -460,6 +464,11 @@ def main() -> int:
         results["cleanup"] = seed.cleanup_sessions(sorted(set(seeded_ids)))
     except Exception as exc:  # noqa: BLE001 - 清理失败不掩盖验收结论
         results["cleanup"] = f"{type(exc).__name__}: {exc}"
+
+    try:
+        results["cleanup_llm_configs"] = seed.cleanup_llm_configs()
+    except Exception as exc:  # noqa: BLE001 - 清理失败不掩盖验收结论
+        results["cleanup_llm_configs"] = f"{type(exc).__name__}: {exc}"
 
     results["failures"] = failures
     results["elapsed_seconds"] = round(time.time() - started, 2)

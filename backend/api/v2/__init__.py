@@ -9,6 +9,7 @@ from api.v2 import (
     commands,
     controls,
     evidence,
+    llm_config,
     loops,
     messages,
     quota,
@@ -27,5 +28,6 @@ router.include_router(audits.router)
 router.include_router(controls.router)
 router.include_router(loops.router)
 router.include_router(quota.router)
+router.include_router(llm_config.router)
 
 __all__ = ["router"]

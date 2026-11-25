@@ -26,6 +26,11 @@ from core.llm_client import LLMResult, LLMUsage  # noqa: E402
 from repositories import database  # noqa: E402
 from workers.run_worker import RunWorker  # noqa: E402
 
+from core.config import settings  # noqa: E402
+
+# 独立进程用假 LLM 直接产出结果，不涉及账户 Key；切到 system 免被 BYOK 闸门拦下。
+settings.llm_key_mode = "system"
+
 SLOW_SECONDS = 8.0
 
 

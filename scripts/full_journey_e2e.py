@@ -36,6 +36,9 @@ if str(BACKEND) not in sys.path:
 import sqlalchemy as sa  # noqa: E402
 
 from core import config as core_config  # noqa: E402
+
+# 内部联调脚本共用 backend/.env 里的 Key，不走 BYOK 闸门。
+core_config.settings.llm_key_mode = "system"
 from domain import contracts as C  # noqa: E402
 from repositories import database, run_repo, session_repo  # noqa: E402
 from services import canvas_projector, command_service  # noqa: E402

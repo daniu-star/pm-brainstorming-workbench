@@ -37,6 +37,9 @@ class DeleteSessionBody(BaseModel):
 @router.post("/sessions", status_code=201)
 def create_session(body: CreateSessionBody, request: Request):
     owner_email = common.require_user(request)
+    # BYOK：建会话会立刻排队一个 clarify Run，因此也要先配好模型密钥。
+    with common.open_db() as db:
+        common.service("llm_config_service").gate(db, owner_email, action="clarify")
     request_id = common.optional_request_id(request, body.request_id)
     now_iso = C.utc_now_iso()
     with common.open_db() as db:

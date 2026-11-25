@@ -804,6 +804,8 @@ class _RunSnapshot:
     budget_json: str | None
     usage_json: str | None
     session_deleted: bool
+    #: BYOK：Run 所属会话的 owner，用于解析该账户自己的模型配置。
+    owner_email: str = ""
 
 
 def _read_run_snapshot(run_id: str, *, worker_id: str) -> _RunSnapshot | None:
@@ -849,6 +851,7 @@ def _read_run_snapshot(run_id: str, *, worker_id: str) -> _RunSnapshot | None:
             budget_json=run.budget_json,
             usage_json=run.usage_json,
             session_deleted=session_deleted,
+            owner_email=(session.owner_email if session is not None else ""),
         )
 
 
@@ -1351,7 +1354,31 @@ def execute_run(
     # 预算账本跨 epoch 连续：上一 worker 已结算的计数从 runs.usage_json 恢复，
     # 避免租约接管/重试后 upstream_calls 清零、突破单 Run 上限。
     budget = BudgetTracker.from_budget_json(snapshot.budget_json, snapshot.usage_json)
-    client = llm_factory() if llm_factory is not None else LLMClient()
+    if llm_factory is not None:
+        client = llm_factory()
+    else:
+        # BYOK：优先用该账户自己在「模型 API 设置」里保存的 Key；没有就失败并给出可操作原因，
+        # 不退回共享 Key（线上 LLM_KEY_MODE=system 时 client_kwargs 返回 {} → 走 .env）。
+        from services import llm_config_service  # 延迟导入：避免 core/services 循环
+
+        with _database().session_scope() as db:
+            client_kwargs = llm_config_service.client_kwargs(db, snapshot.owner_email)
+        if not client_kwargs and llm_config_service.key_mode() == llm_config_service.KEY_MODE_BYOK:
+            _finalize_failure(
+                run_id=run_id,
+                worker_id=worker_id,
+                lease_epoch=snapshot.lease_epoch,
+                code=ErrorCode.LLM_CONFIG_REQUIRED,
+                message=(
+                    "该账户还没有配置模型 API：请登录后在「模型 API 设置」里填写"
+                    "自己的 base_url / model / api_key（平台不带模型额度）。"
+                ),
+                warnings=list(budget.warnings),
+                usage=budget.as_dict(),
+                now=now,
+            )
+            return
+        client = LLMClient(**client_kwargs)
 
     stop_event = threading.Event()
     lease_lost = threading.Event()

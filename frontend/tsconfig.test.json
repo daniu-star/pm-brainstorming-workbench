@@ -21,6 +21,7 @@
     "lib/chatNotices.ts",
     "lib/contracts.generated.ts",
     "lib/loopView.ts",
+    "lib/llmConfig.ts",
     "lib/phaseRouter.ts",
     "lib/sse.ts",
     "lib/stateGuards.ts",

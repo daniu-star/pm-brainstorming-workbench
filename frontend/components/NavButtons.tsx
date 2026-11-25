@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { HistoryIcon, PlusIcon, UserIcon, VideoIcon } from "@/components/icons";
+import { CodeIcon, HistoryIcon, PlusIcon, UserIcon, VideoIcon } from "@/components/icons";
 import { api } from "@/lib/api";
 import { useSessionStore } from "@/store/sessionStore";
 import { resetAuthVerification } from "@/components/auth/AuthGate";
@@ -77,6 +78,15 @@ export function NavButtons({ currentPage, sessionId, onToggleHistory }: NavButto
           <span className="hidden sm:inline">专家审计</span>
         </button>
       )}
+
+      <Link
+        href="/settings/llm"
+        className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60 rounded-lg transition-all duration-200 min-h-[44px] min-w-[44px] justify-center whitespace-nowrap"
+        aria-label="模型 API 设置"
+      >
+        <CodeIcon size={16} />
+        <span className="hidden sm:inline">模型 API</span>
+      </Link>
 
       <button
         type="button"

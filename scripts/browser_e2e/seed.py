@@ -353,3 +353,44 @@ def cleanup_sessions(session_ids: list[str]) -> int:
                     continue
             removed += 1
     return removed
+
+
+def seed_llm_config(owner_email: str, *, api_key: str = "sk-e2e-dummy-0001") -> str:
+    """给 e2e 账户写一条假的 BYOK 配置。
+
+    BYOK 闸门要求登录后必须配置模型 API，否则所有业务页面都会被整屏面板挡住；
+    e2e 只验证前端交互，不真的调用模型，所以塞一条假 Key 即可。
+    """
+
+    from core import crypto
+    from repositories import llm_config_repo
+
+    with database.session_scope() as db:
+        llm_config_repo.upsert_config(
+            db,
+            owner_email,
+            base_url=C.LLM_CONFIG_DEFAULT_BASE_URL,
+            model=C.LLM_CONFIG_DEFAULT_MODEL,
+            api_key_enc=crypto.encrypt_secret(api_key),
+            key_hint=crypto.mask_secret(api_key),
+            disable_reasoning=True,
+            now_iso=C.utc_now_iso(),
+        )
+    return owner_email
+
+
+def cleanup_llm_configs(prefix: str = "browser-e2e-") -> int:
+    """删掉 e2e 账户的临时模型配置，避免污染真实库。"""
+
+    from sqlalchemy import text
+
+    with database.session_scope() as db:
+        emails = list(
+            db.execute(
+                text("select owner_email from llm_configs where owner_email like :p"),
+                {"p": f"{prefix}%"},
+            ).scalars()
+        )
+        for email in emails:
+            db.execute(text("delete from llm_configs where owner_email = :e"), {"e": email})
+    return len(emails)

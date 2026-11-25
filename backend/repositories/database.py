@@ -494,6 +494,28 @@ class SessionIdAliasRow(Base):
     __table_args__ = (Index("ix_session_id_aliases_session", "session_id"),)
 
 
+class LlmConfigRow(Base):
+    """账户自带模型（BYOK）配置：一个 owner 一行（PRD 扩展：平台免费、模型自付）。
+
+    ``api_key_enc`` 只存 ``core.crypto`` 加密后的密文；``key_hint`` 是末 4 位，
+    用于前端回显。``disable_reasoning`` 用 0/1 存（推理型模型默认关闭思考）。
+    """
+
+    __tablename__ = "llm_configs"
+
+    owner_email = Column(String(320), primary_key=True)
+    base_url = Column(String(512), nullable=False)
+    model = Column(String(128), nullable=False)
+    api_key_enc = Column(Text, nullable=False)
+    key_hint = Column(String(32), nullable=False, default="")
+    disable_reasoning = Column(Integer, nullable=False, default=1)
+    updated_at = Column(String(32), nullable=False)
+    last_verified_at = Column(String(32), nullable=True)
+    last_error = Column(Text, nullable=True)
+
+    __table_args__ = (Index("ix_llm_configs_updated", "updated_at"),)
+
+
 class LoopRow(Base):
     """Loop Studio 闭环实例（设想→检验→开发→测试→评测）。"""
 
@@ -778,6 +800,7 @@ __all__ = [
     "EvidenceRow",
     "IdempotencyRow",
     "LegacyArtifactRow",
+    "LlmConfigRow",
     "LoopArtifactRow",
     "LoopRow",
     "LoopRoundRow",

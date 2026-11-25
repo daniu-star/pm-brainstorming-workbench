@@ -8,7 +8,7 @@
 
 | 检查项 | 结果 |
 | --- | --- |
-| 后端全量 | `Ran 744 tests` / OK（含 M2/M3、闭环、数据生命周期、崩溃注入、旧 ID 别名、AC-20 数字守卫、结项报告容错、Worker 卡死诊断、维护性清理） |
+| 后端全量 | `Ran 755 tests` / OK（含 M2/M3、闭环、数据生命周期、崩溃注入、旧 ID 别名、AC-20 数字守卫、结项报告容错、Worker 卡死诊断、维护性清理、账户配额、账户自带模型密钥） |
 | 前端类型 + 用例 | `npx tsc --noEmit` 0 错；`npm test` **266** 用例 pass（含页面级渲染 8 例 + 证据表单渲染 3 例） |
 | 前端构建 + 冒烟 | `npm run build` exit 0（7 条路由，含 `/session/[id]/audit` 8.11 kB）；`npm run test:e2e` 1 pass |
 | 契约 parity | `tests.test_contract_parity` **13** 例，前后端枚举/常量/Literal 按序比对 |
@@ -49,7 +49,7 @@
 
 ## 4. 值得单独说明的修复
 
-以下 9 项是 18 批热修与 M1 验收期里影响面最大的缺陷，按「问题 → 修复 → 证据用例」列出；完整清单见 `docs/loop-runs/README.md`。
+以下 12 项是 33 批热修与 M1 验收期里影响面最大的缺陷，按「问题 → 修复 → 证据用例」列出；完整清单见 `docs/loop-runs/README.md`。
 
 | 问题（来源） | 修复 | 证据用例 |
 | --- | --- | --- |
@@ -62,6 +62,7 @@
 | `json_schema` 400 白付：供应商不支持时每次调用先吃一次 400，四角色即触发 `BUDGET_EXCEEDED`（第 16 批） | `_json_schema_supported` 缓存降级结论，同进程后续直接走 `json_object` | `test_json_schema_downgrade_is_cached_per_client`（3 次调用仅 1 次 400，上游调用 8→4–5） |
 | 报告摘要被丢弃：模型给了 `summary`，但 `AuditReport` 契约里没有该字段，报告页只能看到空块（第 18 批） | 契约新增 `summary`（≤4000 字），模型漏写时用结构化兜底摘要（含问题数/维度计数），前端新增「报告摘要」区 | `test_audit_workflow.py` 2 处断言 + 真模型 `scripts/audit_report_e2e.py`（562 字摘要、8,054 tokens） |
 | 报告数字无来源：审计报告正文（支持论据/缺口/建议/摘要）里的数字没人核对，读起来像事实（第 28 批） | 报告落库前用同一套 `number_guard` 标注：来源消息/证据里找不到的数字写进 `unverified_numbers` 并生成补充建议；前端在报告顶部给「数字未验证」徽标 | `test_number_guard.py` 报告侧 2 例 + `test_audit_workflow.py::test_report_marks_numbers_absent_from_sources`（12/6 可追溯不误标、2/66/5 标注）+ `pages-render.test.cjs` 徽标 1 例 |
+| 平台替所有人付模型费：任何登录用户都能烧平台额度，而线上收款又需要营业执照（第 33 批） | 改为 BYOK：`llm_configs` 每账户一条（Fernet 加密、只回显末 4 位）；未配置时建会话 / 模型命令 / Worker 执行三处统一 428 `LLM_CONFIG_REQUIRED`，前端整屏「先配置你自己的模型 API」并带保存+连通性测试表单 | `test_llm_config.py` 11 例 + `llm-config.test.cjs` 5 例 |
 | 越权引用：模型写他会话的 `evidence_id` / `message_id` 也能通过校验（第 9 批） | `evidence_guard` 逐条回查会话归属，先回喂修复一次，仍失败 → `MODEL_OUTPUT_INVALID` | `test_evidence_guard.py` 7 例 + `test_brainstorm_runner.py::test_foreign_evidence_ref_fails_after_one_repair` |
 
 ## 5. 运行方式
@@ -95,7 +96,7 @@
 ## 7. 如何复跑验收
 
 ```bash
-# 后端全量（744）
+# 后端全量（755）
 cd backend && ../.venv/Scripts/python.exe -m unittest discover -s tests
 
 # 前端类型、用例、构建、冒烟

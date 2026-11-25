@@ -42,6 +42,10 @@ def dispatch_command(session_id: str, body: CommandBody, request: Request) -> JS
     if body.expected_session_version is not None and body.expected_session_version < 1:
         raise AppError(ErrorCode.INVALID_REQUEST, "expected_session_version 必须大于等于 1")
 
+    # BYOK：平台不带模型额度，未配置自己的 Key 前只允许改稿/登记证据等同步命令。
+    with common.open_db() as db:
+        common.service("llm_config_service").gate(db, owner_email, action=action.value)
+
     command = CommandRequest(
         request_id=request_id,
         action=action,

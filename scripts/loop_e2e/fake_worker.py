@@ -11,6 +11,10 @@ import sys
 
 from core.llm_client import LLMResult, LLMUsage
 from repositories import database
+from core import config as core_config
+
+# 内部联调脚本共用 backend/.env 里的 Key，不走 BYOK 闸门。
+core_config.settings.llm_key_mode = "system"
 
 
 class FakeLLM:

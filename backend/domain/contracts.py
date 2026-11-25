@@ -61,6 +61,11 @@ LLM_PAYLOAD_RETENTION_DAYS = 90
 #: 具体数值来自 ``ACCOUNT_DAILY_TOKEN_LIMIT`` / ``ACCOUNT_DAILY_CALL_LIMIT``，0 表示不限。
 ACCOUNT_QUOTA_WINDOW_SECONDS = 24 * 3600
 
+# BYOK（账户自带模型）：平台前期免费，模型调用由用户自己买单。这两个默认值只用于
+# 前端表单预填与提示，不参与服务端调用——真正生效的是用户在「模型 API 设置」里保存的值。
+LLM_CONFIG_DEFAULT_BASE_URL = "https://api.deepseek.com/v1"
+LLM_CONFIG_DEFAULT_MODEL = "deepseek-flash"
+
 # FR-08 预算档位：只允许在默认限额基础上**收紧**，用于低成本环境（如个人额度）。
 # 通过环境变量 LLM_BUDGET_PROFILE=standard|lean|frugal 选择，写入 Run.budget_json 后可复现。
 BUDGET_PROFILE_STANDARD = "standard"
@@ -1154,6 +1159,27 @@ class ReviseBriefPayload(StrictModel):
         if unknown:
             raise ValueError(f"unknown brief fields: {unknown}")
         return value
+
+
+class LlmConfigPayload(StrictModel):
+    """用户提交自己的模型 API 配置（BYOK）。
+
+    只要 base_url 指向 OpenAI 兼容接口即可（DeepSeek、OpenAI、各类中转站均可）。
+    api_key 落库前用 ``core.crypto`` 加密，接口永远只回显末 4 位。
+    """
+
+    base_url: str = Field(min_length=8, max_length=512)
+    model: str = Field(min_length=1, max_length=128)
+    api_key: str = Field(min_length=8, max_length=512)
+    disable_reasoning: bool = True
+
+    @field_validator("base_url")
+    @classmethod
+    def _http_url(cls, value: str) -> str:
+        text = value.strip().rstrip("/")
+        if not (text.startswith("http://") or text.startswith("https://")):
+            raise ValueError("base_url 必须以 http:// 或 https:// 开头")
+        return text
 
 
 class AddEvidencePayload(StrictModel):

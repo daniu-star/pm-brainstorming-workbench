@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     llm_max_retries: int = 3
     # FR-08 预算档位：standard|lean|frugal，只收紧不放宽（见 domain.contracts.BUDGET_PROFILES）
     llm_budget_profile: str = "standard"
+    #: BYOK 模式：``byok``（默认）要求每个账户自带模型 Key；``system`` 用 .env 共享 Key
+    #: （仅本地联调/内部测试使用，线上部署应保持 byok）。
+    llm_key_mode: str = "byok"
     # 推理型模型（deepseek-flash/reasoner 等）会把 completion 预算先花在 reasoning_content 上，
     # 导致结构化输出的 content 为空。默认关闭思考（LLM_DISABLE_REASONING=false 可恢复）。
     llm_disable_reasoning: bool = True

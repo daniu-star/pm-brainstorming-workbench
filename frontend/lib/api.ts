@@ -295,7 +295,7 @@ export function apiUrl(path: string): string {
 // --------------------------------------------------------------------------- //
 
 export interface V2RequestOptions {
-  method?: "GET" | "POST" | "DELETE" | "PATCH";
+  method?: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
   body?: unknown;
   query?: Record<string, QueryValue>;
   /** 幂等请求 ID；写请求缺省自动生成 */

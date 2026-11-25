@@ -98,7 +98,7 @@ class LLMAuthError(LLMRequestError):
     """鉴权失败（401/403）：API Key 无效、过期或无权限。
 
     与普通 4xx 分开，是因为它属于「人工改配置才能恢复」的错误：重试永远不会成功，
-    但错误信息必须直接告诉使用者去更新 ``LLM_API_KEY``，否则界面上只剩一句失败。
+    但错误信息必须直接告诉使用者去更新自己保存的 Key（BYOK）或 ``LLM_API_KEY``，否则界面上只剩一句失败。
     """
 
     code = "LLM_AUTH_ERROR"
@@ -241,7 +241,7 @@ def _translate_exception(exc: Exception) -> LLMError:
     if status in (401, 403):
         return LLMAuthError(
             "模型服务鉴权失败（API Key 无效、已过期或无权限）："
-            "请更新 backend/.env 的 LLM_API_KEY 后重启服务（start.bat / stop.bat）",
+            "请到「模型 API 设置」检查你填写的 Key（部署方共用 Key 时更新 backend/.env 的 LLM_API_KEY 后重启服务）",
             status_code=status,
         )
     if status == 402:
