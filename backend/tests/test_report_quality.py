@@ -11,6 +11,7 @@ import json
 import pathlib
 import sys
 import unittest
+from unittest import mock
 
 BACKEND = pathlib.Path(__file__).resolve().parent.parent
 if str(BACKEND) not in sys.path:  # pragma: no cover
@@ -55,6 +56,54 @@ class ReportQualityStatusTests(unittest.TestCase):
         )
         self.assertEqual(frequent["verdict"], "frequent")
         self.assertIn("提示词", frequent["hint"])
+
+
+class ReportQualityWindowTests(unittest.TestCase):
+    """第 31 批：短窗口样本不足时回落到 7 天（排障时不能永远只能答 no_data）。"""
+
+    def _run(self, short: dict, wide: dict | None = None):
+        calls: list[str] = []
+
+        def fake(db, *, since_iso: str, limit: int = 500):  # noqa: ANN001
+            calls.append(since_iso)
+            return short if len(calls) == 1 else (wide or {})
+
+        with mock.patch.object(audit_repo, "report_quality_stats", side_effect=fake):
+            payload = main._report_quality()
+        return payload, calls
+
+    def test_falls_back_when_short_window_has_too_few_reports(self) -> None:
+        payload, calls = self._run(
+            {"scanned": 1, "reports_with_unverified": 1, "unverified_numbers": 2},
+            {"scanned": 5, "reports_with_unverified": 1, "unverified_numbers": 2, "samples": []},
+        )
+        self.assertEqual(len(calls), 2, "样本不足时必须再查长窗口")
+        self.assertEqual(payload["window"], "7d")
+        self.assertEqual(payload["fallback_from"], "1d")
+        self.assertEqual(payload["active_window"], "1d")
+        self.assertEqual(payload["verdict"], "occasional")
+        self.assertIn("回落到 7d", payload["hint"])
+
+    def test_no_fallback_when_short_window_is_conclusive(self) -> None:
+        payload, calls = self._run(
+            {"scanned": 5, "reports_with_unverified": 0, "unverified_numbers": 0}
+        )
+        self.assertEqual(len(calls), 1, "短窗口已能下结论时不该多查一次")
+        self.assertEqual(payload["window"], "1d")
+        self.assertEqual(payload["verdict"], "clean")
+
+    def test_keeps_short_window_when_long_window_has_no_more_data(self) -> None:
+        payload, calls = self._run({"scanned": 0}, {"scanned": 0})
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(payload["window"], "1d")
+        self.assertEqual(payload["verdict"], "no_data")
+        self.assertNotIn("fallback_from", payload)
+
+    def test_returns_degraded_payload_on_db_error(self) -> None:
+        with mock.patch.object(audit_repo, "report_quality_stats", side_effect=RuntimeError("boom")):
+            payload = main._report_quality()
+        self.assertFalse(payload["db"])
+        self.assertEqual(payload["verdict"], "unknown")
 
 
 class ReportQualityApiTests(V2ApiTestBase):

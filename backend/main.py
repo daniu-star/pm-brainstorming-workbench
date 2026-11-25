@@ -146,6 +146,9 @@ WORKER_STALL_SECONDS = 120.0
 #: 报告质量统计的回看窗口（`/health/detail` 的 report_quality 块，第 30 批）
 REPORT_QUALITY_WINDOW_SECONDS = 24 * 3600
 
+#: 短窗口样本不足时回落到 7 天（仍在「近期」范围内，不会把几个月前的报告混进来）
+REPORT_QUALITY_FALLBACK_DAYS = 7.0
+
 
 
 def _parse_iso_seconds(value: str | None) -> float | None:
@@ -209,20 +212,51 @@ def _report_quality_status(stats: dict) -> dict:
     }
 
 
-def _report_quality(days: float = REPORT_QUALITY_WINDOW_SECONDS / 86400) -> dict:
-    """只读聚合最近窗口内的报告数字标注情况；异常时降级为 ``db`` 为假。"""
+def _report_quality(
+    days: float = REPORT_QUALITY_WINDOW_SECONDS / 86400,
+    fallback_days: float = REPORT_QUALITY_FALLBACK_DAYS,
+) -> dict:
+    """只读聚合窗口内的报告数字标注情况；样本不足时回落到更长的窗口（第 31 批）。
+
+    为什么需要回落：仓库刚部署或安静一天时，24 小时窗口里可能一份报告都没有，
+    接口永远只能答 ``no_data``——排障时「没有信息」和「一切正常」看起来一样糟。
+    这里先用短窗口；若判定为 ``no_data``/``insufficient``，再查一次长窗口，
+    并在返回里标明 ``window`` 与 ``fallback_from``，让读者知道数据来自哪个区间。
+    """
 
     from repositories import audit_repo
     from repositories.database import new_session
 
-    since = _iso_seconds_ago(float(days) * 86400)
+    short_window = f"{int(float(days))}d"
+    long_window = f"{int(float(fallback_days))}d"
     db = new_session()
     try:
-        stats = audit_repo.report_quality_stats(db, since_iso=since)
-        return {"db": True, "window": f"{int(float(days))}d", **stats, **_report_quality_status(stats)}
+        stats = audit_repo.report_quality_stats(db, since_iso=_iso_seconds_ago(float(days) * 86400))
+        status = _report_quality_status(stats)
+        payload = {"db": True, "window": short_window, **stats, **status}
+        if status["verdict"] not in ("no_data", "insufficient"):
+            return payload
+        if float(fallback_days) <= float(days):
+            return payload
+
+        wide = audit_repo.report_quality_stats(
+            db, since_iso=_iso_seconds_ago(float(fallback_days) * 86400)
+        )
+        if int(wide.get("scanned") or 0) <= int(stats.get("scanned") or 0):
+            return payload
+        wide_status = _report_quality_status(wide)
+        return {
+            "db": True,
+            "window": long_window,
+            "active_window": short_window,
+            "fallback_from": short_window,
+            **wide,
+            **wide_status,
+            "hint": f"{wide_status['hint']}（{short_window} 内样本不足，已回落到 {long_window}）",
+        }
     except Exception:  # pragma: no cover - 只在库异常时走到
         logger.exception("event=health.report_quality_failed")
-        return {"db": False, "window": f"{int(float(days))}d", "verdict": "unknown", "hint": None}
+        return {"db": False, "window": short_window, "verdict": "unknown", "hint": None}
     finally:
         db.close()
 

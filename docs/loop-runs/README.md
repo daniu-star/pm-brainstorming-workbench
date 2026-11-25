@@ -221,7 +221,13 @@
 | --- | --- | --- |
 | 「模型是不是老在编数字」只能靠人翻报告：`/health/detail` 只报服务/预算/模型层，没有内容质量信号 | `audit_repo.report_quality_stats`（只读：窗口内报告份数、含无来源数字的份数、数字总数、前 5 个样本）+ `_report_quality_status` 阈值判定（`no_data`/`insufficient`/`clean`/`occasional`/`frequent`，≥50% 判 frequent 并提示改提示词）+ `/health/detail` 新增 `report_quality` 块（默认 24h 窗口） | `test_report_quality.py` 5 例（阈值 4 + 接口 1）；731 后端 / 266 前端 |
 
-当前基线：**后端 731 用例 OK / 前端 266 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（8 步，含 db-report） / 磁盘清理脚本（报告 + `--apply`） / 中间载荷 90 天保留策略 + `db_maintenance.py report|vacuum`**。
+## 第 31 批（报告质量窗口回落，2026-11-25）
+
+| 问题 | 修复 | 证据 |
+| --- | --- | --- |
+| 安静一天后 `report_quality` 永远只答 `no_data`：排障时「没有信息」与「一切正常」看起来一样 | `_report_quality` 先用 24h 窗口，判定为 `no_data`/`insufficient` 且 7 天内样本更多时改用 7 天统计，返回 `window=7d` + `fallback_from=1d`，并在 hint 里说明回落 | `test_report_quality.py` 新增 4 例（回落、无需回落、长窗也无数据、库异常降级）；735 后端 / 266 前端 |
+
+当前基线：**后端 735 用例 OK / 前端 266 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（8 步，含 db-report） / 磁盘清理脚本（报告 + `--apply`） / 中间载荷 90 天保留策略 + `db_maintenance.py report|vacuum`**。
 
 ## 第 22 批（发版前一键体检，2026-11-24）
 
