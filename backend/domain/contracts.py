@@ -56,6 +56,10 @@ MAINTENANCE_INTERVAL_SECONDS = 6 * 3600
 #: 这些数据只服务于「重试复用」与故障排查，不属于用户可见记录；长期保留会让库随任务量
 #: 线性增长（一次四角色头脑风暴就有 4-8 条上下文快照 + 候选 JSON）。
 LLM_PAYLOAD_RETENTION_DAYS = 90
+#: 账户级配额窗口：同一 owner 在滚动窗口内的模型消耗上限（token / 上游调用次数）。
+#: 与单 Run 预算互补——单 Run 预算防「一次任务烧太多」，账户配额防「一个账号反复烧」。
+#: 具体数值来自 ``ACCOUNT_DAILY_TOKEN_LIMIT`` / ``ACCOUNT_DAILY_CALL_LIMIT``，0 表示不限。
+ACCOUNT_QUOTA_WINDOW_SECONDS = 24 * 3600
 
 # FR-08 预算档位：只允许在默认限额基础上**收紧**，用于低成本环境（如个人额度）。
 # 通过环境变量 LLM_BUDGET_PROFILE=standard|lean|frugal 选择，写入 Run.budget_json 后可复现。

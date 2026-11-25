@@ -60,6 +60,7 @@ from domain.contracts import (
 from core.config import settings
 from domain.errors import AppError, ErrorCode
 from repositories import audit_repo, loop_repo, run_repo, session_repo
+from services import quota_service
 from repositories.database import (
     AuditRow,
     ControlIntentRow,
@@ -557,6 +558,12 @@ def submit_command(
 
     if not _rate_limit_ok(db, owner_email, now_epoch=now_epoch):
         raise AppError(ErrorCode.RATE_LIMITED, "操作过于频繁，请稍后再试", http_status=429)
+
+    # 账户级配额：防止单个账号反复提交模型任务把额度烧穿；
+    # 改稿/登记证据/取消等同步命令不受限（照常可做），避免额度耗尽后连收尾都做不到。
+    quota_service.ensure_within_quota(
+        db, owner_email=owner_email, action=command.action.value, now_epoch=now_epoch
+    )
 
     if command.action in C.CONTROL_ACTIONS:
         control, audit = _submit_control(
@@ -1121,6 +1128,11 @@ def start_initial_run(
     """
 
     now_epoch = int(now_epoch if now_epoch is not None else time.time())
+    # 新建会话会立即排入一个 clarify Run（要调模型），所以同样受账户配额约束；
+    # 超额时抛 429，外层事务回滚，会话不会被创建。
+    quota_service.ensure_within_quota(
+        db, owner_email=owner_email, action=Action.clarify.value, now_epoch=now_epoch
+    )
     content = (session.problem_statement or "").strip()
     scope = f"session:{session.id}"
     run = run_repo.create_run(

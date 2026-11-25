@@ -140,6 +140,8 @@ Open http://localhost:3000
 | `LLM_MODEL` | Model name | `gpt-4o` |
 | `LLM_BUDGET_PROFILE` | Token/call budget profile: `standard` / `lean` / `frugal` (only tightens contract limits) | `standard` |
 | `LLM_DISABLE_REASONING` | Disable provider-side reasoning/thinking for models that spend the completion budget on `reasoning_content` (currently auto-applied to `deepseek*`); set `false` to keep provider default | `true` |
+| `ACCOUNT_DAILY_TOKEN_LIMIT` | Per-account rolling 24h token limit (used tokens + worst-case reservation of queued runs); `0` disables. Over quota: HTTP 429 `ACCOUNT_QUOTA_EXCEEDED` | `0` |
+| `ACCOUNT_DAILY_CALL_LIMIT` | Per-account rolling 24h upstream-call limit; `0` disables | `0` |
 | `LLM_EMBEDDING_MODEL` | Embedding model | `text-embedding-3-small` |
 | `CORS_ORIGINS` | Comma-separated allowed frontend origins | local ports 3000/3001 |
 | `STT_API_KEY` | Optional API key for server-side speech recognition | (browser fallback when omitted) |

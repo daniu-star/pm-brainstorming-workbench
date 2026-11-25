@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     # 导致结构化输出的 content 为空。默认关闭思考（LLM_DISABLE_REASONING=false 可恢复）。
     llm_disable_reasoning: bool = True
 
+    # 账户级配额（滚动 24 小时）：同一 owner 的累计模型消耗上限，0 表示不限。
+    # 与单 Run 预算互补：单 Run 预算防一次性烧太多，账户配额防一个账号反复烧。
+    account_daily_token_limit: int = 0
+    account_daily_call_limit: int = 0
+
     stt_api_key: str = ""
     stt_base_url: str = "https://api.openai.com/v1"
     stt_model: str = "whisper-1"

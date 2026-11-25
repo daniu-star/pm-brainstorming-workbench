@@ -11,6 +11,7 @@ from api.v2 import (
     evidence,
     loops,
     messages,
+    quota,
     runs,
     sessions,
 )
@@ -25,5 +26,6 @@ router.include_router(canvas.router)
 router.include_router(audits.router)
 router.include_router(controls.router)
 router.include_router(loops.router)
+router.include_router(quota.router)
 
 __all__ = ["router"]

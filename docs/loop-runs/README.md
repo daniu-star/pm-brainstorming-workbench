@@ -227,7 +227,13 @@
 | --- | --- | --- |
 | 安静一天后 `report_quality` 永远只答 `no_data`：排障时「没有信息」与「一切正常」看起来一样 | `_report_quality` 先用 24h 窗口，判定为 `no_data`/`insufficient` 且 7 天内样本更多时改用 7 天统计，返回 `window=7d` + `fallback_from=1d`，并在 hint 里说明回落 | `test_report_quality.py` 新增 4 例（回落、无需回落、长窗也无数据、库异常降级）；735 后端 / 266 前端 |
 
-当前基线：**后端 735 用例 OK / 前端 266 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（8 步，含 db-report） / 磁盘清理脚本（报告 + `--apply`） / 中间载荷 90 天保留策略 + `db_maintenance.py report|vacuum`**。
+## 第 32 批（账户级配额：防单个账号反复烧额度，2026-11-25）
+
+| 问题 | 修复 | 证据 |
+| --- | --- | --- |
+| 原有预算只按「单 Run」收紧：一个脚本循环提交 brainstorm、或多人共用一个账号，可以把上游额度烧穿而没有任何拦截 | 新增 `services/quota_service.py`：`usage_since` 用 `usage_json` 统计已消耗（含崩溃遗留预留），未终结 Run 按 `budget_json` 上限预占，因此并发提交不会集体越过配额；`ensure_within_quota` 在 `submit_command` 与 `start_initial_run`（建会话）两处网关拦截，超额抛 429 `ACCOUNT_QUOTA_EXCEEDED` 并带已用/上限/重置时间；改稿、登记证据、确认决策、取消、结束审计等同步命令不受限，避免额度耗尽后连收尾都做不了；新增 `GET /api/v2/quota` 供前端显示剩余额度；上限来自 `ACCOUNT_DAILY_TOKEN_LIMIT` / `ACCOUNT_DAILY_CALL_LIMIT`（默认 0=不限，只收紧不放宽） | `test_account_quota.py` 9 例（终结 Run 实计 + 排队预占、他人配额隔离、异步拒绝、同步放行、仅次数上限也拒绝、`/quota` 视图、命令 429、建会话 429）；744 后端 / 266 前端 |
+
+当前基线：**后端 744 用例 OK / 前端 266 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（8 步，含 db-report） / 磁盘清理脚本（报告 + `--apply`） / 中间载荷 90 天保留策略 + `db_maintenance.py report|vacuum` / 账户级配额（429 `ACCOUNT_QUOTA_EXCEEDED` + `GET /api/v2/quota`）**。
 
 ## 第 22 批（发版前一键体检，2026-11-24）
 
