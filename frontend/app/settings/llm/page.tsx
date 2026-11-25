@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ArrowRightIcon, ShieldIcon } from "@/components/icons";
 import { LlmConfigForm } from "@/components/llm/LlmConfigForm";
+import { QuotaMeter } from "@/components/quota/QuotaMeter";
 
 export default function LlmSettingsPage() {
   return (
@@ -28,6 +29,8 @@ export default function LlmSettingsPage() {
       <section className="rounded-2xl border border-zinc-700/60 bg-dark-800/70 p-5">
         <LlmConfigForm />
       </section>
+
+      <QuotaMeter />
 
       <section className="rounded-xl border border-zinc-800/80 bg-dark-900/60 p-4 text-xs leading-6 text-zinc-500">
         <p className="font-medium text-zinc-400">怎么拿到 Key</p>

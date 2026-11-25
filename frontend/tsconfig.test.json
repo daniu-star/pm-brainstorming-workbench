@@ -23,6 +23,7 @@
     "lib/loopView.ts",
     "lib/llmConfig.ts",
     "lib/phaseRouter.ts",
+    "lib/quota.ts",
     "lib/sse.ts",
     "lib/stateGuards.ts",
     "store/sessionStore.ts"

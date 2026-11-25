@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CodeIcon, HistoryIcon, PlusIcon, UserIcon, VideoIcon } from "@/components/icons";
+import { QuotaBadge } from "@/components/quota/QuotaBadge";
 import { api } from "@/lib/api";
 import { useSessionStore } from "@/store/sessionStore";
 import { resetAuthVerification } from "@/components/auth/AuthGate";
@@ -78,6 +79,8 @@ export function NavButtons({ currentPage, sessionId, onToggleHistory }: NavButto
           <span className="hidden sm:inline">专家审计</span>
         </button>
       )}
+
+      <QuotaBadge />
 
       <Link
         href="/settings/llm"

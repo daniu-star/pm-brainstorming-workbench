@@ -233,6 +233,12 @@
 | --- | --- | --- |
 | 原有预算只按「单 Run」收紧：一个脚本循环提交 brainstorm、或多人共用一个账号，可以把上游额度烧穿而没有任何拦截 | 新增 `services/quota_service.py`：`usage_since` 用 `usage_json` 统计已消耗（含崩溃遗留预留），未终结 Run 按 `budget_json` 上限预占，因此并发提交不会集体越过配额；`ensure_within_quota` 在 `submit_command` 与 `start_initial_run`（建会话）两处网关拦截，超额抛 429 `ACCOUNT_QUOTA_EXCEEDED` 并带已用/上限/重置时间；改稿、登记证据、确认决策、取消、结束审计等同步命令不受限，避免额度耗尽后连收尾都做不了；新增 `GET /api/v2/quota` 供前端显示剩余额度；上限来自 `ACCOUNT_DAILY_TOKEN_LIMIT` / `ACCOUNT_DAILY_CALL_LIMIT`（默认 0=不限，只收紧不放宽） | `test_account_quota.py` 9 例（终结 Run 实计 + 排队预占、他人配额隔离、异步拒绝、同步放行、仅次数上限也拒绝、`/quota` 视图、命令 429、建会话 429）；744 后端 / 266 前端 |
 
+## 第 34 批（配额可视化：配置页用量卡 + 顶栏额度徽标，2026-11-25）
+
+| 问题 | 修复 | 证据 |
+| --- | --- | --- |
+| 账户级配额只在接口里（`GET /api/v2/quota`），部署方设了上限后用户只能等 429 才知道超了；`ACCOUNT_DAILY_*` 默认 0=不限，更看不出自己用掉多少 | 新增 `frontend/lib/quota.ts`（`quotaSummary` 取 token/调用较高百分比、`formatTokens`、`resetInText`）与 `QuotaMeter`（`/settings/llm` 的「模型额度与用量」卡片：两条进度条 + 预占 + 恢复倒计时 + 超额时的「仍可做同步操作」提示）与 `QuotaBadge`（顶栏只在设了上限时出现，≥80% 琥珀、超额红色，悬停显示用量与恢复时间） | `frontend/tests/quota.test.cjs` 6 例（未设上限 / 百分比与明细 / 80% 警戒 / 超额 / 数字进位 / 倒计时归一）；真 Chrome 实测两种状态：未设上限时徽标不出现、卡片显示「未设上限」；临时设 60k/20 次上限后徽标显示「额度 0%」且悬停拼出「已用 0 / 60k tokens · 调用 0 / 20 次 · 约 24 小时后恢复」，验证后已恢复默认不限 |
+
 ## 第 33 批（账户自带模型密钥 BYOK + 登录强制配置，2026-11-25）
 
 | 问题 | 修复 | 证据 |
@@ -240,7 +246,7 @@
 | 平台要替所有用户付模型费；而线上收款需要营业执照 + ICP 备案 + 公网 HTTPS 回调，本机暂时都做不到 | 改为 **BYOK**：新增 `llm_configs`（每账户一条，Fernet 加密、只回显末 4 位）；`llm_config_service.gate` 在建会话与提交需要模型的命令两处拦截，Worker 执行 Run 时再兜一层，未配置统一 428 `LLM_CONFIG_REQUIRED`；前端 `LlmConfigGate` 整屏引导 + `/settings/llm` 表单（保存并测试连通性）；`LLM_KEY_MODE=system` 仅供本地联调/自动化 | `backend/tests/test_llm_config.py` 11 例（加密脱敏 2 + 服务闸门 4 + 接口 3 + 执行器兜底 2）；`frontend/tests/llm-config.test.cjs` 5 例（闸门状态机）；755 后端 / 271 前端 |
 | 前端闸门首版没生效：`lib/llmConfig.ts` 调 `apiV2("/llm-config")`，而 `apiV2` 不会补 `/api/v2` 前缀（其余调用都传完整路径）→ 请求打到 `:8001/llm-config` 得 404，闸门按「读配置失败放行」直接渲染业务页面 | 四个调用改为完整路径 `/api/v2/llm-config`（含 `/test`） | 真 Chrome（CDP）复验：未配置时整屏「先配置你自己的模型 API」→ `/settings/llm` 表单可用 → `PUT` 保存后刷新自动放行，输出 `BYOK_GATE_CDP_OK` |
 
-当前基线：**后端 755 用例 OK / 前端 271 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（8 步，含 db-report） / 磁盘清理脚本（报告 + `--apply`） / 中间载荷 90 天保留策略 + `db_maintenance.py report|vacuum` / 账户级配额（429 `ACCOUNT_QUOTA_EXCEEDED` + `GET /api/v2/quota`） / 账户自带模型密钥（428 `LLM_CONFIG_REQUIRED` + 整屏配置引导 + 密钥加密只回末 4 位，真 Chrome 实测 `BYOK_GATE_CDP_OK`）**。
+当前基线：**后端 755 用例 OK / 前端 277 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（8 步，含 db-report） / 磁盘清理脚本（报告 + `--apply`） / 中间载荷 90 天保留策略 + `db_maintenance.py report|vacuum` / 账户级配额（429 `ACCOUNT_QUOTA_EXCEEDED` + `GET /api/v2/quota`） / 账户自带模型密钥（428 `LLM_CONFIG_REQUIRED` + 整屏配置引导 + 密钥加密只回末 4 位，真 Chrome 实测 `BYOK_GATE_CDP_OK`）**。
 
 ## 第 22 批（发版前一键体检，2026-11-24）
 
