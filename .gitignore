@@ -42,3 +42,5 @@ backend/chrome-e2e-*.log
 
 # 浏览器验收的临时 Chrome 用户数据（tempdir 不可用时会落到仓库根）
 browser-e2e-*/
+.tmp_*.log
+.tmp_*.json
