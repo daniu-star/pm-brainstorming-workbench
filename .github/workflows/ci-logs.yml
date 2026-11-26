@@ -44,10 +44,12 @@ jobs:
         run: npm ci --prefix frontend
 
       - name: run backend suite
+        # timeout 包一层：若某个用例在 CI 上挂住，15 分钟后自行中断，
+        # 下面的 publish 仍会执行，日志最后一行就是卡住的用例名。
         run: |
           mkdir -p ci-logs
-          ( cd backend && python -m unittest discover -s tests -v ) > ci-logs/backend.log 2>&1 || true
-          tail -n 80 ci-logs/backend.log || true
+          ( cd backend && timeout --signal=INT 900 python -m unittest discover -s tests -v ) > ci-logs/backend.log 2>&1 || true
+          tail -n 40 ci-logs/backend.log || true
 
       - name: run frontend suite
         run: |
