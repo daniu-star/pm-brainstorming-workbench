@@ -1,7 +1,7 @@
 # V4.0 发布就绪清单（WP-10）
 
 - 分支：`feat/prd-v4-m1`；对应 PRD：`docs/superpowers/specs/2026-11-18-pm-brainstorm-agent-architecture-prd-v4.md`
-- 验收记录：`docs/v4-acceptance-report.md`（825 后端用例 / 314 前端用例 / 契约 parity 13 / 跨进程 6 + 崩溃注入 3 + 预算崩溃 4 / 真 Worker E2E 30 项 + Loop 闭环 29 项 / 迁移演练 / 回滚演练（AC-34，`scripts/ac34_rollback_drill.py`）/ 真实浏览器 E2E AC-01/19/31/33（docs/browser-qa.md + docs/browser-qa/e2e/ 7 张截图）/ AC-20 数字可追溯性真模型端到端（`scripts/ac20_number_provenance.py` + `docs/ac20-number-provenance.md`） / 完整用户旅程真模型端到端（`scripts/full_journey_e2e.py` + `docs/full-journey-e2e.md`） / 结项报告真实模型路径（`scripts/audit_report_e2e.py` + `docs/audit-report-e2e.md`，含报告摘要落库）；文档索引见 docs/README.md；QA Loop 记录见 docs/qa-loop-runs/README.md，多角色 Loop 记录见 docs/loop-runs/README.md）
+- 验收记录：`docs/v4-acceptance-report.md`（825 后端用例 / 321 前端用例 / 契约 parity 13 / 跨进程 6 + 崩溃注入 3 + 预算崩溃 4 / 真 Worker E2E 30 项 + Loop 闭环 29 项 / 迁移演练 / 回滚演练（AC-34，`scripts/ac34_rollback_drill.py`）/ 真实浏览器 E2E AC-01/19/31/33（docs/browser-qa.md + docs/browser-qa/e2e/ 7 张截图）/ AC-20 数字可追溯性真模型端到端（`scripts/ac20_number_provenance.py` + `docs/ac20-number-provenance.md`） / 完整用户旅程真模型端到端（`scripts/full_journey_e2e.py` + `docs/full-journey-e2e.md`） / 结项报告真实模型路径（`scripts/audit_report_e2e.py` + `docs/audit-report-e2e.md`，含报告摘要落库）；文档索引见 docs/README.md；QA Loop 记录见 docs/qa-loop-runs/README.md，多角色 Loop 记录见 docs/loop-runs/README.md）
 
 ## 1. 发布前必须通过的命令
 
@@ -108,6 +108,29 @@ CI 配置见 `.github/workflows/ci.yml`（backend：安装依赖 → 全量测�
 - Space 封 SMTP 出站：`POST /api/auth/email/code` 曾卡 20.6 秒后由 Vercel 反代返回 502。
   镜像因此默认 `SMTP_TIMEOUT_SECONDS=8` + `AUTH_CODE_LOG_FALLBACK=true`：投递失败立刻返回
   `delivery="logs"`，验证码写进 Space Logs 由所有者转达；配好 `EMAIL_PROXY_URL` 或可用 SMTP 后应关掉该兜底。
+
+## 6.9 已知限制：HF Space 网关抖动与客户端自动重试（第 41 批）
+
+2026-11-26 上线后实测：Vercel 前端经 `/backend/*` 反代到 Hugging Face Space 时，
+约 5%~10% 的请求会在 **21 秒**左右被前置代理直接断开（`curl` 返回 `000`，无响应体；
+直连 `https://123chenjunliang-pm-brainstorm-workbench.hf.space/api/v2/...` 同样复现，
+因此可以定位在 Space 前置代理层，而不是 Vercel 反代或某个接口的业务逻辑）。
+
+用户在浏览器里看到的现象是：进「模型 API 设置」页报「读取模型配置失败：网络连接失败」，
+或页面直接透出英文 `Failed to fetch`。修复只在客户端做（后端无需变更）：
+
+- `apiV2` 对瞬时故障（`fetch` TypeError、客户端超时、网关 502/503/504）自动重试 3 次，
+  退避 700/1800ms；重试时单次超时收紧到 8s/6s，整体最长等待从 45s 降到约 29s。
+- GET 默认开启重试；写请求默认关闭，携带 `Idempotency-Key` 的幂等写（建会话、命令、
+  取消、重试失败专家）显式开启，三次尝试复用同一个幂等键，后端按 `request_id` 去重。
+- SSE 首次连接失败也重试 2 次（1200/3000ms），避免事件流一个字都没收到就 EOF。
+- `errorMessage` 把 `TypeError` / `AbortError` / 英文 `Failed to fetch` 统一成中文可操作
+  文案；`isEndpointUnavailable` 不再把 `TypeError` 当「端点不存在」（旧实现会让一次网络
+  抖动把会话永久降级到 legacy 写路径）。
+- 模型配置页读取失败会静默重试两次（2s/4s），仍失败才展示错误并提供「重新读取配置」按钮。
+
+长期方案仍建议换稳定后端（HF 免费实例还有「重启丢 SQLite」与「封 SMTP」两个限制），
+或者给 Space 配 `EMAIL_PROXY_URL` 恢复邮件投递。
 
 ## 7. 线上部署（Vercel 前端 + Hugging Face Space 后端）
 

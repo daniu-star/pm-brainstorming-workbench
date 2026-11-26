@@ -134,12 +134,33 @@ export function statusMessage(status: number): string {
   return `请求失败（${status}）`;
 }
 
+/** 网络层失败的统一文案（后端在唤醒、网关抖动、离线都走这里）。 */
+export const NETWORK_ERROR_MESSAGE =
+  "网络连接失败：服务端可能正在唤醒或网络抖动，已自动重试，请稍后再试一次";
+
+/** fetch 抛出的 TypeError（浏览器多为 "Failed to fetch"）判定。 */
+export function isNetworkFailure(error: unknown): boolean {
+  if (isApiError(error)) {
+    return error.code === "NETWORK_ERROR" || error.code === "TIMEOUT" || [502, 503, 504].includes(error.status);
+  }
+  if (!(error instanceof Error)) return false;
+  if (error.name === "AbortError") return false;
+  const text = error.message || "";
+  return (
+    error instanceof TypeError ||
+    /failed to fetch|network ?error|load failed|fetch failed|terminated|other side closed/i.test(text)
+  );
+}
+
 /** 面向用户的错误文案：优先错误码中文表，其次后端 message，最后按状态码。 */
 export function errorMessage(error: unknown): string {
   if (isApiError(error)) {
-    if (error.code === "NETWORK_ERROR") return "网络连接失败，请检查网络后重试";
+    if (error.code === "NETWORK_ERROR") return NETWORK_ERROR_MESSAGE;
+    if (error.code === "TIMEOUT") return `${CODE_MESSAGES.TIMEOUT}（服务端连接超时，可能是后端正在唤醒）`;
     return CODE_MESSAGES[error.code] ?? (error.message || statusMessage(error.status));
   }
+  if (isNetworkFailure(error)) return NETWORK_ERROR_MESSAGE;
+  if (error instanceof Error && error.name === "AbortError") return "请求已取消";
   if (error instanceof Error && error.message) return error.message;
   return "请求失败，请稍后重试";
 }
@@ -154,10 +175,13 @@ export function errorMessage(error: unknown): string {
  */
 export function isEndpointUnavailable(error: unknown): boolean {
   if (isApiError(error)) {
+    // 502/503/504 是网关/后端暂不可用，不是「端点不存在」：否则一次网络抖动就会把
+    // 整个会话永久降级到 legacy 写路径（QA 第 5 轮 P1 的同类问题，2026-11-26 线上复现）。
     return [404, 405, 501].includes(error.status);
   }
-  // fetch 网络层失败（后端未启动 / CORS）
-  return error instanceof TypeError;
+  // fetch 网络层失败（离线 / 后端唤醒中 / 网关抖动）只代表「这次没拿到响应」，
+  // 绝不能据此判断端点不存在——交给调用方按可重试错误提示。
+  return false;
 }
 
 function statusFallbackCode(status: number): string {
@@ -261,11 +285,47 @@ function buildQuery(query?: Record<string, QueryValue>): string {
 const MAX_DETAIL_LENGTH = 200;
 
 export async function api<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
+  const method = (options?.method ?? "GET").toUpperCase();
+  const attempts = method === "GET" || method === "HEAD" ? 2 : 1;
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (attempt > 0) await sleepMs(700);
+    try {
+      return await apiOnce<T>(path, options);
+    } catch (error) {
+      lastError = normalizeFetchFailure(error, null);
+      if (attempt + 1 >= attempts || !isNetworkFailure(lastError)) throw lastError;
+    }
+  }
+  throw lastError;
+}
+
+/** 把浏览器的 TypeError 归一成 ApiError，避免页面直接显示英文 "Failed to fetch"。 */
+function normalizeFetchFailure(error: unknown, requestId: string | null): unknown {
+  if (isApiError(error)) return error;
+  if (error instanceof Error && error.name === "AbortError") return error;
+  if (isNetworkFailure(error)) {
+    return new ApiError("NETWORK_ERROR", NETWORK_ERROR_MESSAGE, 0, true, null, requestId, null);
+  }
+  return error;
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function apiOnce<T>(path: string, options?: RequestInit): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      ...options,
+    });
+  } catch (error) {
+    throw normalizeFetchFailure(error, null);
+  }
   if (!res.ok) {
     let text = "";
     try {
@@ -304,12 +364,36 @@ export interface V2RequestOptions {
   /** 单请求超时覆盖（毫秒）；沙箱执行这类长任务需要 > 默认 15s */
   timeoutMs?: number;
   headers?: Record<string, string>;
+  /**
+   * 瞬时故障（fetch 失败 / 超时 / 502-504）是否自动重试。
+   *
+   * 默认 GET 开启、写请求关闭；携带 `Idempotency-Key` 的写请求（命令、建会话、
+   * 取消、重试）可以显式打开——后端按 request_id 去重，重放不会产生副作用。
+   */
+  retryTransient?: boolean;
 }
 
 const WRITE_METHODS = new Set(["POST", "PATCH", "DELETE", "PUT"]);
 
 /** 单次 HTTP 请求的默认超时；避免后端/网关挂起时按钮永久停在「提交中」。 */
 export const REQUEST_TIMEOUT_MS = 15_000;
+
+/**
+ * 瞬时故障重试次数与退避（2026-11-26 线上实测：HF Space 前置代理约 5%~10% 的请求
+ * 会挂起约 21 秒后直接断开，curl 返回 000、直连 Space 同样复现——这是传输层抖动，
+ * 不是接口错误，重试即可恢复）。
+ */
+export const TRANSIENT_ATTEMPTS = 3;
+const TRANSIENT_BACKOFF_MS = [700, 1_800] as const;
+/** 重试时的单次超时（毫秒）：重试说明上一条连接已不可用，缩短等待快速换新连接。 */
+const RETRY_TIMEOUT_MS = [8_000, 6_000] as const;
+
+/** 判断该错误是否值得自动重试。 */
+export function isTransientFailure(error: unknown): boolean {
+  if (!isApiError(error)) return isNetworkFailure(error);
+  if (error.code === "NETWORK_ERROR" || error.code === "TIMEOUT") return true;
+  return [502, 503, 504].includes(error.status);
+}
 
 interface RequestGuard {
   signal: AbortSignal;
@@ -347,6 +431,43 @@ export async function apiV2<T>(path: string, options: V2RequestOptions = {}): Pr
   const method = options.method ?? "GET";
   const isWrite = WRITE_METHODS.has(method);
   const requestId = options.requestId ?? (isWrite ? newRequestId() : undefined);
+  const retry = options.retryTransient ?? !isWrite;
+  const attempts = retry ? TRANSIENT_ATTEMPTS : 1;
+
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (attempt > 0) {
+      if (options.signal?.aborted) throw lastError;
+      await sleepMs(TRANSIENT_BACKOFF_MS[Math.min(attempt - 1, TRANSIENT_BACKOFF_MS.length - 1)]);
+      if (options.signal?.aborted) throw lastError;
+    }
+    const attemptOptions: V2RequestOptions =
+      attempt === 0
+        ? options
+        : {
+            ...options,
+            timeoutMs: Math.min(
+              options.timeoutMs ?? REQUEST_TIMEOUT_MS,
+              RETRY_TIMEOUT_MS[Math.min(attempt - 1, RETRY_TIMEOUT_MS.length - 1)],
+            ),
+          };
+    try {
+      return await apiV2Once<T>(path, attemptOptions, isWrite, requestId);
+    } catch (error) {
+      lastError = error;
+      if (!retry || !isTransientFailure(error)) throw error;
+    }
+  }
+  throw lastError;
+}
+
+async function apiV2Once<T>(
+  path: string,
+  options: V2RequestOptions,
+  isWrite: boolean,
+  requestId: string | undefined
+): Promise<T> {
+  const method = options.method ?? "GET";
 
   const headers: Record<string, string> = { Accept: "application/json", ...(options.headers ?? {}) };
   if (options.body !== undefined) headers["Content-Type"] = "application/json";
@@ -369,7 +490,20 @@ export async function apiV2<T>(path: string, options: V2RequestOptions = {}): Pr
     }
     if (isApiError(error)) throw error;
     if (error instanceof Error && error.name === "AbortError") throw error;
-    throw new ApiError("NETWORK_ERROR", "网络连接失败，请检查网络后重试", 0, true, null, requestId ?? null, null);
+    // 只有真正的传输层失败才归一为 NETWORK_ERROR（这类错误值得自动重试）；
+    // 代码里抛出的普通 Error 说明是本地逻辑问题，原样抛给调用方，避免被重试掩盖。
+    if (isNetworkFailure(error)) {
+      throw new ApiError(
+        "NETWORK_ERROR",
+        NETWORK_ERROR_MESSAGE,
+        0,
+        true,
+        null,
+        requestId ?? null,
+        null,
+      );
+    }
+    throw error;
   } finally {
     guard.dispose();
   }
@@ -425,6 +559,7 @@ export function createSession(
     body: { problem_statement: problemStatement },
     requestId: options.requestId,
     signal: options.signal,
+    retryTransient: true,
   });
 }
 
@@ -452,6 +587,7 @@ export function deleteSession(
       expected_session_version: options.expectedSessionVersion ?? null,
     },
     requestId,
+    retryTransient: true,
   });
 }
 
@@ -531,6 +667,8 @@ export function sendCommand<A extends Action>(
       payload: options.rawPayload ?? (payload ?? {}),
     },
     requestId,
+    // 命令都带 Idempotency-Key，后端按 request_id 去重，重放安全。
+    retryTransient: true,
   });
 }
 
@@ -549,6 +687,7 @@ export function cancelRun(runId: string, options: { requestId?: string } = {}): 
     method: "POST",
     body: { request_id: options.requestId ?? newRequestId() },
     requestId: options.requestId,
+    retryTransient: true,
   });
 }
 
@@ -564,6 +703,7 @@ export function retryFailed(
       expected_session_version: options.expectedSessionVersion ?? null,
     },
     requestId,
+    retryTransient: true,
   });
 }
 

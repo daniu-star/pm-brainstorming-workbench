@@ -127,9 +127,12 @@ test("errorMessage 优先使用中文错误码文案", () => {
   assert.match(errorMessage(conflict), /内容已在别处更新/);
 });
 
-test("errorMessage 对网络错误给出中文提示", () => {
+test("errorMessage 对网络错误给出中文提示（含「已自动重试」说明）", () => {
   const network = new ApiError("NETWORK_ERROR", "Failed to fetch", 0, true);
-  assert.equal(errorMessage(network), "网络连接失败，请检查网络后重试");
+  assert.equal(errorMessage(network), api.NETWORK_ERROR_MESSAGE);
+  assert.match(errorMessage(network), /网络连接失败/);
+  // 浏览器原生的 TypeError 也不再直接透出英文
+  assert.equal(errorMessage(new TypeError("Failed to fetch")), api.NETWORK_ERROR_MESSAGE);
 });
 
 test("isApiError 正确区分 ApiError 与普通 Error", () => {
@@ -137,10 +140,12 @@ test("isApiError 正确区分 ApiError 与普通 Error", () => {
   assert.equal(isApiError(new Error("x")), false);
 });
 
-test("isEndpointUnavailable 只认端点确实不存在（404/405/501）与网络错误", () => {
+test("isEndpointUnavailable 只认端点确实不存在（404/405/501）", () => {
   assert.equal(isEndpointUnavailable(new ApiError("NOT_FOUND", "x", 404)), true);
   assert.equal(isEndpointUnavailable(new ApiError("INTERNAL", "x", 501)), true);
-  assert.equal(isEndpointUnavailable(new TypeError("Failed to fetch")), true);
+  // 2026-11-26 线上故障：网关抖动会让 fetch 抛 TypeError，旧实现据此把会话永久降级到 legacy。
+  assert.equal(isEndpointUnavailable(new TypeError("Failed to fetch")), false);
+  assert.equal(isEndpointUnavailable(new TypeError("NetworkError when attempting to fetch resource.")), false);
   assert.equal(isEndpointUnavailable(new ApiError("VERSION_CONFLICT", "x", 409)), false);
   // 410/502/503 是「暂时不可用」而非「端点缺失」：不得据此永久降级到 legacy
   assert.equal(isEndpointUnavailable(new ApiError("EVENT_CURSOR_EXPIRED", "x", 410)), false);
@@ -330,21 +335,25 @@ test("204 响应返回 undefined 而不抛解析错误", async () => {
 // 网络/协议错误
 // --------------------------------------------------------------------------- //
 
-test("网络异常被包装为 NETWORK_ERROR 且 retryable", async () => {
+test("网络异常被包装为 NETWORK_ERROR 且 retryable（关闭重试时只发一次）", async () => {
+  let calls = 0;
   globalThis.fetch = async () => {
+    calls += 1;
     throw new TypeError("Failed to fetch");
   };
 
   await assert.rejects(
-    () => getSession("s1"),
+    () => apiV2("/api/v2/sessions/s1", { retryTransient: false }),
     (error) => {
       assert.ok(error instanceof ApiError);
       assert.equal(error.code, "NETWORK_ERROR");
       assert.equal(error.status, 0);
       assert.equal(error.retryable, true);
+      assert.match(errorMessage(error), /已自动重试|网络连接失败/);
       return true;
     },
   );
+  assert.equal(calls, 1);
 });
 
 test("错误响应被包装为 ApiError 并带上服务端 code", async () => {

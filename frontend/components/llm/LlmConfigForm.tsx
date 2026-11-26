@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "@/components/Toast";
-import { errorMessage } from "@/lib/api";
+import { errorMessage, isTransientFailure } from "@/lib/api";
 import {
   deleteLlmConfig,
   getLlmConfig,
@@ -28,9 +28,19 @@ export function LlmConfigForm({ onSaved }: LlmConfigFormProps) {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // 读取次数：手动重试与「瞬时故障自动重试」都靠它触发下一次 effect。
+  const [loadAttempt, setLoadAttempt] = useState(0);
+
+  const retryLoad = (): void => {
+    setLoadError(null);
+    setBusy(true);
+    setLoadAttempt((n) => n + 1);
+  };
 
   useEffect(() => {
     let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
     getLlmConfig()
       .then((next) => {
         if (cancelled) return;
@@ -38,14 +48,29 @@ export function LlmConfigForm({ onSaved }: LlmConfigFormProps) {
         setBaseUrl(next.base_url || next.defaults.base_url);
         setModel(next.model || "");
         setDisableReasoning(next.disable_reasoning);
+        setLoadError(null);
+        setBusy(false);
       })
       .catch((err) => {
-        if (!cancelled) setLoadError(errorMessage(err));
+        if (cancelled) return;
+        // 后端唤醒中 / 网关抖动：静默再试两次（2s、4s），都失败才把错误摆到用户眼前。
+        if (loadAttempt < 2 && isTransientFailure(err)) {
+          setStatus("后端可能正在唤醒，正在自动重试读取配置…");
+          retryTimer = setTimeout(() => {
+            if (!cancelled) setLoadAttempt((n) => n + 1);
+          }, loadAttempt === 0 ? 2_000 : 4_000);
+          return;
+        }
+        setStatus(null);
+        setBusy(false);
+        setLoadError(errorMessage(err));
       });
+
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
     };
-  }, []);
+  }, [loadAttempt]);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -105,9 +130,20 @@ export function LlmConfigForm({ onSaved }: LlmConfigFormProps) {
 
   if (loadError) {
     return (
-      <p role="alert" className="rounded-lg border border-red-800/40 bg-red-900/20 p-3 text-sm text-red-300">
-        读取模型配置失败：{loadError}
-      </p>
+      <div className="flex flex-col gap-3 rounded-lg border border-red-800/40 bg-red-900/20 p-3 text-sm text-red-300">
+        <p role="alert">读取模型配置失败：{loadError}</p>
+        <p className="text-xs text-red-200/80">
+          线上后端（Hugging Face Space）唤醒时偶发连接抖动，点击下面的按钮重试通常即可恢复。
+        </p>
+        <button
+          type="button"
+          onClick={retryLoad}
+          disabled={busy}
+          className="min-h-[44px] w-fit rounded-lg border border-zinc-600/70 px-4 py-2 text-sm text-zinc-200 transition-colors hover:border-brand-400/70 hover:text-brand-200 disabled:opacity-60"
+        >
+          {busy ? "正在重试…" : "重新读取配置"}
+        </button>
+      </div>
     );
   }
 

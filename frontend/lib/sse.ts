@@ -242,21 +242,43 @@ export function openRunEvents(url: string, opts: OpenRunEventsOptions): () => vo
       headers["Last-Event-ID"] = String(opts.afterSeq);
     }
 
-    let response: Response;
-    try {
-      response = await fetchImpl(withAfterSeq(url, opts.afterSeq), {
-        method: "GET",
-        credentials: "include",
-        headers,
-        cache: "no-store",
-        signal: controller.signal,
-      });
-    } catch (error) {
-      if (stopped || isAbortError(error)) {
-        close("abort");
-        return;
+    // 传输层抖动（后端唤醒中 / 网关 21s 断开）时，事件流会在「一个字都还没收到」
+    // 的阶段直接 EOF。此时重试是安全的：订阅是幂等的，after_seq 保证不会重复回放。
+    const CONNECT_ATTEMPTS = 3;
+    const CONNECT_BACKOFF_MS = [1_200, 3_000];
+    let response: Response | null = null;
+    let lastError: unknown = null;
+
+    for (let attempt = 0; attempt < CONNECT_ATTEMPTS; attempt += 1) {
+      if (attempt > 0) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, CONNECT_BACKOFF_MS[Math.min(attempt - 1, CONNECT_BACKOFF_MS.length - 1)]),
+        );
+        if (stopped || controller.signal.aborted) {
+          close("abort");
+          return;
+        }
       }
-      reportError(error);
+      try {
+        response = await fetchImpl(withAfterSeq(url, opts.afterSeq), {
+          method: "GET",
+          credentials: "include",
+          headers,
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        break;
+      } catch (error) {
+        if (stopped || isAbortError(error)) {
+          close("abort");
+          return;
+        }
+        lastError = error;
+      }
+    }
+
+    if (!response) {
+      reportError(lastError ?? new Error("事件流连接失败"));
       close("eof");
       return;
     }

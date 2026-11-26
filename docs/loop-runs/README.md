@@ -276,6 +276,15 @@
 | 想知道「我把哪些会话共享给了谁 / 谁共享了会话给我 / 成员组都有谁」只能逐个会话点开，且成员无法自己退出共享 | 新增 `GET /api/v2/access`（owned 含 shares / incoming 含 role+owner_email / groups / totals）；新增 `DELETE /api/v2/sessions/{id}/share` 让成员退出自己的共享（所有者退出 422、陌生人 403）；新增 `frontend/app/settings/access/page.tsx` + 顶栏「权限」入口 | 后端 8 例外加真 Cookie 冒烟；前端 `/settings/access` SSR 断言三分区与入口；`session_repo.list_owned_sessions/list_incoming_shares/shares_by_session` 避免 N+1 |
 | 发布验证 | 后端全量 `Ran 825 tests / OK`；前端 `314/314` + `tsc --noEmit` 0 错；`PRE_RELEASE_OK 8 步 / 178.4s`；真 Cookie 冒烟 28 项（含成员退出后 403、旧列表 `my_role`）；真 Chrome `ACCESS_CDP_OK` 13 项；停栈后 `npm run build` exit 0（12 条路由）再 `start.bat` 拉起，构建后冒烟 10 项全 200 | 提交 `4bcef3a`（功能）、`2c9334f`（验收证据）；截图 `docs/browser-qa/e2e/access-*.png`；备份 `BACKUP_OK 20261126-144004` |
 
+## 第 41 批（线上网关抖动热修：客户端重试与中文错误文案，2026-11-26）
+
+| 项 | 结果 |
+| --- | --- |
+| 现象 | 线上点「配置模型 API Key」报「读取模型配置失败：网络连接失败」；页面偶发英文 `Failed to fetch`，用户完全进不去 |
+| 定位 | `curl` 实测经 Vercel `/backend/*` 与直连 Space 均有约 5%~10% 请求 21s 后返回 `000`；抖动在 Space 前置代理，与本接口逻辑无关 |
+| 修复 | `apiV2` 瞬时故障重试 3 次（退避 700/1800ms，重试单次超时 8s/6s）；GET 默认开、幂等写显式开（复用 `Idempotency-Key`）；SSE 首连重试 2 次；`errorMessage` 中文化；`isEndpointUnavailable` 不再把 TypeError 当端点缺失；模型配置页静默重试 + 「重新读取配置」按钮 |
+| 回归 | 新增 `frontend/tests/api-retry.test.cjs` 7 例；前端 **321 / 321 pass**、`tsc` 0 错、停栈后 `npm run build` exit 0（12 条路由） |
+
 ## 第 40 批（V4 容器部署链路 + 邮件代理 + 上线，2026-11-26）
 
 | 问题 | 修复 | 证据 |
@@ -287,7 +296,7 @@
 | 部署上线只做到「代码在本地能跑」，没有真正推到 GitHub / HF Space，线上仍是 V3 | GitHub `main` 强推到 `aeb03df`（先建 `backup/v3-production` 分支与 `v3-production-backup` tag 指向 V3 的 `16d3cc6`）；HF Space 拒收二进制（`Your push was rejected because it contains binary files.`），改为推「可部署子集」孤儿分支（`Dockerfile`/`.dockerignore`/`README.md`/`backend/`/`scripts/container_start.py`，159 文件 2.0MB） | Vercel 自动重建：首页标题变为「产品决策智能工作台」；`https://www.brainstorming.top/backend/health` → `200 {"status":"ok"}`；线上 OpenAPI 含 `/api/v2/access`、`/api/v2/groups`、`/api/v2/sessions/{session_id}/share`、`/api/v2/loops/{loop_id}/sandbox-runs`；Space `stage=RUNNING`（`sha=9eea1cb`，第一批部署为 `def63cd`）；`/ops`、`/settings/access`、`/settings/team`、`/login`、`/product` 全部 200 |
 
 | Space 每次部署都要手搓 worktree/孤儿分支，容易漏文件，且本机桌面根与用户 TEMP 都可能不可写 | 新增 `scripts/deploy_hf_space.py`：用 git plumbing（`read-tree` → `update-index --force-remove` → `write-tree` → `commit-tree` → `update-ref`）从 HEAD 组装「只含可部署子集」的提交再 `push --force space space-main:main`，不建临时 worktree、不依赖临时目录写权限；`--dry-run` 只列文件 | `--dry-run` 输出「子集树 a8f500e…，160 个文件」；实推 `9eea1cb..f29ce35`；Space `stage=RUNNING`；`backend/tests/test_deployment_assets.py` 15 例（新增 4 例脚本契约）；后端 825 用例 OK |
-当前基线：**后端 825 用例 OK / 前端 314 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（8 步，含 db-report） / 磁盘清理脚本（报告 + `--apply`） / 中间载荷 90 天保留策略 + `db_maintenance.py report|vacuum` / 账户级配额（429 `ACCOUNT_QUOTA_EXCEEDED` + `GET /api/v2/quota`） / 账户自带模型密钥（428 `LLM_CONFIG_REQUIRED` + 整屏配置引导 + 密钥加密只回末 4 位，真 Chrome 实测 `BYOK_GATE_CDP_OK`） / 团队工作区成员组（组=名单、共享行=授权，应用幂等） / Loop 执行沙箱（fail-closed + argv 直传 + 超时强杀 + 产物留档）与 `/ops` 运维健康页（storage/queues/sandbox 三块） / 共享可见性与权限总览（`my_role` 贯通 v2 与旧接口、`GET /api/v2/access`、成员退出共享、真 Chrome `ACCESS_CDP_OK` 13 项） / 生产构建 `npm run build` exit 0（12 条路由）**。
+当前基线：**后端 825 用例 OK / 前端 321 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（8 步，含 db-report） / 磁盘清理脚本（报告 + `--apply`） / 中间载荷 90 天保留策略 + `db_maintenance.py report|vacuum` / 账户级配额（429 `ACCOUNT_QUOTA_EXCEEDED` + `GET /api/v2/quota`） / 账户自带模型密钥（428 `LLM_CONFIG_REQUIRED` + 整屏配置引导 + 密钥加密只回末 4 位，真 Chrome 实测 `BYOK_GATE_CDP_OK`） / 团队工作区成员组（组=名单、共享行=授权，应用幂等） / Loop 执行沙箱（fail-closed + argv 直传 + 超时强杀 + 产物留档）与 `/ops` 运维健康页（storage/queues/sandbox 三块） / 共享可见性与权限总览（`my_role` 贯通 v2 与旧接口、`GET /api/v2/access`、成员退出共享、真 Chrome `ACCESS_CDP_OK` 13 项） / 生产构建 `npm run build` exit 0（12 条路由）**。
 
 ## 第 22 批（发版前一键体检，2026-11-24）
 
