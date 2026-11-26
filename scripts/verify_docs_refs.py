@@ -53,6 +53,7 @@ PATH_PREFIXES = (
 GENERATED_PREFIXES = (
     ".tmp/",
     "backend/.tmp/",
+    "backend/.tmp_tests/",
     "backend/data/",
     "frontend/.next",
     "frontend/node_modules",
@@ -186,8 +187,11 @@ def check_target(source: Path, target: str, basenames: dict[str, set[str]]) -> b
 
 def _check_one(source: Path, target: str, basenames: dict[str, set[str]]) -> bool:
     # 0) 生成物 / 本地密钥 / 依赖目录：被 .gitignore 排除，干净检出里不存在，不算断链
-    if target in GENERATED_FILES or target.startswith(GENERATED_PREFIXES):
+    if target in GENERATED_FILES:
         return True
+    for prefix in GENERATED_PREFIXES:
+        if target.startswith(prefix) or target == prefix.rstrip("/"):
+            return True
     # 1) 相对当前文档目录  2) 相对仓库根  3) 相对后端/前端（文档常写成 domain/contracts.py）
     for candidate in (
         source.parent / target,
