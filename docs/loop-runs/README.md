@@ -276,6 +276,21 @@
 | 想知道「我把哪些会话共享给了谁 / 谁共享了会话给我 / 成员组都有谁」只能逐个会话点开，且成员无法自己退出共享 | 新增 `GET /api/v2/access`（owned 含 shares / incoming 含 role+owner_email / groups / totals）；新增 `DELETE /api/v2/sessions/{id}/share` 让成员退出自己的共享（所有者退出 422、陌生人 403）；新增 `frontend/app/settings/access/page.tsx` + 顶栏「权限」入口 | 后端 8 例外加真 Cookie 冒烟；前端 `/settings/access` SSR 断言三分区与入口；`session_repo.list_owned_sessions/list_incoming_shares/shares_by_session` 避免 N+1 |
 | 发布验证 | 后端全量 `Ran 825 tests / OK`；前端 `314/314` + `tsc --noEmit` 0 错；`PRE_RELEASE_OK 8 步 / 178.4s`；真 Cookie 冒烟 28 项（含成员退出后 403、旧列表 `my_role`）；真 Chrome `ACCESS_CDP_OK` 13 项；停栈后 `npm run build` exit 0（12 条路由）再 `start.bat` 拉起，构建后冒烟 10 项全 200 | 提交 `4bcef3a`（功能）、`2c9334f`（验收证据）；截图 `docs/browser-qa/e2e/access-*.png`；备份 `BACKUP_OK 20261126-144004` |
 
+## 第 43 批（CI 从恒红到全绿：4 个根因 + 文档检查口径，2026-11-27）
+
+| 项 | 内容 |
+| --- | --- |
+| 起点 | GitHub Actions 全历史 2 次运行均 failure；`ci` 只在 PR 分支触发、不覆盖 `main`，所以「本地全绿」与「CI 全红」长期并存 |
+| 根因 1 | `backend/tests/__init__.py` 只在本机（`backend/.tmp_tests`、`backend/data` 恰好存在）能过：CI 空目录 → 17 处 `tempfile.mkdtemp(dir=...)` 抛 `FileNotFoundError`；默认 SQLite 无 DDL → `no such table: auth_codes` |
+| 根因 2 | `backend/requirements.txt` 缺 `cryptography`：`core/crypto.py` 导入失败 → `services.llm_config_service` 不可导入 → 建会话 `503 FEATURE_NOT_READY` |
+| 根因 3 | 没有 `backend/.env` 时 `LLM_KEY_MODE=system` 仍要求账户 Key 存在、`AUTH_SECRET_KEY` 为空：建会话 `428 LLM_CONFIG_REQUIRED`、造 Cookie 抛 `AuthConfigurationError` |
+| 根因 4 | 沙箱 `_kill_tree` 在 POSIX 上 `os.killpg(os.getpgid(pid), 9)`，但子进程没 `start_new_session` → 一刀把 CI 的 shell 进程组杀掉，job 挂在 `test_timeout_is_recorded_not_raised` 永不结束 |
+| 根因 5 | 前端 `node --test "tests/*.test.cjs"` 的引号把 glob 交给 Node，Node 20 不支持 glob → `Could not find`；`test:e2e` 用 `fs.existsSync("python")` 判断解释器，裸命令名永远 false |
+| 根因 6 | 文档引用检查把 `backend/.env`、`frontend/.next`、`backend/data/…` 当断链，干净检出里必然不存在 → `--strict` 在 CI 恒红（本机这些目录一直在） |
+| 修复 | `tests/__init__.py` 建 `.tmp_tests` + 默认测试库 + DDL + 假 `LLM_API_KEY`/`AUTH_SECRET_KEY`；`requirements.txt` 加 `cryptography`；`ci.yml` 加 `main` 触发、浏览器 job 注入 `AUTH_SECRET_KEY`/`LLM_KEY_MODE`；沙箱子进程 `start_new_session=True` + `os.killpg(pid, 9)`；`package.json` 去引号 glob；`api-smoke` 改 `spawnSync --version` 探测；`verify_docs_refs.py` 增加 `GENERATED_PREFIXES/GENERATED_FILES` 跳过生成物 |
+| 回归 | **CI 全绿**：run `45865717810`（`backend (python 3.12)` / `frontend (node 20)` / `browser e2e (AC-01/19/31)` 三个 job 全 success）；本地后端 841 两跑 OK、前端 334 两跑一致 |
+| 口径 | 临时诊断用的 `ci-logs` 工作流与分支已删除，仓库只保留 `ci.yml`（含 `main` 触发） |
+
 ## 第 42 批（线上不可用根因：跨域 API 基址 + 网关抖动韧性 + 平台加固，2026-11-26）
 
 | 问题 | 证据 | 修复 | 回归 |

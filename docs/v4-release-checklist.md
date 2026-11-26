@@ -41,6 +41,8 @@ cd backend && ../.venv/Scripts/python.exe ../scripts/ac34_rollback_drill.py
 
 CI 配置见 `.github/workflows/ci.yml`（backend：安装依赖 → 全量测试 → `import main` 冒烟 → 文档引用体检；frontend：`npm ci` → tsc → test → build → test:e2e；browser-e2e：起 API + Next 后用真 Chrome 跑 AC-01/19/31，截图作为 artifact 上传）。
 
+**2026-11-27 起 CI 全绿**（run `45865717810`，三个 job 全 success）。此前长期「本地绿、CI 红」的 6 个根因与修法见 `docs/loop-runs/README.md` 第 43 批：测试引导补目录/库/env、补 `cryptography`、沙箱子进程独立进程组、Node 20 的 glob 引号、`test:e2e` 的 PATH 解释器探测、文档体检跳过生成物。
+
 ## 2. 部署顺序
 
 1. **备份**：用 `python scripts/backup_restore.py backup` 生成一致性备份（SQLite online backup API + `backend/data/sessions/` + `manifest.json` 的 sha256/计数），输出到 `backend/data/backups/<时间戳>/`（已在 `.gitignore`）；恢复演练见第 1 节命令。
