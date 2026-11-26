@@ -237,6 +237,9 @@ def run_sandbox(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             shell=False,
+            # 独立进程组：否则 _kill_tree 的 killpg 会把调用方（CI 的 shell）一起杀掉。
+            start_new_session=os.name != "nt",
+            creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0),
         )
         timed_out = False
         try:
@@ -292,8 +295,9 @@ def _kill_tree(proc: subprocess.Popen) -> None:
                 shell=False,
                 timeout=10,
             )
-        else:  # pragma: no cover - 本地是 Windows，POSIX 仅作兼容
-            os.killpg(os.getpgid(proc.pid), 9)
+        else:
+            # 子进程是以 start_new_session=True 起的，pgid == pid，只杀它自己的组。
+            os.killpg(proc.pid, 9)
     except Exception:  # pragma: no cover - 清理失败不应掩盖主流程
         logger.warning("沙箱进程树清理失败（pid=%s）", proc.pid)
     finally:

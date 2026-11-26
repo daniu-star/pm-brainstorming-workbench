@@ -26,7 +26,7 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { spawn, execFileSync } = require("node:child_process");
+const { spawn, spawnSync, execFileSync } = require("node:child_process");
 const http = require("node:http");
 const net = require("node:net");
 const fs = require("node:fs");
@@ -180,9 +180,29 @@ function removeTempDir(dir) {
  * 启动后端子进程。
  * 返回 { child, baseUrl, tmpDir }，baseUrl 形如 http://127.0.0.1:<port>。
  */
+/**
+ * 判断解释器是否真的能跑。
+ *
+ * 不能只用 fs.existsSync()：CI 里 PYTHON_BIN=python 是「裸命令名」，
+ * existsSync("python") 永远 false（它不做 PATH 查找），于是 e2e 在 CI 上直接判失败。
+ * 这里改为真跑一次 `--version`，裸命令名与绝对路径都能覆盖。
+ */
+function isPythonUsable(pythonBin) {
+  if (!pythonBin) return false;
+  if (pythonBin.includes("/") || pythonBin.includes("\\")) {
+    return fs.existsSync(pythonBin);
+  }
+  try {
+    const probe = spawnSync(pythonBin, ["--version"], { stdio: "ignore", timeout: 15_000 });
+    return probe.status === 0;
+  } catch {
+    return false;
+  }
+}
+
 async function startBackend() {
   const pythonBin = process.env.PYTHON_BIN || DEFAULT_PYTHON;
-  if (!fs.existsSync(pythonBin)) {
+  if (!isPythonUsable(pythonBin)) {
     return {
       error: `未找到 Python 解释器：${pythonBin}（可用 PYTHON_BIN 指定，或用 E2E_BASE_URL 指向已运行的后端）`,
     };
