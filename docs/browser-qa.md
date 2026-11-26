@@ -179,3 +179,27 @@ cd backend
   ubuntu 自带 google-chrome，起 API + Next 后直接跑脚本；`cdp.find_chrome()` 会从 PATH 找到
   `google-chrome`，POSIX 下用独立进程组 `SIGKILL` 清理子进程）。AC-33（摄像头拒绝后完成文字审计）
   需要真模型生成开场问题，仍属发布前本地必跑项，见 `docs/v4-release-checklist.md` §1。
+
+## 8. 第 39 批补充：`/settings/access` 权限页与历史抽屉「共享给我」（2026-11-26）
+
+共享可见性不进日常 e2e（需要两个账号 + BYOK 配置），按发布前本地跑一次：
+
+```bash
+# 前置：start.bat 拉起 8001/3001；两个账号各播种一行 llm_configs（绕过 BYOK 闸门）
+#   1) 账号 A 建两个会话，其中一个共享给 B（viewer）；
+#   2) 用 B 的 Cookie 打开 /settings/access：断言「权限总览」、汇总行含「我创建/共享给我」、
+#      三段（我创建的会话 / 共享给我的会话 / 我的成员组）、incoming 会话标题、「共享给我 · 只读」、「退出共享」；
+#   3) 用 B 打开首页点「历史会话」：断言抽屉出现「共享给我 · 只读」，且**没有**任何「删除会话」按钮；
+#   4) 用 A 打开 /settings/access：断言「已共享给 1 人」；打开「历史会话」：断言两个会话都有「删除会话」按钮。
+```
+
+| 场景 | 断言要点 | 截图 |
+| --- | --- | --- |
+| 权限总览（成员视角） | 汇总行「我创建 0 · 已外发 0 · 共享给我 1 · 成员组 0」、incoming 卡片标题与「来自 … · 只读」、可退出共享 | `docs/browser-qa/e2e/access-permissions-member.png` |
+| 历史抽屉（成员视角） | 共享会话带 brand 色「共享给我 · 只读」徽标；删除按钮不渲染（此前对共享会话也显示，点了静默 403） | `docs/browser-qa/e2e/access-history-drawer.png` |
+| 权限总览（所有者视角） | 我创建的会话卡片显示「已共享给 1 人（1 只读）」+ 成员邮箱 chip | `docs/browser-qa/e2e/access-permissions-owner.png` |
+
+实测（2026-11-26，本机 headless Chrome）：
+`ACCESS_CDP_OK 13 checks`（成员视角 6 项 + 历史抽屉 5 项 + 所有者视角 2 项），页面无未捕获异常；
+同一轮的真 HTTP 冒烟另验了 `DELETE /api/v2/sessions/{id}/share`（成员退出后 v2 详情 403）、
+`/api/v2/sessions` 与旧 `/api/session` 的 `my_role`（owner / viewer）、`/health/detail` 六个块。
