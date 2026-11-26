@@ -326,6 +326,18 @@
 | 部署上线只做到「代码在本地能跑」，没有真正推到 GitHub / HF Space，线上仍是 V3 | GitHub `main` 强推到 `aeb03df`（先建 `backup/v3-production` 分支与 `v3-production-backup` tag 指向 V3 的 `16d3cc6`）；HF Space 拒收二进制（`Your push was rejected because it contains binary files.`），改为推「可部署子集」孤儿分支（`Dockerfile`/`.dockerignore`/`README.md`/`backend/`/`scripts/container_start.py`，159 文件 2.0MB） | Vercel 自动重建：首页标题变为「产品决策智能工作台」；`https://www.brainstorming.top/backend/health` → `200 {"status":"ok"}`；线上 OpenAPI 含 `/api/v2/access`、`/api/v2/groups`、`/api/v2/sessions/{session_id}/share`、`/api/v2/loops/{loop_id}/sandbox-runs`；Space `stage=RUNNING`（`sha=9eea1cb`，第一批部署为 `def63cd`）；`/ops`、`/settings/access`、`/settings/team`、`/login`、`/product` 全部 200 |
 
 | Space 每次部署都要手搓 worktree/孤儿分支，容易漏文件，且本机桌面根与用户 TEMP 都可能不可写 | 新增 `scripts/deploy_hf_space.py`：用 git plumbing（`read-tree` → `update-index --force-remove` → `write-tree` → `commit-tree` → `update-ref`）从 HEAD 组装「只含可部署子集」的提交再 `push --force space space-main:main`，不建临时 worktree、不依赖临时目录写权限；`--dry-run` 只列文件 | `--dry-run` 输出「子集树 a8f500e…，160 个文件」；实推 `9eea1cb..f29ce35`；Space `stage=RUNNING`；`backend/tests/test_deployment_assets.py` 15 例（新增 4 例脚本契约）；后端 825 用例 OK |
+## 第 43 批 发布验证（2026-11-27）
+
+| 项 | 内容 |
+| --- | --- |
+| 前端 | Vercel 重建完成，`/_next/static/chunks/819-*.js` 内可见 `return "localhost"===e||"127.0.0.1"===e||"::1"===e||t?n:"/backend"`（生产强制同源）与「服务端可能正在唤醒或网络抖动」文案 |
+| 后端 | Hugging Face Space `sha=9b19b45`、`stage=RUNNING`；`/backend/health`、`/health/live`、`/health/ready` 全 200，`ready` 带持久化 `warnings` |
+| 真机验收 | CDP 真 Chrome 打开 `https://www.brainstorming.top/login` 发码：无跨域脚本、无英文报错、出现日志兜底提示、`page_errors` 为空 → `LOGIN43_LIVE_OK`（8 项）。证据见 `docs/browser-qa.md` 第 10 节与 `docs/browser-qa/e2e/login43-live-same-origin.png` |
+| CI | run `45872510869`（head `99c0f7a`）三 job 全 success；此前 `45867837383`、`45871541688`、`45865717810` 亦全绿 |
+| 独立评分 R1 | `loop/rounds/R1/scorecard.md`：**85.95 → FAIL**（A95/B70/C86/D85/E90/F82/G90/H92） |
+| 独立评分 R2 | `loop/rounds/R2/scorecard.md`：**88.30 → FAIL**（A95/B70/C86/**D90**/E90/**F100**/**G86**/H92）。已关闭：CI 恒红、应用侧 CORS 通配；未关闭：P0-1 线上无持久卷（需挂卷或换外部库）、P1 平台代理层凭据反射、日志缺 `request_id` |
+| 结论 | 线上「报错」类缺陷已清零（根因是构建期 API 基址为跨域 + 平台代理拦预检）；评分闸门仍未过，差在 **P0-1 基础设施决策**（用户侧）与 B 维 5 个 >1500 行文件的大重构（需单独排期，一次改动风险高于收益） |
+
 当前基线：**后端 841 用例 OK / 前端 334 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（8 步，含 db-report） / 磁盘清理脚本（报告 + `--apply`） / 中间载荷 90 天保留策略 + `db_maintenance.py report|vacuum` / 账户级配额（429 `ACCOUNT_QUOTA_EXCEEDED` + `GET /api/v2/quota`） / 账户自带模型密钥（428 `LLM_CONFIG_REQUIRED` + 整屏配置引导 + 密钥加密只回末 4 位，真 Chrome 实测 `BYOK_GATE_CDP_OK`） / 团队工作区成员组（组=名单、共享行=授权，应用幂等） / Loop 执行沙箱（fail-closed + argv 直传 + 超时强杀 + 产物留档）与 `/ops` 运维健康页（storage/queues/sandbox 三块） / 共享可见性与权限总览（`my_role` 贯通 v2 与旧接口、`GET /api/v2/access`、成员退出共享、真 Chrome `ACCESS_CDP_OK` 13 项） / 生产构建 `npm run build` exit 0（12 条路由） / 生产 API 基址强制同源 `/backend`（跨域预检被平台代理拦截，登录与写操作曾 100% 失败） / 网络韧性（4 次尝试 + 首跳 12s + 抖动退避 + 顶栏重试进度 + SSE 断线转轮询） / 平台加固（`--proxy-headers`、邮箱维度限流、`/health/live`+`/health/ready`）**。
 
 ## 第 22 批（发版前一键体检，2026-11-24）
