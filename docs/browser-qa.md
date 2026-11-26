@@ -203,3 +203,31 @@ cd backend
 `ACCESS_CDP_OK 13 checks`（成员视角 6 项 + 历史抽屉 5 项 + 所有者视角 2 项），页面无未捕获异常；
 同一轮的真 HTTP 冒烟另验了 `DELETE /api/v2/sessions/{id}/share`（成员退出后 v2 详情 403）、
 `/api/v2/sessions` 与旧 `/api/session` 的 `my_role`（owner / viewer）、`/health/detail` 六个块。
+
+## 9. 第 41 批补充：断网/网关抖动时的中文提示与自愈（2026-11-26）
+
+线上曾出现「点『配置模型 API Key』报『读取模型配置失败：网络连接失败』」与页面偶发英文
+`Failed to fetch`。定位为 Hugging Face Space 前置代理约 5%~10% 请求在 21 秒后断开，
+客户端已做自动重试；本节的真机用例验证「最坏情况下用户看到什么、能不能自己恢复」。
+
+复跑（本地栈 8001/3001 在线时）：
+
+```powershell
+# 用 CDP 阻断 /api/v2/llm-config（不动页面文档），再解除阻断后点「重新读取配置」
+.venv\Scripts\python.exe scripts\check_retry_cdp.py `
+  --shot docs/browser-qa/e2e/llm-config-offline-retry.png
+```
+
+脚本说明见 `scripts/check_retry_cdp.py` 顶部 docstring；`--web` 可指向其他地址（本地栈需在线）。
+
+实测（`RETRY_CDP_CHECKS` 6 项全过）：
+
+| 检查 | 结果 |
+| --- | --- |
+| 接口被阻断时出现中文网络错误 | `网络连接失败` 命中 |
+| 出现「重新读取配置」按钮 | `重新读取配置` 命中 |
+| 不出现英文原始报错 | `Failed to fetch` 未命中 |
+| 解除阻断后点击按钮 | 表单加载出「保存并测试」 |
+| 页面无未捕获异常 | `page_errors` 为空 |
+
+截图：`docs/browser-qa/e2e/llm-config-offline-retry.png`。

@@ -284,6 +284,8 @@
 | 定位 | `curl` 实测经 Vercel `/backend/*` 与直连 Space 均有约 5%~10% 请求 21s 后返回 `000`；抖动在 Space 前置代理，与本接口逻辑无关 |
 | 修复 | `apiV2` 瞬时故障重试 3 次（退避 700/1800ms，重试单次超时 8s/6s）；GET 默认开、幂等写显式开（复用 `Idempotency-Key`）；SSE 首连重试 2 次；`errorMessage` 中文化；`isEndpointUnavailable` 不再把 TypeError 当端点缺失；模型配置页静默重试 + 「重新读取配置」按钮 |
 | 回归 | 新增 `frontend/tests/api-retry.test.cjs` 7 例；前端 **321 / 321 pass**、`tsc` 0 错、停栈后 `npm run build` exit 0（12 条路由） |
+| 发布验证 | Vercel 线上 chunk 已含新文案（`461-*.js` 有「服务端可能正在唤醒…」、`settings/llm/page-*.js` 有「重新读取配置」）；curl 12 次 `/backend/api/v2/llm-config` 全 401 且 0.74~1.08s（抖动为间歇性，约 5%~10%）；CDP 断网用例 6 项全过并留截图 `docs/browser-qa/e2e/llm-config-offline-retry.png` |
+| 提交 | `676d763`（前端热修）、线上 Vercel 自动重建；Space 后端无需重部署 |
 
 ## 第 40 批（V4 容器部署链路 + 邮件代理 + 上线，2026-11-26）
 
