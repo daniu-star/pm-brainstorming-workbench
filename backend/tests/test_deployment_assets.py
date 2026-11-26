@@ -162,23 +162,29 @@ class SpaceDeployScriptTests(unittest.TestCase):
         self.script = REPO_ROOT / "scripts" / "deploy_hf_space.py"
         self.text = self.script.read_text(encoding="utf-8")
 
-    def test_script_exists_and_uses_subset_archive(self) -> None:
+    def test_script_exists_and_uses_subset(self) -> None:
         self.assertTrue(self.script.is_file())
-        # 子集必须覆盖镜像构建所需文件，且用 git archive 导出（只含已跟踪文件）。
+        # 子集必须覆盖镜像构建所需文件。
         for name in ("Dockerfile", ".dockerignore", "README.md", "backend", "scripts/container_start.py"):
             self.assertIn(f'"{name}"', self.text, name)
-        self.assertIn("git archive", " ".join(self.text.split()))
+        self.assertIn("ls-tree", self.text)
 
     def test_script_pushes_force_to_space_main_branch(self) -> None:
         self.assertIn("space-main", self.text)
-        self.assertIn("push", self.text)
         self.assertIn("--force", self.text)
         # 不允许把前端目录带进 Space（wasm 模型是二进制）。
         self.assertNotIn('"frontend"', self.text)
 
-    def test_script_cleans_up_worktree(self) -> None:
-        self.assertIn("worktree", self.text)
-        self.assertIn("shutil.rmtree", self.text)
+    def test_script_builds_subset_tree_with_plumbing(self) -> None:
+        # 用 read-tree + force-remove + write-tree 组装子集树：不建 worktree、
+        # 不依赖临时目录写权限（桌面根与用户 TEMP 在部分机器上不可写）。
+        for token in ("read-tree", "force-remove", "write-tree", "commit-tree", "update-ref"):
+            self.assertIn(token, self.text)
+        self.assertNotIn("worktree add", self.text)
+
+    def test_script_removes_its_temp_index(self) -> None:
+        self.assertIn("GIT_INDEX_FILE", self.text)
+        self.assertIn("index_file.unlink()", self.text)
 
 
 if __name__ == "__main__":
