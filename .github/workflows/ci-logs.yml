@@ -43,14 +43,6 @@ jobs:
       - name: install frontend deps
         run: npm ci --prefix frontend
 
-      - name: run backend suite
-        # timeout 包一层：若某个用例在 CI 上挂住，15 分钟后自行中断，
-        # 下面的 publish 仍会执行，日志最后一行就是卡住的用例名。
-        run: |
-          mkdir -p ci-logs
-          ( cd backend && timeout --signal=INT 900 python -m unittest discover -s tests -v ) > ci-logs/backend.log 2>&1 || true
-          tail -n 40 ci-logs/backend.log || true
-
       - name: run frontend suite
         run: |
           mkdir -p ci-logs
@@ -67,6 +59,14 @@ jobs:
           mkdir -p ci-logs
           ( npm run test:e2e --prefix frontend ) > ci-logs/frontend-e2e.log 2>&1 || true
           tail -n 80 ci-logs/frontend-e2e.log || true
+
+      - name: run backend suite
+        # 放到最后并加 timeout：若某个用例在 CI 上挂住，5 分钟后自行中断；
+        # 前面的前端日志已经落盘，publish 仍会执行，backend.log 末尾就是卡住的用例名。
+        run: |
+          mkdir -p ci-logs
+          ( cd backend && timeout --signal=INT 300 python -m unittest discover -s tests -v ) > ci-logs/backend.log 2>&1 || true
+          tail -n 40 ci-logs/backend.log || true
 
       - name: publish logs
         run: |
