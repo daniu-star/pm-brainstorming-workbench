@@ -553,6 +553,16 @@ export function isTransientFailure(error: unknown): boolean {
   return [502, 503, 504].includes(error.status);
 }
 
+/**
+ * 401 / ``UNAUTHENTICATED``：代表「还没登录」，由 ``AuthGate`` 负责跳登录页。
+ * 调用方通常应该静默处理，而不是把它当成故障挂横幅（第 42 批线上：登录页曾出现
+ * 「模型配置读取失败」的误导提示）。
+ */
+export function isUnauthenticated(error: unknown): boolean {
+  if (!isApiError(error)) return false;
+  return error.status === 401 || error.code === "UNAUTHENTICATED";
+}
+
 interface RequestGuard {
   signal: AbortSignal;
   didTimeout: () => boolean;

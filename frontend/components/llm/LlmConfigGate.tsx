@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { BrainIcon, ShieldIcon } from "@/components/icons";
 import { GATE_ALLOWED_PATHS, gateState, getLlmConfig, type LlmConfigView } from "@/lib/llmConfig";
-import { errorMessage } from "@/lib/api";
+import { errorMessage, isUnauthenticated } from "@/lib/api";
 
 /**
  * 强制「自带模型密钥」闸门：登录后只要账户还没配置自己的模型 API，
@@ -32,10 +32,17 @@ export function LlmConfigGate({ children }: { children: React.ReactNode }) {
       })
       .catch((err) => {
         if (cancelled) return;
+        // 401 是「还没登录」，由 AuthGate 负责跳登录页；这里挂横幅只会让
+        // 登录页出现「模型配置读取失败」，反而误导用户（第 42 批线上复现）。
+        if (isUnauthenticated(err)) {
+          setFailed(false);
+          setBypassNotice(null);
+          return;
+        }
         // 读失败不能静默放行：必须告诉用户「应用可能不可用」并给出重试入口，
         // 否则用户进入后每次操作都失败，却以为是自己配置错了（第 42 批）。
         setFailed(true);
-        setBypassNotice(errorMessage(err));
+        setBypassNotice(errorMessage(err) || "读取失败");
       });
     return () => {
       cancelled = true;
@@ -53,13 +60,24 @@ export function LlmConfigGate({ children }: { children: React.ReactNode }) {
         setBypassNotice(null);
       })
       .catch((err) => {
+        if (isUnauthenticated(err)) {
+          setFailed(false);
+          setBypassNotice(null);
+          return;
+        }
         setFailed(true);
-        setBypassNotice(errorMessage(err));
+        setBypassNotice(errorMessage(err) || "读取失败");
       })
       .finally(() => setRetrying(false));
   };
 
   const state = gateState({ pathname, view, failed });
+
+  // 白名单页面（登录页/介绍页/配置页）不渲染任何闸门 UI：
+  // 上面 effect 里本来就不发请求，但用户可能从别的页面导航过来，
+  // 此时 failed/bypassNotice 还是上一页的残留，会把「模型配置读取失败」
+  // 的横幅挂到登录页上（第 42 批线上复现）。
+  if (GATE_ALLOWED_PATHS.includes(pathname)) return <>{children}</>;
 
   if (state === "ready") return <>{children}</>;
 

@@ -41,6 +41,7 @@
     "lib/types.ts",
     "store/sessionStore.ts",
     "components/loop/SandboxPanel.tsx",
+    "components/llm/LlmConfigGate.tsx",
     "app/ops/page.tsx",
     "components/system/ConnectionBanner.tsx"
   ]
