@@ -55,10 +55,21 @@ jobs:
           ( npm test --prefix frontend ) > ci-logs/frontend.log 2>&1 || true
           tail -n 80 ci-logs/frontend.log || true
 
+      - name: run frontend api smoke e2e
+        env:
+          PYTHON_BIN: python
+          LLM_API_KEY: "sk-ci-dummy-not-a-real-key"
+          AUTH_SECRET_KEY: "ci-test-auth-secret-key-0123456789abcdef"
+          LLM_KEY_MODE: system
+        run: |
+          mkdir -p ci-logs
+          ( npm run test:e2e --prefix frontend ) > ci-logs/frontend-e2e.log 2>&1 || true
+          tail -n 80 ci-logs/frontend-e2e.log || true
+
       - name: publish logs
         run: |
           git config user.name "ci-logs-bot"
           git config user.email "ci-logs-bot@users.noreply.github.com"
-          git add -f ci-logs/backend.log ci-logs/frontend.log
-          git commit -m "ci-logs: backend + frontend suite output" || echo "no changes"
+          git add -f ci-logs/backend.log ci-logs/frontend.log ci-logs/frontend-e2e.log
+          git commit -m "ci-logs: backend + frontend + api smoke output" || echo "no changes"
           git push origin HEAD:ci-logs --force
