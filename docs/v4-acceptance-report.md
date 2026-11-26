@@ -44,7 +44,7 @@ cd backend && ../.venv/Scripts/python.exe -m unittest tests.test_session_alias
 # 前端（本机 registry.npmjs.org 不可达，用既有 node_modules）
 cd frontend && npx tsc --noEmit      # exit 0
 cd frontend && npm test              # 314/314 pass（tsc -p tsconfig.test.json + tsconfig.render.json + node --test）
-cd frontend && npm run build         # exit 0，7 条路由（含 /session/[id]/audit 8.11 kB）
+cd frontend && npm run build         # exit 0，12 条路由（/settings/access 4.41 kB、/ops 5.01 kB、/settings/team 4.66 kB、/session/[id]/loop 15.4 kB）
 cd frontend && npm run test:e2e      # 1 pass（真起 uvicorn，401/404 语义断言）
 
 # 真 Worker + 假 LLM 端到端（独立进程，走生产 runner/仓储/命令服务）
