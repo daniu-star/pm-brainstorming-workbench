@@ -12,6 +12,8 @@ import { HistoryDrawer } from "@/components/HistoryDrawer";
 import { ROLES } from "@/lib/types";
 import { BrainIcon } from "@/components/icons";
 import { shouldShowLoopEntry } from "@/lib/loopView";
+import { SharePanel } from "@/components/share/SharePanel";
+import { canManageShares, getCurrentEmail } from "@/lib/shares";
 
 type MobileTab = "canvas" | "chat";
 
@@ -32,6 +34,8 @@ function WorkbenchContent() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<MobileTab>("chat");
+  const [myEmail, setMyEmail] = useState<string | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
 
   useEffect(() => {
     const id = params?.id as string;
@@ -53,6 +57,16 @@ function WorkbenchContent() {
       cancelled = true;
     };
   }, [params?.id, loadSession]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getCurrentEmail().then((email) => {
+      if (!cancelled) setMyEmail(email);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Cleanup SSE / run subscription on unmount. Switching sessions only
   // cancels the local subscription — it never cancels the server-side run.
@@ -127,6 +141,33 @@ function WorkbenchContent() {
     <div className="h-screen flex flex-col bg-dark-900 bg-mesh">
       <Header />
       <HistoryDrawer isOpen={isHistoryOpen} onClose={toggleHistory} />
+
+      {/* 会话共享：只有所有者能管理成员（viewer/editor 由后端再校验一次） */}
+      {sessionView && canManageShares(sessionView.owner_email, myEmail) ? (
+        <>
+          <div className="flex shrink-0 items-center gap-3 border-b border-zinc-800/50 bg-dark-800/40 px-4 py-1.5">
+            <span className="text-[11px] text-zinc-500">
+              可以邀请同事只读查看，或一起提交命令（额度仍记在你名下）
+            </span>
+            <button
+              type="button"
+              onClick={() => setShareOpen((prev) => !prev)}
+              aria-expanded={shareOpen}
+              aria-label="共享这个会话"
+              className="ml-auto inline-flex min-h-[32px] items-center rounded-lg border border-zinc-700/70 bg-dark-900/60 px-3 text-[11px] font-medium text-zinc-300 transition-colors hover:text-zinc-100"
+            >
+              {shareOpen ? "收起共享" : "共享"}
+            </button>
+          </div>
+          {shareOpen ? (
+            <SharePanel
+              sessionId={(params?.id as string) ?? sessionId ?? ""}
+              myEmail={myEmail}
+              onClose={() => setShareOpen(false)}
+            />
+          ) : null}
+        </>
+      ) : null}
 
       {/* M3 审计入口：v2 会话进入 brainstorming 之后才出现（legacy 流程没有审计） */}
       {(() => {

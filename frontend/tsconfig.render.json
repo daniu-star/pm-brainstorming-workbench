@@ -23,6 +23,7 @@
     "components/chat/MessageBubble.tsx",
     "components/chat/MessageList.tsx",
     "components/evidence/EvidenceForm.tsx",
+    "components/share/SharePanel.tsx",
     "components/icons/index.tsx",
     "lib/api.ts",
     "lib/auditView.ts",

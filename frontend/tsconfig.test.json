@@ -22,6 +22,7 @@
     "lib/contracts.generated.ts",
     "lib/loopView.ts",
     "lib/llmConfig.ts",
+    "lib/shares.ts",
     "lib/phaseRouter.ts",
     "lib/quota.ts",
     "lib/sse.ts",
