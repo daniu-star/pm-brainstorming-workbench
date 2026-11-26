@@ -11,6 +11,7 @@
  * 3. 不 import React / 不依赖 DOM，保证纯函数（tsconfig.test.json 会单独编译本文件）。
  */
 
+import { errorMessage } from "./api";
 import {
   CHECK_RESULTS,
   EFFORT_SIZES,
@@ -1398,7 +1399,7 @@ export function resolveLoopEntryState(input: LoopEntryInput): LoopEntryState {
       ...loading,
       showLoading: false,
       showLoadError: true,
-      loadErrorText: input.loopError.message,
+      loadErrorText: errorMessage(input.loopError),
     };
   }
   return { ...loading, showLoading: false, showStartPanel: true };

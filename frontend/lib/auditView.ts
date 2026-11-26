@@ -9,6 +9,7 @@
  *    （本机 npm registry 不可达，不能装 vitest / RTL）。
  * 3) 报告字段可能缺失：缺失必须显示「未生成」，绝不能编造内容（PRD FR-07）。
  */
+import { errorMessage } from "./api";
 import {
   AUDIT_DIMENSION_LABELS,
   AUDIT_DIMENSIONS,
@@ -899,7 +900,7 @@ export function resolveAuditEntryState(input: AuditEntryStateInput): AuditEntryS
     showStartPanel,
     showNotReady,
     canStart,
-    loadErrorText: showLoadError && error ? error.message || AUDIT_LOAD_ERROR_TEXT : null,
+    loadErrorText: showLoadError && error ? errorMessage(error) || AUDIT_LOAD_ERROR_TEXT : null,
     notReadyText: showNotReady
       ? input.v2Phase === "clarifying" || !input.v2Phase
         ? AUDIT_NOT_READY_TEXT

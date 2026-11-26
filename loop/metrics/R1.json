@@ -1,0 +1,133 @@
+{
+  "round": "R1",
+  "profile": "web-app",
+  "generated_at": "2026-11-26T22:13:32+0800",
+  "root": "C:\\Users\\13067\\Desktop\\pm-brainstorming-workbench",
+  "sections": {
+    "repo": {
+      "git_head": "8cba113",
+      "dirty_files": 10,
+      "code_files": 0,
+      "code_lines": 0,
+      "largest_file": [
+        "",
+        0
+      ]
+    },
+    "static": {
+      "broad_except": 0,
+      "broad_except_samples": [],
+      "pass_only": 0,
+      "pass_only_samples": [],
+      "silent_handler": 0,
+      "silent_handler_samples": [],
+      "routes": 0,
+      "write_routes": 0,
+      "write_routes_unique": 0,
+      "write_routes_samples": [],
+      "sql_concat_total": 0,
+      "sql_concat_samples": [],
+      "sql_in_routes": 0,
+      "sql_in_routes_samples": []
+    },
+    "frontend": {
+      "error": "未找到前端静态文件目录（已尝试: app/static, static, web, frontend/dist）"
+    },
+    "security": {
+      "plaintext_credential_writes": 0,
+      "plaintext_credential_writes_samples": [],
+      "credential_files_on_disk": 0,
+      "write_routes_total": 0,
+      "uncovered_write_routes": 0,
+      "uncovered_write_routes_samples": [],
+      "access_control_files_found": [],
+      "uncovered_method": "heuristic_static",
+      "ai_label_mentions": 0,
+      "detail_leak_total": 0,
+      "detail_leak_samples": [],
+      "logger_bypass": false
+    },
+    "docs": {
+      "claimed_numbers": [],
+      "claimed_numbers_total": 0,
+      "acceptance_records": 0
+    },
+    "tests": {
+      "command": "C:\\Python314\\python.exe -m pytest -q --junitxml C:\\Users\\13067\\Desktop\\pm-brainstorming-workbench\\loop\\metrics\\junit.tmp.xml",
+      "exit_code": 0,
+      "output_tail": "........................................................................ [  8%]\r\n........................................................................ [ 17%]\r\n........................................................................ [ 26%]\r\n........................................................................ [ 34%]\r\n........................................................................ [ 43%]\r\n........................................................................ [ 52%]\r\n........................................................................ [ 61%]\r\n........................................................................ [ 69%]\r\n........................................................................ [ 78%]\r\n........................................................................ [ 87%]\r\n........................................................................ [ 96%]\r\n.................................                                        [100%]\r\n============================== warnings summary ===============================\r\nbackend/tests/test_command_service.py::ApplyOutcomeTests::test_apply_outcome_writes_state_message_and_single_terminal_event\r\n  C:\\Users\\13067\\AppData\\Roaming\\Python\\Python314\\site-packages\\pydantic\\main.py:475: UserWarning: Pydantic serializer warnings:\r\n    PydanticSerializationUnexpectedValue(Expected `enum` - serialized value may not be as expected [field_name='status', input_value='proposed', input_type=str])\r\n    return self.__pydantic_serializer__.to_python(\r\n\r\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\r\n- generated xml file: C:\\Users\\13067\\Desktop\\pm-brainstorming-workbench\\loop\\metrics\\junit.tmp.xml -\r\n825 passed, 1 warning in 141.23s (0:02:21)\r\n",
+      "passed": 825,
+      "failed": 0,
+      "skipped": 0,
+      "duration": 141.2,
+      "failed_cases": [],
+      "slowest": [
+        [
+          "backend.tests.test_control_crash.ControlCrashCase::test_end_audit_receipt_survives_worker_kill_and_closing_run_resumes",
+          12.0
+        ],
+        [
+          "backend.tests.test_crash_atomicity.CrashAtomicityTests::test_crash_during_commit_leaves_no_succeeded_step_and_no_empty_success",
+          6.79
+        ],
+        [
+          "backend.tests.test_cross_process.CrossProcessCase::test_two_worker_processes_claim_the_same_run_once",
+          6.67
+        ],
+        [
+          "backend.tests.test_budget_crash.BudgetReservationCrashTests::test_reservation_is_persisted_before_upstream_call",
+          4.23
+        ],
+        [
+          "backend.tests.test_budget_crash.BudgetReservationCrashTests::test_takeover_charges_crashed_reservation_and_never_double_applies",
+          4.14
+        ],
+        [
+          "backend.tests.test_cross_process.CrossProcessCase::test_concurrent_different_keys_same_session_gets_session_busy",
+          2.93
+        ],
+        [
+          "backend.tests.test_cross_process.CrossProcessCase::test_end_and_cancel_audit_race_has_single_control_chain",
+          2.69
+        ],
+        [
+          "backend.tests.test_cross_process.CrossProcessCase::test_concurrent_answers_to_same_question_accept_exactly_one",
+          2.28
+        ],
+        [
+          "backend.tests.test_session_repo.MessagePagingTests::test_1000_messages_paging_keeps_history",
+          2.02
+        ],
+        [
+          "backend.tests.test_cross_process.CrossProcessCase::test_same_request_id_in_two_processes_creates_one_run",
+          1.97
+        ]
+      ]
+    },
+    "api": {
+      "error": "未找到入口文件 app/main.py"
+    }
+  },
+  "skipped": {
+    "api": "未找到入口文件 app/main.py"
+  },
+  "proxy": {
+    "A": 100,
+    "B": 100,
+    "C": null,
+    "D": 95,
+    "E": 100,
+    "F": 100,
+    "G": 95,
+    "H": 100,
+    "total": 98.8,
+    "notes": {
+      "B": "基于最大文件行数 0 与静默吞异常 0；入口文件预算按 profile 调整",
+      "C": "未找到前端静态文件目录（已尝试: app/static, static, web, frontend/dist）",
+      "D": "未覆盖写接口为启发式静态口径；标识缺失按 -5 计",
+      "E": "产品维度以评测组人工判分为准，此处只给下限锚点",
+      "G": "以评测组人工判分为准，此处给 95 基准线"
+    },
+    "warning": "proxy 只是评测组的输入锚点，不是最终评分"
+  }
+}

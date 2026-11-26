@@ -1,0 +1,48 @@
+name: keep-warm
+
+# 目的：给 Hugging Face Space（免费实例）保持热度，避免冷启动 + 前置代理抖动叠加。
+#
+# 背景（2026-11-26 线上实测）：Vercel → HF Space 的反向代理偶发把请求挂起 ~21 秒
+# 后直接断开（curl 返回 000），比例约 5%~10%；Space 空闲休眠后的第一次请求更慢。
+# 客户端已经做了自动重试（frontend/lib/api.ts），这里再从部署侧减少「唤醒中」的
+# 概率：每小时打一次 /backend/health，失败重试 3 次（间隔 15s）。
+#
+# 为什么不更频繁：免费额度有限，每小时一次足以避免 Space 进入休眠；
+# 真正的抖动重试在客户端与前代理层完成。
+
+on:
+  schedule:
+    # 每小时第 7 分钟（错开整点的高峰，GitHub 定时任务在整点前后容易排队）
+    - cron: "7 * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: keep-warm
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    name: Ping backend health
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: GET /backend/health with retries
+        shell: bash
+        run: |
+          set -uo pipefail
+          url="https://www.brainstorming.top/backend/health"
+          for attempt in 1 2 3; do
+            code=$(curl -sS -o /tmp/health.json -w '%{http_code}' --max-time 25 "$url" 2>/dev/null || echo "000")
+            body=$(head -c 200 /tmp/health.json 2>/dev/null || true)
+            echo "attempt ${attempt}: http=${code} body=${body}"
+            if [ "$code" = "200" ]; then
+              echo "keep-warm ok"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "keep-warm failed: backend not reachable after 3 attempts" >&2
+          exit 1

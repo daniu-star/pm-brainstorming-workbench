@@ -46,11 +46,19 @@ export function getLlmConfig(signal?: AbortSignal): Promise<LlmConfigView> {
 }
 
 export function saveLlmConfig(input: LlmConfigInput): Promise<LlmConfigView> {
-  return apiV2<LlmConfigView>("/api/v2/llm-config", { method: "PUT", body: input });
+  // PUT 是幂等覆盖写：重放不会产生第二条配置，可以安全重试。
+  return apiV2<LlmConfigView>("/api/v2/llm-config", {
+    method: "PUT",
+    body: input,
+    retryTransient: true,
+  });
 }
 
 export function deleteLlmConfig(): Promise<LlmConfigView> {
-  return apiV2<LlmConfigView>("/api/v2/llm-config", { method: "DELETE" });
+  return apiV2<LlmConfigView>("/api/v2/llm-config", {
+    method: "DELETE",
+    retryTransient: true,
+  });
 }
 
 export function testLlmConfig(): Promise<LlmConfigTestResult> {

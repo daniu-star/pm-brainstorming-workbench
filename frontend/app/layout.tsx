@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import { AuthGate } from "@/components/auth/AuthGate";
+import { ConnectionBanner } from "@/components/system/ConnectionBanner";
 import { LlmConfigGate } from "@/components/llm/LlmConfigGate";
 import { ToastProvider } from "@/components/Toast";
 import "./globals.css";
@@ -23,6 +24,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           跳到主要内容
         </a>
         <ToastProvider>
+          <ConnectionBanner />
           <AuthGate>
             <LlmConfigGate>{children}</LlmConfigGate>
           </AuthGate>

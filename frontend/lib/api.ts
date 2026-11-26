@@ -39,7 +39,39 @@ import type {
   StartLoopPayload,
 } from "./contracts.generated";
 
-export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+/**
+ * API 基址解析（第 42 批，线上登录 100% 失败的真因）。
+ *
+ * 线上 Vercel 项目的环境变量把 `NEXT_PUBLIC_API_URL` 覆盖成了
+ * `https://123chenjunliang-pm-brainstorm-workbench.hf.space`，构建时被内联进 bundle，
+ * 于是浏览器对 hf.space 发 JSON POST → 触发 CORS 预检 → HF 平台代理的预检响应
+ * 没有 `Access-Control-Allow-Credentials` → 浏览器直接拒绝（表现为
+ * `TypeError: Failed to fetch` / 「网络连接失败」）。这不是网络抖动，改重试也修不好。
+ *
+ * 因此生产环境（页面不是 localhost）一律走同源 `/backend`（由 next.config.js 的
+ * rewrites 反代到 Space），只有本地开发才允许绝对地址（127.0.0.1:8001）。
+ * 需要跨域直连的极少数场景用 `NEXT_PUBLIC_ALLOW_CROSS_ORIGIN_API=1` 显式放开。
+ */
+function resolveApiBase(): string {
+  const configured = (process.env.NEXT_PUBLIC_API_URL ?? "").trim();
+  const allowCrossOrigin = process.env.NEXT_PUBLIC_ALLOW_CROSS_ORIGIN_API === "1";
+  const isAbsolute = /^https?:\/\//i.test(configured);
+
+  if (!isAbsolute) {
+    // 相对路径（/backend）或空值：直接使用；空值时线上同源、本地回退到 8001。
+    return configured || (typeof window === "undefined" ? "/backend" : "http://127.0.0.1:8001");
+  }
+
+  if (typeof window === "undefined") return configured;
+  const host = window.location.hostname;
+  const isLocalPage = host === "localhost" || host === "127.0.0.1" || host === "::1";
+  if (isLocalPage || allowCrossOrigin) return configured;
+
+  // 生产页面 + 绝对基址 = 必然跨域，预检过不去：强制同源反代。
+  return "/backend";
+}
+
+export const API_BASE = resolveApiBase();
 
 // --------------------------------------------------------------------------- //
 // 错误
@@ -138,6 +170,60 @@ export function statusMessage(status: number): string {
 export const NETWORK_ERROR_MESSAGE =
   "网络连接失败：服务端可能正在唤醒或网络抖动，已自动重试，请稍后再试一次";
 
+/**
+ * 不会自动重放的请求（写操作、真实计费调用、长任务）失败时的文案。
+ *
+ * 这些请求一旦重放可能重复提交或重复计费，所以宁可不重试；但文案不能跟着说
+ * 「已自动重试」——否则用户会以为系统已经处理过了（线上出现过的误解）。
+ */
+export const NETWORK_ERROR_UNRETRIED_MESSAGE =
+  "网络连接失败，请检查网络后重试（这类操作不会自动重放，避免重复提交或重复计费）";
+
+/** 重试进度：让页面能显示「正在重试 2/4」而不是白屏等 20 秒。 */
+export type RetryNotice = {
+  /** 请求路径，例如 /api/v2/llm-config */
+  path: string;
+  /** 即将进行的第几次重试（1 表示第一次重试，不是第一次尝试） */
+  attempt: number;
+  /** 总共最多尝试几次（含首次） */
+  attempts: number;
+  /** 面向用户的简短原因 */
+  reason: string;
+};
+
+type RetryListener = (notice: RetryNotice | null) => void;
+
+const retryListeners = new Set<RetryListener>();
+
+/**
+ * 订阅重试进度；`notice === null` 表示「已恢复，可以收起提示」。
+ *
+ * 设计成模块级订阅而不是 React context：网络层在最底层，不应该依赖任何
+ * 组件树；订阅者（全局横幅）挂载一次即可。
+ */
+export function subscribeRetryNotices(listener: RetryListener): () => void {
+  retryListeners.add(listener);
+  return () => {
+    retryListeners.delete(listener);
+  };
+}
+
+function emitRetry(notice: RetryNotice | null): void {
+  for (const listener of retryListeners) {
+    try {
+      listener(notice);
+    } catch {
+      // 订阅者自己报错不能影响请求本身。
+    }
+  }
+}
+
+function retryReason(error: unknown): string {
+  if (isApiError(error) && error.code === "TIMEOUT") return "服务端响应超时";
+  if (isApiError(error) && [502, 503, 504].includes(error.status)) return "服务暂时不可用";
+  return "网络连接中断";
+}
+
 /** fetch 抛出的 TypeError（浏览器多为 "Failed to fetch"）判定。 */
 export function isNetworkFailure(error: unknown): boolean {
   if (isApiError(error)) {
@@ -155,13 +241,28 @@ export function isNetworkFailure(error: unknown): boolean {
 /** 面向用户的错误文案：优先错误码中文表，其次后端 message，最后按状态码。 */
 export function errorMessage(error: unknown): string {
   if (isApiError(error)) {
-    if (error.code === "NETWORK_ERROR") return NETWORK_ERROR_MESSAGE;
+    if (error.code === "NETWORK_ERROR") {
+      // 只回放我们自己写下的两档网络文案，避免把上游英文原文透出给用户。
+      if (error.message === NETWORK_ERROR_MESSAGE || error.message === NETWORK_ERROR_UNRETRIED_MESSAGE) {
+        return error.message;
+      }
+      return NETWORK_ERROR_MESSAGE;
+    }
     if (error.code === "TIMEOUT") return `${CODE_MESSAGES.TIMEOUT}（服务端连接超时，可能是后端正在唤醒）`;
     return CODE_MESSAGES[error.code] ?? (error.message || statusMessage(error.status));
   }
   if (isNetworkFailure(error)) return NETWORK_ERROR_MESSAGE;
   if (error instanceof Error && error.name === "AbortError") return "请求已取消";
   if (error instanceof Error && error.message) return error.message;
+  // 纯对象错误（如视图层传入 { message, notFound }）也要能取到 message。
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    typeof (error as { message?: unknown }).message === "string" &&
+    (error as { message: string }).message
+  ) {
+    return (error as { message: string }).message;
+  }
   return "请求失败，请稍后重试";
 }
 
@@ -286,27 +387,57 @@ const MAX_DETAIL_LENGTH = 200;
 
 export async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const method = (options?.method ?? "GET").toUpperCase();
-  const attempts = method === "GET" || method === "HEAD" ? 2 : 1;
+  const retryable = method === "GET" || method === "HEAD";
+  const attempts = retryable ? LEGACY_ATTEMPTS : 1;
   let lastError: unknown = null;
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (attempt > 0) await sleepMs(700);
+    if (attempt > 0) {
+      emitRetry({ path, attempt, attempts, reason: retryReason(lastError) });
+      await sleepMs(legacyBackoff(attempt));
+    }
     try {
-      return await apiOnce<T>(path, options);
+      const result = await apiOnce<T>(path, options, attempt > 0);
+      if (attempt > 0) emitRetry(null);
+      return result;
     } catch (error) {
-      lastError = normalizeFetchFailure(error, null);
-      if (attempt + 1 >= attempts || !isNetworkFailure(lastError)) throw lastError;
+      lastError = normalizeFetchFailure(error, null, attempt > 0);
+      if (attempt + 1 >= attempts || !isNetworkFailure(lastError)) {
+        emitRetry(null);
+        throw lastError;
+      }
     }
   }
+  emitRetry(null);
   throw lastError;
 }
 
+/** 旧入口的重试次数（历史会话等只读数据，多试几次成本很低）。 */
+const LEGACY_ATTEMPTS = 3;
+
+function legacyBackoff(attempt: number): number {
+  const base = attempt === 1 ? 600 : 1_400;
+  return base + Math.floor(Math.random() * 200);
+}
+
 /** 把浏览器的 TypeError 归一成 ApiError，避免页面直接显示英文 "Failed to fetch"。 */
-function normalizeFetchFailure(error: unknown, requestId: string | null): unknown {
+function normalizeFetchFailure(
+  error: unknown,
+  requestId: string | null,
+  retried = false
+): unknown {
   if (isApiError(error)) return error;
   if (error instanceof Error && error.name === "AbortError") return error;
   if (isNetworkFailure(error)) {
-    return new ApiError("NETWORK_ERROR", NETWORK_ERROR_MESSAGE, 0, true, null, requestId, null);
+    return new ApiError(
+      "NETWORK_ERROR",
+      retried ? NETWORK_ERROR_MESSAGE : NETWORK_ERROR_UNRETRIED_MESSAGE,
+      0,
+      true,
+      null,
+      requestId,
+      null
+    );
   }
   return error;
 }
@@ -315,16 +446,28 @@ function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function apiOnce<T>(path: string, options?: RequestInit): Promise<T> {
+async function apiOnce<T>(
+  path: string,
+  options?: RequestInit,
+  retried = false
+): Promise<T> {
+  // 旧入口此前完全没有超时：网关挂起时 fetch 会一直吊着，页面永远停在加载态。
+  const guard = guardRequest(options?.signal ?? undefined, REQUEST_TIMEOUT_MS);
   let res: Response;
   try {
     res = await fetch(`${API_BASE}${path}`, {
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       ...options,
+      signal: guard.signal,
     });
   } catch (error) {
-    throw normalizeFetchFailure(error, null);
+    if (guard.didTimeout()) {
+      throw new ApiError("TIMEOUT", CODE_MESSAGES.TIMEOUT, 0, true, null, null, null);
+    }
+    throw normalizeFetchFailure(error, null, retried);
+  } finally {
+    guard.dispose();
   }
   if (!res.ok) {
     let text = "";
@@ -382,11 +525,26 @@ export const REQUEST_TIMEOUT_MS = 15_000;
  * 瞬时故障重试次数与退避（2026-11-26 线上实测：HF Space 前置代理约 5%~10% 的请求
  * 会挂起约 21 秒后直接断开，curl 返回 000、直连 Space 同样复现——这是传输层抖动，
  * 不是接口错误，重试即可恢复）。
+ *
+ * 第 42 批调参的理由：
+ * 1. 首跳超时 12s < 网关 21s 断点：在网关掐断之前就主动放弃、换一条新连接，
+ *    用户等待从「21s 后失败」变成「12s 内自动恢复」。挂起连接的 socket 不会复用。
+ * 2. 4 次尝试 + 抖动退避（800/1600/3000ms ±250ms）：实测单次抖动持续时间很短，
+ *    多给一次机会可把「偶发失败」压到接近 0；抖动避免同一波请求同时重试。
+ * 3. 重试时超时收紧到 8s：重试意味着上一条连接已不可用，快速失败换新连接更划算。
  */
-export const TRANSIENT_ATTEMPTS = 3;
-const TRANSIENT_BACKOFF_MS = [700, 1_800] as const;
+export const TRANSIENT_ATTEMPTS = 4;
+/** 首次尝试的超时：必须早于网关 21s 断点。 */
+export const FIRST_ATTEMPT_TIMEOUT_MS = 12_000;
+const TRANSIENT_BACKOFF_MS = [800, 1_600, 3_000] as const;
+const RETRY_BACKOFF_JITTER_MS = 250;
 /** 重试时的单次超时（毫秒）：重试说明上一条连接已不可用，缩短等待快速换新连接。 */
-const RETRY_TIMEOUT_MS = [8_000, 6_000] as const;
+const RETRY_TIMEOUT_MS = [8_000, 8_000, 8_000] as const;
+
+function transientBackoff(attempt: number): number {
+  const base = TRANSIENT_BACKOFF_MS[Math.min(attempt - 1, TRANSIENT_BACKOFF_MS.length - 1)];
+  return base + Math.floor(Math.random() * RETRY_BACKOFF_JITTER_MS);
+}
 
 /** 判断该错误是否值得自动重试。 */
 export function isTransientFailure(error: unknown): boolean {
@@ -438,12 +596,16 @@ export async function apiV2<T>(path: string, options: V2RequestOptions = {}): Pr
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (attempt > 0) {
       if (options.signal?.aborted) throw lastError;
-      await sleepMs(TRANSIENT_BACKOFF_MS[Math.min(attempt - 1, TRANSIENT_BACKOFF_MS.length - 1)]);
-      if (options.signal?.aborted) throw lastError;
+      emitRetry({ path, attempt, attempts, reason: retryReason(lastError) });
+      await sleepMs(transientBackoff(attempt));
+      if (options.signal?.aborted) {
+        emitRetry(null);
+        throw lastError;
+      }
     }
     const attemptOptions: V2RequestOptions =
       attempt === 0
-        ? options
+        ? { ...options, timeoutMs: options.timeoutMs ?? Math.min(REQUEST_TIMEOUT_MS, FIRST_ATTEMPT_TIMEOUT_MS) }
         : {
             ...options,
             timeoutMs: Math.min(
@@ -452,12 +614,18 @@ export async function apiV2<T>(path: string, options: V2RequestOptions = {}): Pr
             ),
           };
     try {
-      return await apiV2Once<T>(path, attemptOptions, isWrite, requestId);
+      const result = await apiV2Once<T>(path, attemptOptions, isWrite, requestId, attempt > 0);
+      if (attempt > 0) emitRetry(null);
+      return result;
     } catch (error) {
       lastError = error;
-      if (!retry || !isTransientFailure(error)) throw error;
+      if (!retry || !isTransientFailure(error)) {
+        if (retry || attempt > 0) emitRetry(null);
+        throw error;
+      }
     }
   }
+  emitRetry(null);
   throw lastError;
 }
 
@@ -465,7 +633,8 @@ async function apiV2Once<T>(
   path: string,
   options: V2RequestOptions,
   isWrite: boolean,
-  requestId: string | undefined
+  requestId: string | undefined,
+  retried: boolean
 ): Promise<T> {
   const method = options.method ?? "GET";
 
@@ -495,7 +664,7 @@ async function apiV2Once<T>(
     if (isNetworkFailure(error)) {
       throw new ApiError(
         "NETWORK_ERROR",
-        NETWORK_ERROR_MESSAGE,
+        retried ? NETWORK_ERROR_MESSAGE : NETWORK_ERROR_UNRETRIED_MESSAGE,
         0,
         true,
         null,
@@ -509,12 +678,18 @@ async function apiV2Once<T>(
   }
 
   if (!res.ok) {
+    // 第 42 批：必须先 text 再 JSON.parse。旧写法先 json() 再 text()，
+    // 网关返回 HTML 502 页面时 body 已被消费，text() 抛错被吞 → 丢掉 code/request_id。
     let body: unknown = null;
+    let text = "";
     try {
-      body = await res.json();
+      text = await res.text();
     } catch {
+      text = "";
+    }
+    if (text) {
       try {
-        body = await res.text();
+        body = JSON.parse(text);
       } catch {
         body = null;
       }

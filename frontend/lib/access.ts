@@ -9,7 +9,7 @@
  * * `groups`：我在团队工作区里维护的成员组名单；
  * * `totals`：四类计数（`shared_out` 统计的是会话数，不是成员数）。
  */
-import { apiV2 } from "@/lib/api";
+import { apiV2, errorMessage } from "@/lib/api";
 
 export type AccessRole = "owner" | "editor" | "viewer";
 export type ShareRole = "viewer" | "editor";
@@ -136,7 +136,7 @@ export function formatUpdated(iso: string | null | undefined): string {
 /** 权限页错误提示：401 明确要求登录，其余保留后端文案。 */
 export function accessErrorHint(error: unknown): string {
   if (!error) return "";
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorMessage(error);
   if (message.includes("401") || message.includes("请先登录")) {
     return "请先登录再打开权限页。";
   }

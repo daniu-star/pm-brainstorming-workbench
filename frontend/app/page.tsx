@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { api } from "@/lib/api";
+import { createSession, errorMessage } from "@/lib/api";
 import {
   ArrowRightIcon,
   BrainIcon,
@@ -54,10 +54,9 @@ export default function LandingPage() {
     setError(null);
 
     try {
-      const session = await api<{ id: string }>("/api/session", {
-        method: "POST",
-        body: JSON.stringify({ problem_statement: problem.trim() }),
-      });
+      // 第 42 批：迁到 v2（自动带 Idempotency-Key + 瞬时故障重试），
+      // 否则网关抖动一次就会「建会话失败」，用户连产品都进不去。
+      const session = await createSession(problem.trim());
       // 初始问题由 POST /api/session 写入并启动首个 clarify Run，链接不再携带 problem
       router.push(`/session/${session.id}`);
     } catch (err) {

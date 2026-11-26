@@ -75,15 +75,17 @@ export function addShare(
   sessionId: string,
   input: { email: string; role: SessionShareRole }
 ): Promise<SessionShare> {
+  // 后端按 (session, email) upsert，重复提交只更新角色，可以安全重试。
   return apiV2<SessionShare>(`/api/v2/sessions/${sessionId}/shares`, {
     method: "POST",
     body: input,
+    retryTransient: true,
   });
 }
 
 export function removeShare(sessionId: string, email: string): Promise<{ removed: boolean }> {
   return apiV2<{ removed: boolean }>(
     `/api/v2/sessions/${sessionId}/shares/${encodeURIComponent(email)}`,
-    { method: "DELETE" }
+    { method: "DELETE", retryTransient: true }
   );
 }

@@ -246,6 +246,10 @@ export function openRunEvents(url: string, opts: OpenRunEventsOptions): () => vo
     // 的阶段直接 EOF。此时重试是安全的：订阅是幂等的，after_seq 保证不会重复回放。
     const CONNECT_ATTEMPTS = 3;
     const CONNECT_BACKOFF_MS = [1_200, 3_000];
+    // 网关在 Space 唤醒期会直接回 502/503/504 HTML，这类响应必须和网络异常一样重试；
+    // 连接阶段也要自己的超时，否则只能等网关 21s 断开才动（第 42 批）。
+    const CONNECT_TIMEOUT_MS = 10_000;
+    const RETRYABLE_STATUS = [502, 503, 504];
     let response: Response | null = null;
     let lastError: unknown = null;
 
@@ -259,21 +263,33 @@ export function openRunEvents(url: string, opts: OpenRunEventsOptions): () => vo
           return;
         }
       }
+      const timeoutController = new AbortController();
+      const timeoutTimer = setTimeout(() => timeoutController.abort(), CONNECT_TIMEOUT_MS);
+      const onExternalAbort = (): void => timeoutController.abort();
+      controller.signal.addEventListener("abort", onExternalAbort, { once: true });
       try {
         response = await fetchImpl(withAfterSeq(url, opts.afterSeq), {
           method: "GET",
           credentials: "include",
           headers,
           cache: "no-store",
-          signal: controller.signal,
+          signal: timeoutController.signal,
         });
+        if (RETRYABLE_STATUS.includes(response.status) && attempt + 1 < CONNECT_ATTEMPTS) {
+          lastError = new Error(`事件流连接失败（HTTP ${response.status}）`);
+          response = null;
+          continue;
+        }
         break;
       } catch (error) {
-        if (stopped || isAbortError(error)) {
+        if (stopped || controller.signal.aborted || isAbortError(error)) {
           close("abort");
           return;
         }
         lastError = error;
+      } finally {
+        clearTimeout(timeoutTimer);
+        controller.signal.removeEventListener("abort", onExternalAbort);
       }
     }
 

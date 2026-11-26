@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { BrainIcon } from "@/components/icons";
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, errorMessage } from "@/lib/api";
 import { toast } from "@/components/Toast";
 
 // /product 为静态营销页，无需登录即可访问（B127）。
@@ -35,7 +35,11 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
     let cancelled = false;
     setAuthorized(false);
-    api<{ authenticated: boolean }>("/api/auth/me")
+    // 第 42 批：旧实现走无超时的 legacy GET，Space 唤醒时最坏要转 43s；
+    // 5s 拿不到结果就先放行（页面自己的请求会再校验），避免冷启动白屏。
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5_000);
+    api<{ authenticated: boolean }>("/api/auth/me", { signal: controller.signal })
       .then(() => {
         authVerified = true;
         if (!cancelled) setAuthorized(true);
@@ -49,11 +53,17 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           const next = encodeURIComponent(pathname || "/");
           router.replace(`/login?next=${next}`);
         } else {
-          // Network/server issue — let the page render; protected API calls
-          // will surface their own errors.
+          // 网络/服务端问题：先放行，让页面自己的请求暴露真实错误；
+          // 但要给用户一条明确提示，否则他们不知道「为什么一进页面就报错」。
           setAuthorized(true);
+          toast.error(
+            err instanceof Error && err.name === "AbortError"
+              ? "登录状态校验超时（网络不稳），已先按已登录继续；若提示未登录请重新登录。"
+              : `登录状态暂时无法校验：${errorMessage(err)}`
+          );
         }
-      });
+      })
+      .finally(() => clearTimeout(timer));
 
     return () => {
       cancelled = true;

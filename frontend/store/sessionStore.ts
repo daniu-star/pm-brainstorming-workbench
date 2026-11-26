@@ -25,6 +25,7 @@ import {
   getAudit,
   getCanvas,
   getLoop,
+  ApiError,
   getMessage as apiGetMessage,
   getProductState,
   getRun,
@@ -33,6 +34,7 @@ import {
   isApiError,
   isEndpointUnavailable,
   listMessages,
+  isTransientFailure,
   listSessionRuns,
   newRequestId,
   retryFailed as apiRetryFailed,
@@ -417,6 +419,68 @@ export const useSessionStore = create<SessionState>((set, get) => {
   let lastSent: FailedSend | null = null;
   let roleBuffers: Record<string, string> = {};
   let runStreamCancel: (() => void) | null = null;
+
+  // ---- 轮询兜底（第 42 批） ---------------------------------------------- //
+  /**
+   * SSE 连续重连失败时，改用轮询把任务进度与结果同步回来。
+   *
+   * 线上实测：Vercel → HF Space 链路偶发 21 秒断开（约 5% 请求），事件流会以
+   * `eof` 收尾。旧实现重连 2 次后直接提示「事件流已断开，请刷新页面继续」，
+   * 用户以为任务失败了，实际上后端还在跑。轮询 2.5 秒一次只读 GET 很便宜，
+   * 终态再走 finalizeRun，和 SSE 共用同一条收口逻辑。
+   */
+  const RUN_POLL_INTERVAL_MS = 2_500;
+  const RUN_POLL_MAX_TICKS = 240; // 2.5s × 240 = 10 分钟
+
+  let runPollTimer: ReturnType<typeof setTimeout> | null = null;
+  let runPollRunId: string | null = null;
+  let runPollTicks = 0;
+
+  function stopRunPolling(): void {
+    if (runPollTimer) {
+      clearTimeout(runPollTimer);
+      runPollTimer = null;
+    }
+    runPollRunId = null;
+    runPollTicks = 0;
+  }
+
+  function startRunPolling(runId: string, captured: SessionGuard): void {
+    stopRunPolling();
+    runPollRunId = runId;
+    runPollTicks = 0;
+    // 不再有实时 token 流入，收起「正在生成」指示；任务本身仍在后台执行。
+    set({ isStreaming: false, subscribingRunId: null });
+    pushWarning("实时连接中断，已切换为轮询同步进度（任务仍在后台执行）");
+
+    const tick = async (): Promise<void> => {
+      if (!assertCurrent(captured) || runPollRunId !== runId) return;
+      runPollTicks += 1;
+      if (runPollTicks > RUN_POLL_MAX_TICKS) {
+        stopRunPolling();
+        set({ isStreaming: false, subscribingRunId: null });
+        setError("任务仍在后台执行，请稍后刷新页面查看结果");
+        return;
+      }
+      try {
+        const run = await getRun(runId);
+        if (!assertCurrent(captured) || runPollRunId !== runId) return;
+        if (isTerminalRunStatus(run.status)) {
+          stopRunPolling();
+          await finalizeRun(runId, captured);
+          return;
+        }
+      } catch {
+        // 轮询本身就是抖动下的兜底：单次失败不打扰用户，下一轮继续。
+      }
+      if (!assertCurrent(captured) || runPollRunId !== runId) return;
+      runPollTimer = setTimeout(() => {
+        void tick();
+      }, RUN_POLL_INTERVAL_MS);
+    };
+
+    void tick();
+  }
   /** 每个 run 的事件去重集合（跨重连复用） */
   const seenEvents = new Map<string, Set<string>>();
   /** 每个 run 已重连次数：EOF 重连时递传，终态 / 放弃 / 显式退订时清理 */
@@ -466,6 +530,19 @@ export const useSessionStore = create<SessionState>((set, get) => {
       if (next.length === state.stateWarnings.length) return {};
       return { stateWarnings: next };
     });
+  }
+
+  /**
+   * Run 失败文案：后端可能把供应商原始报错塞进 error_message（英文 401/超时），
+   * 直接显示会变成英文；这里优先用错误码映射，纯英文细节回落到中文兜底。
+   */
+  function runFailureMessage(code: string | null, message: string | null): string {
+    const detail = (message ?? "").trim();
+    const latinOnly = detail.length > 0 && !/[\u4e00-\u9fff]/.test(detail);
+    if (detail && !latinOnly) return detail;
+    const mapped = code ? errorMessage(new ApiError(code, "", 0)) : "";
+    if (mapped) return mapped;
+    return detail || "任务执行失败";
   }
 
   function setError(message: string | null): void {
@@ -1101,7 +1178,10 @@ export const useSessionStore = create<SessionState>((set, get) => {
         });
         if (terminalStatus === "failed") {
           setError(
-            typeof payload.error_message === "string" ? payload.error_message : "任务执行失败"
+            runFailureMessage(
+              typeof payload.error_code === "string" ? payload.error_code : null,
+              typeof payload.error_message === "string" ? payload.error_message : null
+            )
           );
           set({ lastFailedRunId: event.run_id });
         } else {
@@ -1164,6 +1244,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
     const sessionId = captured.sessionId;
     if (!sessionId) return;
     reconnectAttempts.delete(runId);
+    stopRunPolling();
     set({
       isStreaming: false,
       streamingContent: "",
@@ -1202,7 +1283,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
           ),
         });
         if (run.status === "failed") {
-          setError(run.error_message ?? "任务执行失败");
+          setError(runFailureMessage(run.error_code ?? null, run.error_message ?? null));
           set({ lastFailedRunId: runId });
         }
       }
@@ -1264,9 +1345,10 @@ export const useSessionStore = create<SessionState>((set, get) => {
         return;
       }
       if (attempt >= 2) {
+        // 不再把用户丢在错误页：切轮询继续同步进度（第 42 批）。
         reconnectAttempts.delete(runId);
-        setError("事件流已断开，请刷新页面继续");
-        set({ isStreaming: false, subscribingRunId: null });
+        set({ subscribingRunId: null });
+        startRunPolling(runId, captured);
         return;
       }
       set({ subscribingRunId: null });
@@ -1274,9 +1356,11 @@ export const useSessionStore = create<SessionState>((set, get) => {
     } catch (error) {
       if (!assertCurrent(captured)) return;
       if (attempt >= 2) {
+        // 事件流和状态查询都拿不到时，轮询是唯一还能自愈的路径。
+        void error;
         reconnectAttempts.delete(runId);
-        setError(errorMessage(error));
-        set({ isStreaming: false, subscribingRunId: null });
+        set({ subscribingRunId: null });
+        startRunPolling(runId, captured);
         return;
       }
       // 退避期间 getRun 也失败（网络抖动）：继续下一次重连，计数继续递传
@@ -1286,6 +1370,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
   }
 
   function openRunStream(runId: string): void {
+    stopRunPolling();
     const state = get();
     const sessionId = state.currentSessionId;
     if (!sessionId) return;
@@ -1301,7 +1386,14 @@ export const useSessionStore = create<SessionState>((set, get) => {
         seen,
         onEvent: handleRunEvent,
         onError: (error) => {
-          if (assertCurrent(captured)) setError(errorMessage(error));
+          if (!assertCurrent(captured)) return;
+          // 传输层抖动（网关 21s 断开 / 唤醒中）不弹红色错误：客户端正在自动重连，
+          // 弹错只会让用户以为任务失败了。真正的失败由终态事件/finalizeRun 负责。
+          if (isTransientFailure(error)) {
+            pushWarning("实时连接不稳定，正在自动重连…");
+            return;
+          }
+          setError(errorMessage(error));
         },
         onClose: (reason) => {
           if (reason === "terminal") {
@@ -2119,6 +2211,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
     },
 
     unsubscribe: () => {
+      stopRunPolling();
       if (runStreamCancel) {
         runStreamCancel();
         runStreamCancel = null;

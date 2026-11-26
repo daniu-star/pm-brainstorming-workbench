@@ -104,6 +104,8 @@ function OpsPageContent() {
       setLoadedAt(new Date().toISOString());
     } catch (err) {
       setLoadError(errorMessage(err));
+      // 读取失败时清空 detail：宁可显示「—」，也不能拿上次的成功数据冒充当前状态。
+      setDetail(null);
     } finally {
       setBusy(false);
     }
@@ -113,6 +115,10 @@ function OpsPageContent() {
     void load();
   }, [load]);
 
+  // 第 42 批：detail 为 null 时以前会渲染「Worker 正常 / 排队 0 / 模型 standard」——
+  // 故障时误导值班判断。这里显式区分 loading / error / ready 三态。
+  const ready = detail !== null;
+  const pendingText = busy && !ready ? "读取中…" : void 0;
   const overall = detail?.status ?? null;
   const worker = workerSummary(detail?.worker);
   const reportQuality = reportQualitySummary(detail?.report_quality);
@@ -154,12 +160,16 @@ function OpsPageContent() {
       {loadError ? (
         <p role="alert" className="rounded-xl border border-red-700/40 bg-red-900/20 px-4 py-3 text-[11px] leading-relaxed text-red-300">
           {loadError}
-          {loadError.includes("401") || loadError.includes("未登录") ? "（请先登录再访问 /ops）" : ""}
+          {loadError.includes("请先登录") || loadError.includes("登录") ? "（请先登录再访问 /ops）" : ""}
         </p>
       ) : null}
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <Card title="Worker" badge={worker.tone === "red" ? "需要处理" : "正常"} tone={worker.tone}>
+        <Card
+          title="Worker"
+          badge={ready ? (worker.tone === "red" ? "需要处理" : "正常") : pendingText ?? "—"}
+          tone={ready ? worker.tone : "zinc"}
+        >
           <p className={`text-[11px] leading-relaxed ${TONE_TEXT[worker.tone]}`}>{worker.text}</p>
           {detail?.worker?.hint ? (
             <p className="mt-2 rounded-lg border border-zinc-800/60 bg-black/30 px-2 py-1 text-[10px] leading-relaxed text-zinc-400">
@@ -168,29 +178,45 @@ function OpsPageContent() {
           ) : null}
         </Card>
 
-        <Card title="队列" badge={`排队 ${detail?.queues?.queued ?? 0}`} tone={(detail?.queues?.queued ?? 0) > 0 ? "amber" : "zinc"}>
+        <Card
+          title="队列"
+          badge={ready ? `排队 ${detail.queues?.queued ?? 0}` : pendingText ?? "—"}
+          tone={ready && (detail.queues?.queued ?? 0) > 0 ? "amber" : "zinc"}
+        >
           <RowTable rows={queueRows(detail?.queues)} />
         </Card>
 
-        <Card title="存储" badge={detail?.storage?.db ? "可读" : "不可用"} tone={detail?.storage?.db ? "zinc" : "red"}>
+        <Card
+          title="存储"
+          badge={ready ? (detail.storage?.db ? "可读" : "不可用") : pendingText ?? "—"}
+          tone={ready && !detail.storage?.db ? "red" : "zinc"}
+        >
           <RowTable rows={storageRows(detail?.storage)} emptyText="读不到数据库用量" />
         </Card>
 
-        <Card title="沙箱" badge={detail?.sandbox?.enabled ? "已开启" : "未开启"} tone={sandbox.tone}>
+        <Card
+          title="沙箱"
+          badge={ready ? (detail.sandbox?.enabled ? "已开启" : "未开启") : pendingText ?? "—"}
+          tone={ready ? sandbox.tone : "zinc"}
+        >
           <p className={`text-[11px] leading-relaxed ${TONE_TEXT[sandbox.tone]}`}>{sandbox.text}</p>
           {detail?.sandbox?.note ? (
             <p className="mt-2 text-[10px] leading-relaxed text-zinc-500">{detail.sandbox.note}</p>
           ) : null}
         </Card>
 
-        <Card title="模型" badge={detail?.budget_profile ?? "standard"}>
+        <Card title="模型" badge={ready ? (detail.budget_profile ?? "standard") : pendingText ?? "—"}>
           <RowTable rows={llmSummary(detail?.llm)} emptyText="读不到模型配置" />
           <p className="mt-2 text-[10px] leading-relaxed text-zinc-500">
             预算档位：{budgetSummary(detail?.budget_profile, detail?.budget_limits)}
           </p>
         </Card>
 
-        <Card title="报告质量" badge={reportQuality.text} tone={reportQuality.tone}>
+        <Card
+          title="报告质量"
+          badge={ready ? reportQuality.text : pendingText ?? "—"}
+          tone={ready ? reportQuality.tone : "zinc"}
+        >
           <p className={`text-[11px] leading-relaxed ${TONE_TEXT[reportQuality.tone]}`}>
             {detail?.report_quality?.hint ?? "报告里的数字是否都有来源，会在这里汇总成信号。"}
           </p>

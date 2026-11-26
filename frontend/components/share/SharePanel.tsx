@@ -125,7 +125,7 @@ export function SharePanel({
       });
       setEmail("");
     } catch (err) {
-      setFormError(isApiError(err) ? err.message : errorMessage(err));
+      setFormError(errorMessage(err));
     } finally {
       setBusy(false);
     }

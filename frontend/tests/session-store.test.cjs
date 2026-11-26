@@ -326,7 +326,7 @@ test("loadSession 切会话：清空会话级视图/画布/产品版本，且新
   assert.equal(useSessionStore.getState().sessionView.id, "sB");
 });
 
-test("事件流连续 EOF：重连次数递传，达到上限后报错并停止 streaming", async () => {
+test("事件流连续 EOF：重连耗尽后切换轮询兜底，不把用户丢在错误页", async () => {
   prime();
   const calls = stubFetch((url) => {
     if (url.includes("/runs/") && url.includes("/events")) return {};
@@ -343,19 +343,28 @@ test("事件流连续 EOF：重连次数递传，达到上限后报错并停止 
   useSessionStore.getState().subscribeRun("run_eof");
   assert.equal(useSessionStore.getState().isStreaming, true);
 
+  // 第 42 批：SSE 重连 2 次仍失败时，不再 setError「事件流已断开，请刷新页面继续」，
+  // 而是切到轮询（后端任务仍在跑，用户应该看到进度而不是一句「失败了」）。
   await waitFor(() => {
     const state = useSessionStore.getState();
-    return state.error !== null && state.isStreaming === false;
-  }, 8000);
+    return state.stateWarnings.some((warning) => warning.includes("轮询")) && state.isStreaming === false;
+  }, 25000);
 
   const state = useSessionStore.getState();
-  assert.match(state.error, /事件流已断开/);
+  assert.doesNotMatch(
+    state.error ?? "",
+    /事件流已断开/,
+    "断线只是传输层问题，不能再让用户看到「请刷新页面继续」这种失败口径",
+  );
+  assert.equal(state.isStreaming, false, "切轮询后不再显示实时生成指示");
   assert.equal(state.subscribingRunId, null);
-  const runFetches = calls.filter(
-    (call) => call.url.includes("/runs/run_eof") && !call.url.includes("/events")
-  ).length;
-  assert.ok(runFetches >= 1, "重连时必须先查 Run 是否已进入终态");
-  assert.ok(runFetches <= 3, `重连次数应有上限，实际查询 ${runFetches} 次`);
+
+  const runFetches = () =>
+    calls.filter((call) => call.url.includes("/runs/run_eof") && !call.url.includes("/events")).length;
+  const before = runFetches();
+  await waitFor(() => runFetches() > before, 12000);
+  assert.ok(runFetches() >= 2, "轮询必须持续查询 Run 状态，直到任务进入终态");
+  useSessionStore.getState().unsubscribe();
 });
 
 test("role.output.updated 不会抹掉尚未确认的本地乐观用户消息", async () => {

@@ -128,6 +128,19 @@ export function LlmConfigForm({ onSaved }: LlmConfigFormProps) {
     }
   };
 
+  // 第 42 批：读取期间以前直接渲染空表单，用户会以为配置丢了并重新填写/覆盖保存。
+  // 现在先出「正在读取配置」骨架，读完（成功或失败）才渲染表单。
+  if (view === null && !loadError) {
+    return (
+      <div role="status" className="flex flex-col gap-3 rounded-lg border border-zinc-700/60 bg-zinc-900/60 p-4 text-sm text-zinc-300">
+        <p className="animate-pulse">正在读取模型配置…（后端唤醒时可能需要十几秒）</p>
+        <p className="text-xs text-zinc-500">
+          读取完成前不要重新填写：页面会用服务端已保存的配置覆盖表单，避免误覆盖旧 Key。
+        </p>
+      </div>
+    );
+  }
+
   if (loadError) {
     return (
       <div className="flex flex-col gap-3 rounded-lg border border-red-800/40 bg-red-900/20 p-3 text-sm text-red-300">
@@ -206,7 +219,7 @@ export function LlmConfigForm({ onSaved }: LlmConfigFormProps) {
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="submit"
-          disabled={busy}
+          disabled={busy || view === null}
           className="min-h-[44px] rounded-lg bg-brand-300/90 px-4 py-2 text-sm font-medium text-dark-900 transition-colors hover:bg-brand-300 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {busy ? "处理中…" : "保存并测试"}

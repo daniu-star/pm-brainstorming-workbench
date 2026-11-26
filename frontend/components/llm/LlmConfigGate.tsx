@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { BrainIcon, ShieldIcon } from "@/components/icons";
 import { GATE_ALLOWED_PATHS, gateState, getLlmConfig, type LlmConfigView } from "@/lib/llmConfig";
+import { errorMessage } from "@/lib/api";
 
 /**
  * 强制「自带模型密钥」闸门：登录后只要账户还没配置自己的模型 API，
@@ -16,25 +17,74 @@ export function LlmConfigGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [view, setView] = useState<LlmConfigView | null>(null);
   const [failed, setFailed] = useState(false);
+  const [bypassNotice, setBypassNotice] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
     if (GATE_ALLOWED_PATHS.includes(pathname)) return;
     let cancelled = false;
     getLlmConfig()
       .then((next) => {
-        if (!cancelled) setView(next);
+        if (cancelled) return;
+        setView(next);
+        setFailed(false);
+        setBypassNotice(null);
       })
-      .catch(() => {
-        if (!cancelled) setFailed(true);
+      .catch((err) => {
+        if (cancelled) return;
+        // 读失败不能静默放行：必须告诉用户「应用可能不可用」并给出重试入口，
+        // 否则用户进入后每次操作都失败，却以为是自己配置错了（第 42 批）。
+        setFailed(true);
+        setBypassNotice(errorMessage(err));
       });
     return () => {
       cancelled = true;
     };
   }, [pathname]);
 
+  const retry = (): void => {
+    if (retrying) return;
+    setRetrying(true);
+    setFailed(false);
+    setView(null);
+    getLlmConfig()
+      .then((next) => {
+        setView(next);
+        setBypassNotice(null);
+      })
+      .catch((err) => {
+        setFailed(true);
+        setBypassNotice(errorMessage(err));
+      })
+      .finally(() => setRetrying(false));
+  };
+
   const state = gateState({ pathname, view, failed });
 
-  if (state === "bypass" || state === "ready") return <>{children}</>;
+  if (state === "ready") return <>{children}</>;
+
+  if (state === "bypass") {
+    return (
+      <>
+        <div
+          role="status"
+          className="sticky top-0 z-40 flex flex-wrap items-center justify-center gap-2 bg-amber-500/15 px-4 py-2 text-center text-xs text-amber-200"
+        >
+          <span>
+            模型配置读取失败（网络不稳），功能可能不可用：{bypassNotice ?? "未知原因"}
+          </span>
+          <button
+            type="button"
+            onClick={retry}
+            className="min-h-[32px] rounded-md border border-amber-400/60 px-2 py-1 font-medium text-amber-100 hover:bg-amber-400/20"
+          >
+            {retrying ? "重试中…" : "重试读取"}
+          </button>
+        </div>
+        {children}
+      </>
+    );
+  }
 
   if (state === "loading") {
     return (

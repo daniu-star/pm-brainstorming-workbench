@@ -8,7 +8,7 @@
  *
  * 后端接口在 `backend/api/v2/groups.py`；`apiV2` 不补前缀，路径必须写完整。
  */
-import { apiV2 } from "./api";
+import { apiV2, errorMessage } from "./api";
 
 export type TeamGroupRole = "viewer" | "editor";
 
@@ -75,8 +75,10 @@ export function applyGroupHint(receipt: ApplyGroupReceipt): string {
 
 /** 组名重复 / 空名等后端拒绝的中文兜底文案。 */
 export function groupErrorHint(error: unknown): string {
-  const message = error instanceof Error ? error.message : "";
-  if (!message) return "操作失败，请稍后重试";
+  const message = errorMessage(error);
+  // 通用文案保持本页自己的措辞（「操作」而非「请求」），便于用户理解这是组操作失败。
+  const generic = message === "请求失败，请稍后重试" || message === "服务暂不可用，请稍后重试";
+  if (!message || generic) return "操作失败，请稍后重试";
   if (message.includes("同名")) return "已经有同名的成员组，换个名字试试。";
   if (message.includes("最多")) return message;
   return message;

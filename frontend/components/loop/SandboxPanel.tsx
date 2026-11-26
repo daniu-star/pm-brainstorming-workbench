@@ -93,7 +93,7 @@ export function SandboxPanel({ loopId, readOnly = false }: { loopId: string; rea
       .catch((err) => {
         if (aborted) return;
         setStatus(null);
-        setStatusError(isApiError(err) ? err.message : errorMessage(err));
+        setStatusError(errorMessage(err));
       });
     return () => {
       aborted = true;
@@ -149,7 +149,7 @@ export function SandboxPanel({ loopId, readOnly = false }: { loopId: string; rea
       setRuns((prev) => [receipt, ...(prev ?? [])]);
       await reloadRuns();
     } catch (err) {
-      setFormError(isApiError(err) ? err.message : errorMessage(err));
+      setFormError(errorMessage(err));
     } finally {
       setBusy(false);
     }
