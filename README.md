@@ -69,13 +69,17 @@ cd backend && python ../scripts/container_start.py --port 8099 --app-dir .
 
 ### 验证码发不出去时
 
-HF Space 会封掉 25 / 465 / 587 出站（连不上 `smtp.163.com`），此时邮箱验证码登录会超时。两条路：
+HF Space 会封掉 25 / 465 / 587 出站（连不上 `smtp.163.com`），此时邮箱验证码登录会超时。三条路：
 
 1. **配 `EMAIL_PROXY_URL` / `EMAIL_PROXY_KEY`**：验证码先 POST 给代理投递；代理不可用会自动回落直连 SMTP，不会把登录打挂。
 2. 换成支持 HTTPS 发信的邮件服务商，同样通过 `EMAIL_PROXY_URL` 接。
+3. **镜像内置兜底**：`Dockerfile` 默认 `AUTH_CODE_LOG_FALLBACK=true` + `SMTP_TIMEOUT_SECONDS=8`。
+   投递失败时不再卡住请求，而是立刻把验证码写进服务日志（Space → Logs，仅所有者可见）并返回
+   `delivery="logs"`，登录页会提示「验证码已写入服务日志，请联系平台管理员获取」。
+   验证码依然一次性、10 分钟过期，公开站点请改配真 SMTP / 代理后把这个开关关掉。
 
 日志里看 `event=auth.email_proxy_sent`（代理成功）、`auth.email_proxy_failed`（代理失败已回落）、
-`auth.email_proxy_rejected`（代理返回 success=false）三种事件即可判断当前走哪条路。
+`auth.email_proxy_rejected`（代理返回 success=false）、`auth.code_log_fallback`（已写日志兜底）四种事件即可判断当前走哪条路。
 
 ### 部署顺序
 

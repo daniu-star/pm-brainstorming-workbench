@@ -84,6 +84,12 @@ class Settings(BaseSettings):
     # 直连 SMTP 会超时；配置代理后改为 POST 到该地址由外部转发，失败再回落直连。
     email_proxy_url: str = ""
     email_proxy_key: str = ""
+    # 邮件兜底（第 40 批）：容器平台既封 SMTP 出站、又没有配置 HTTP 代理时，
+    # 验证码发不出去会直接卡到超时，登录链路不可用。
+    # 打开本开关后改为把验证码写进服务日志（只有平台所有者能看），
+    # 并且接口立刻返回成功，保证「登录入口可用 + 运营可人工转达」。
+    # 只建议自建/私有部署开启；公开站点请改配 EMAIL_PROXY_URL 或可用 SMTP。
+    auth_code_log_fallback: bool = False
 
     # V3 用 JWT_SECRET 签发登录 Cookie，V4 改名为 AUTH_SECRET_KEY。
     # 线上 Space 里可能只配了旧名字，这里做兼容回退，避免升级后登录直接 500。

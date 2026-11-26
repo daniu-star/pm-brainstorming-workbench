@@ -265,7 +265,22 @@ def _send_via_proxy(message: EmailMessage) -> bool:
         return False
 
 
-def _send_verification_email(email: str, code: str) -> None:  # pragma: no cover - 网络
+def _deliver_code_via_log(email: str, code: str) -> str:
+    """把验证码写进服务日志，作为「邮件通道不可用」时的最后兜底。
+
+    只应在 ``AUTH_CODE_LOG_FALLBACK=true`` 的私有部署里走到这里：
+    日志只有平台所有者能读，公开站点必须改配 ``EMAIL_PROXY_URL`` 或可用 SMTP。
+    """
+    logger.warning(
+        "event=auth.code_log_fallback email=%s code=%s "
+        "hint=邮件通道不可用，验证码已写入服务日志（仅平台所有者可见）",
+        email,
+        code,
+    )
+    return "logs"
+
+
+def _send_verification_email(email: str, code: str) -> str:  # pragma: no cover - 网络
     sender = settings.smtp_from or settings.smtp_username
     message = EmailMessage()
     message["Subject"] = "PM Brainstorm 登录验证码"
@@ -290,30 +305,40 @@ def _send_verification_email(email: str, code: str) -> None:  # pragma: no cover
 
     # 先试 HTTP 代理（容器平台常封出站 SMTP 端口），失败再回落直连。
     if _send_via_proxy(message):
-        return
+        return "proxy"
 
-    context = ssl.create_default_context()
-    if settings.smtp_use_ssl:
-        with smtplib.SMTP_SSL(
+    try:
+        context = ssl.create_default_context()
+        if settings.smtp_use_ssl:
+            with smtplib.SMTP_SSL(
+                settings.smtp_host,
+                settings.smtp_port,
+                timeout=settings.smtp_timeout_seconds,
+                context=context,
+            ) as client:
+                client.login(settings.smtp_username, settings.smtp_password)
+                client.send_message(message)
+            return "smtp"
+
+        with smtplib.SMTP(
             settings.smtp_host,
             settings.smtp_port,
             timeout=settings.smtp_timeout_seconds,
-            context=context,
         ) as client:
+            client.ehlo()
+            client.starttls(context=context)
+            client.ehlo()
             client.login(settings.smtp_username, settings.smtp_password)
             client.send_message(message)
-        return
-
-    with smtplib.SMTP(
-        settings.smtp_host,
-        settings.smtp_port,
-        timeout=settings.smtp_timeout_seconds,
-    ) as client:
-        client.ehlo()
-        client.starttls(context=context)
-        client.ehlo()
-        client.login(settings.smtp_username, settings.smtp_password)
-        client.send_message(message)
+        return "smtp"
+    except Exception as error:  # noqa: BLE001 - 兜底开关要把任何投递失败都转成日志交付
+        if not settings.auth_code_log_fallback:
+            raise
+        logger.warning(
+            "event=auth.email_delivery_failed error=%s fallback=logs",
+            type(error).__name__,
+        )
+        return _deliver_code_via_log(email, code)
 
 
 # --------------------------------------------------------------------------- #
@@ -321,7 +346,12 @@ def _send_verification_email(email: str, code: str) -> None:  # pragma: no cover
 # --------------------------------------------------------------------------- #
 
 
-def issue_verification_code(email: str) -> int:
+def issue_verification_code_with_delivery(email: str) -> tuple[int, str]:
+    """签发验证码并返回 ``(重发等待秒数, 投递方式)``。
+
+    投递方式：``proxy`` / ``smtp`` / ``logs``（仅当 AUTH_CODE_LOG_FALLBACK 打开且
+    邮件投递失败时出现，验证码写进服务日志由平台所有者转达）。
+    """
     _require_auth_configuration()
     normalized = normalize_email(email)
     now = _now_epoch()
@@ -349,12 +379,18 @@ def issue_verification_code(email: str) -> int:
         )
 
     try:
-        _send_verification_email(normalized, code)
+        delivery = _send_verification_email(normalized, code)
     except Exception:  # noqa: BLE001 - 发送失败必须让用户能立即重试
         with database_module.session_scope() as db:
             auth_repo.invalidate_codes(db, email=normalized, now_epoch=now)
         raise
-    return settings.auth_code_resend_seconds
+    return int(settings.auth_code_resend_seconds), delivery
+
+
+def issue_verification_code(email: str) -> int:
+    """兼容旧调用方：只关心重发等待秒数。"""
+    retry_after, _delivery = issue_verification_code_with_delivery(email)
+    return retry_after
 
 
 def verify_email_code(email: str, code: str) -> bool:

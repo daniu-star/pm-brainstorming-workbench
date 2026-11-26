@@ -38,6 +38,14 @@ ENV LLM_DISABLE_REASONING="true"
 ENV AUTH_COOKIE_SECURE="true"
 ENV AUTH_COOKIE_SAMESITE="lax"
 
+# 容器平台常封出站 25/465/587：SMTP 直连会卡到超时，登录入口表现为 502 / 504。
+#   - 首选配 EMAIL_PROXY_URL + EMAIL_PROXY_KEY，用 HTTPS 代理投递验证码；
+#   - 没有代理时把 AUTH_CODE_LOG_FALLBACK 打开：投递失败立即把验证码写进服务日志
+#     （只有平台所有者能读），接口返回 200 + delivery="logs"，保证入口可用。
+# SMTP_TIMEOUT_SECONDS 收紧到 8 秒，避免 Vercel 反向代理先超时返回 502。
+ENV SMTP_TIMEOUT_SECONDS="8"
+ENV AUTH_CODE_LOG_FALLBACK="true"
+
 ENV BACKEND_HOST="0.0.0.0"
 ENV BACKEND_PORT="7860"
 

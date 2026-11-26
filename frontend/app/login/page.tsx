@@ -39,6 +39,7 @@ function LoginForm() {
   const [sendingCode, setSendingCode] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [cooldown, setCooldown] = useState(0);
 
   // Restore cooldown from sessionStorage (survives remounts within the tab)
@@ -71,13 +72,21 @@ function LoginForm() {
     }
     setSendingCode(true);
     setError(null);
+    setNotice(null);
     try {
-      const result = await api<{ retry_after: number }>("/api/auth/email/code", {
-        method: "POST",
-        body: JSON.stringify({ email: email.trim() }),
-      });
+      const result = await api<{ retry_after: number; delivery?: string; message?: string }>(
+        "/api/auth/email/code",
+        {
+          method: "POST",
+          body: JSON.stringify({ email: email.trim() }),
+        },
+      );
       setStep("code");
       setCooldown(result.retry_after);
+      // 邮件通道不可用时后端会退化成「把验证码写进服务日志」，并附一句人工转达提示。
+      if (result.delivery === "logs" && result.message) {
+        setNotice(result.message);
+      }
     } catch (requestError) {
       // 429 限流：读取后端 retry_after 启动冷却倒计时（B120）。
       if (requestError instanceof ApiError && requestError.status === 429) {
@@ -182,6 +191,12 @@ function LoginForm() {
                 className="h-14 w-full rounded-xl border border-white/10 bg-black/20 px-4 text-center font-mono text-xl tracking-[0.45em] text-white outline-none transition-colors placeholder:text-zinc-500 focus:border-cyan-300/45 focus:ring-2 focus:ring-cyan-300/10"
               />
             </div>
+          )}
+
+          {notice && (
+            <p role="status" className="mt-4 rounded-lg border border-amber-300/25 bg-amber-300/5 px-3 py-2.5 text-xs leading-5 text-amber-200">
+              {notice}
+            </p>
           )}
 
           {error && (

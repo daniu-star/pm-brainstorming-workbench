@@ -13,7 +13,7 @@ from core.auth import (
     AuthRateLimitError,
     check_send_rate_limit,
     create_session_token,
-    issue_verification_code,
+    issue_verification_code_with_delivery,
     normalize_email,
     verify_email_code,
     verify_session_token,
@@ -42,7 +42,7 @@ async def send_email_code(payload: EmailCodeRequest, request: Request):
         email = normalize_email(payload.email)
         # IP 维度限流：每 IP 10 次/小时，全局 30 次/分钟（B035）。
         check_send_rate_limit(client_ip)
-        retry_after = await asyncio.to_thread(issue_verification_code, email)
+        retry_after, delivery = await asyncio.to_thread(issue_verification_code_with_delivery, email)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except AuthRateLimitError as exc:
@@ -71,7 +71,11 @@ async def send_email_code(payload: EmailCodeRequest, request: Request):
         logger.warning("SMTP 发送失败：%s", type(exc).__name__)
         raise HTTPException(status_code=502, detail="验证码邮件发送失败，请检查 SMTP 配置") from exc
 
-    return {"ok": True, "retry_after": retry_after}
+    response: dict = {"ok": True, "retry_after": retry_after, "delivery": delivery}
+    if delivery == "logs":
+        # 邮件通道不可用时的兜底：验证码已写进服务日志，由平台所有者转达。
+        response["message"] = "邮件通道不可用，验证码已写入服务日志，请联系平台管理员获取。"
+    return response
 
 
 @router.post("/email/verify")
