@@ -8,6 +8,7 @@ M1（v4 契约）变更：
 """
 import asyncio
 import logging
+import os
 import time as _time
 from contextlib import asynccontextmanager
 
@@ -457,8 +458,33 @@ def _database_probe() -> tuple[bool, str]:
         return False, f"数据库不可用：{type(exc).__name__}"
 
 
+def _persistence_warnings() -> list[str]:
+    """数据持久化告警（不阻塞服务，但必须说出来）。
+
+    线上评测记录 P0-2：HF 免费实例没有持久卷，SQLite 落在容器内 ``/app/data``，
+    平台回收/重启后用户、会话、审计、模型密钥全部清零且不可恢复。这件事没法在
+    代码里修（要么挂持久卷，要么用外部数据库），但可以不让它「静默发生」——
+    ``/health`` 与 ``/health/ready`` 都带上 ``warnings``，``/ops`` 页能直接看到。
+    """
+
+    warnings: list[str] = []
+    try:
+        # 数据库地址由环境变量决定（见 repositories/database.py::default_database_url），
+        # 不放在 Settings 里，所以这里直接读环境变量。
+        database_url = (os.environ.get("DATABASE_URL") or "").strip()
+        on_space = bool(os.environ.get("SPACE_ID") or os.environ.get("SPACE_HOST"))
+        if not database_url and on_space:
+            warnings.append(
+                "运行在 Hugging Face Space 且未设置 DATABASE_URL：SQLite 位于容器内，"
+                "实例重启或休眠回收后数据会丢失（请挂持久卷或改用外部数据库）"
+            )
+    except Exception as exc:  # noqa: BLE001 - 诊断信息失败不能影响健康接口
+        logger.warning("event=health.persistence_probe_failed error=%s", exc)
+    return warnings
+
+
 def _readiness() -> dict:
-    """就绪判定：数据库 + 关键配置。返回 {"status", "blocking_reasons"}。"""
+    """就绪判定：数据库 + 关键配置。返回 {"status", "blocking_reasons", "warnings"}。"""
 
     reasons: list[str] = []
     db_ok, db_reason = _database_probe()
@@ -468,7 +494,11 @@ def _readiness() -> dict:
     for name, label in (("auth", "登录密钥未配置（AUTH_SECRET_KEY 至少 32 字符）"), ("smtp", "邮件通道未配置")):
         if not services.get(name):
             reasons.append(label)
-    return {"status": "ok" if not reasons else "degraded", "blocking_reasons": reasons}
+    return {
+        "status": "ok" if not reasons else "degraded",
+        "blocking_reasons": reasons,
+        "warnings": _persistence_warnings(),
+    }
 
 
 @app.get("/health")
@@ -480,7 +510,11 @@ async def health():
     """
 
     status = "ok" if all(_service_status().values()) else "degraded"
-    return {"status": status}
+    warnings = _persistence_warnings()
+    payload: dict = {"status": status}
+    if warnings:
+        payload["warnings"] = warnings
+    return payload
 
 
 @app.get("/health/live")

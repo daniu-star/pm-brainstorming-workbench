@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import pathlib
+import os
 import sys
 import unittest
 import uuid
@@ -48,9 +49,11 @@ class EmailRateLimitBucketTests(V2ApiTestBase):
     """邮箱维度限流：同一邮箱第 6 次被挡，换邮箱仍放行（IP 桶未打满）。"""
 
     def _fresh(self) -> tuple[str, str]:
-        # 每次用独立 IP + 邮箱，避免和别的用例共享 rate_limits 窗口。
+        # 每次用独立 IP + 邮箱，避免和别的用例（或上一次跑）共享 rate_limits 窗口。
+        # IP 段必须真正随机：旧实现只有 256 个候选，多跑几轮就会撞上历史计数。
         token = uuid.uuid4().hex[:12]
-        return f"198.51.100.{int(token[:2], 16)}", f"rate-{token}@example.com"
+        ip = f"10.{int(token[0:2], 16)}.{int(token[2:4], 16)}.{int(token[4:6], 16)}"
+        return ip, f"rate-{token}@example.com"
 
     def test_sixth_send_for_same_email_is_rejected(self) -> None:
         ip, email = self._fresh()
@@ -97,6 +100,35 @@ class ReadinessProbeTests(V2ApiTestBase):
     def test_legacy_health_stays_200_for_keep_warm(self) -> None:
         # keep-warm 工作流与老反代只认 /health，语义不能变。
         self.assertEqual(self.client.get("/health").status_code, 200)
+
+
+class PersistenceWarningTests(V2ApiTestBase):
+    """线上 P0-2：无持久卷时不能让数据丢失这件事「静默发生」。"""
+
+    def test_space_without_database_url_warns_about_ephemeral_sqlite(self) -> None:
+        with mock.patch.dict("os.environ", {"SPACE_ID": "demo/space", "DATABASE_URL": ""}, clear=False):
+            warnings = main._persistence_warnings()
+            ready = self.client.get("/health/ready").json()
+            health = self.client.get("/health").json()
+        self.assertTrue(any("数据会丢失" in w for w in warnings), warnings)
+        self.assertTrue(any("数据会丢失" in w for w in ready["warnings"]), ready)
+        self.assertTrue(any("数据会丢失" in w for w in health.get("warnings", [])), health)
+
+    def test_external_database_has_no_warning(self) -> None:
+        with mock.patch.dict(
+            "os.environ",
+            {"SPACE_ID": "demo/space", "DATABASE_URL": "postgresql://u:p@db/app"},
+            clear=False,
+        ):
+            self.assertEqual(main._persistence_warnings(), [])
+
+    def test_local_runs_stay_warning_free(self) -> None:
+        env = dict(os.environ)
+        env.pop("SPACE_ID", None)
+        env.pop("SPACE_HOST", None)
+        env["DATABASE_URL"] = ""
+        with mock.patch.dict("os.environ", env, clear=True):
+            self.assertEqual(main._persistence_warnings(), [])
 
 
 if __name__ == "__main__":  # pragma: no cover

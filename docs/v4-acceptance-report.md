@@ -25,9 +25,9 @@
 ## 2. 实际执行的验证命令与结果
 
 ```bash
-# 后端全量（834 用例，含 M2/M3 + QA Loop 收口 + 闭环/数据生命周期/崩溃注入/旧 ID 别名/AC-14 多失败重试/AC-10 预算预留热修/AC-20 数字守卫/结项报告形状容错/Worker 维护性、中间载荷清理与报告数字标注新增用例）
+# 后端全量（837 用例，含 M2/M3 + QA Loop 收口 + 闭环/数据生命周期/崩溃注入/旧 ID 别名/AC-14 多失败重试/AC-10 预算预留热修/AC-20 数字守卫/结项报告形状容错/Worker 维护性、中间载荷清理与报告数字标注新增用例）
 cd backend && ../.venv/Scripts/python.exe -m unittest discover -s tests
-# → Ran 834 tests / OK / exit 0（含 tests/test_llm_config.py 的 11 个「账户自带模型密钥」用例（加密/脱敏 2 + 服务闸门 4 + 接口 3 + 执行器兜底 2）、tests/test_report_quality.py 的 9 个报告质量统计用例（阈值判定 4 + 接口 1 + 窗口回落 4）、tests/test_audit_report_recompute.py 的 3 个「补充来源后读取时重算」用例、tests/test_worker_maintenance.py 的 5 个维护清理用例（幂等记录 7 天窗口、过期验证码、按间隔触发、中间载荷 90 天窗口）、tests/test_payload_retention.py 的 3 个中间载荷保留用例、tests/test_db_maintenance.py 的 3 个增长报告/VACUUM 用例、tests/test_health_detail.py 的 6 个诊断用例（模型层 3 + Worker 卡死 3）、tests/test_audit_report_draft.py 的 5 个报告形状容错用例、tests/test_audit_runner.py 的 3 个真 runner 审计用例、tests/test_control_crash.py 的 3 个真 kill/restart 用例、tests/test_session_alias.py 的 6 个旧 ID 别名用例、tests/test_brainstorm_runner.py 的 AC-14 多失败重试用例、tests/test_budget_crash.py 的 4 个预算预留崩溃用例、tests/test_number_guard.py 的 18 个数字可追溯性用例、tests/test_evidence_guard.py 的 3 个「#seq → 真实消息 ID」规范化用例、tests/test_account_quota.py 的 9 个账户级配额用例（计量口径 2 + 门禁 3 + 接口 3 + 建会话受限 1））
+# → Ran 837 tests / OK / exit 0（含 tests/test_llm_config.py 的 11 个「账户自带模型密钥」用例（加密/脱敏 2 + 服务闸门 4 + 接口 3 + 执行器兜底 2）、tests/test_report_quality.py 的 9 个报告质量统计用例（阈值判定 4 + 接口 1 + 窗口回落 4）、tests/test_audit_report_recompute.py 的 3 个「补充来源后读取时重算」用例、tests/test_worker_maintenance.py 的 5 个维护清理用例（幂等记录 7 天窗口、过期验证码、按间隔触发、中间载荷 90 天窗口）、tests/test_payload_retention.py 的 3 个中间载荷保留用例、tests/test_db_maintenance.py 的 3 个增长报告/VACUUM 用例、tests/test_health_detail.py 的 6 个诊断用例（模型层 3 + Worker 卡死 3）、tests/test_audit_report_draft.py 的 5 个报告形状容错用例、tests/test_audit_runner.py 的 3 个真 runner 审计用例、tests/test_control_crash.py 的 3 个真 kill/restart 用例、tests/test_session_alias.py 的 6 个旧 ID 别名用例、tests/test_brainstorm_runner.py 的 AC-14 多失败重试用例、tests/test_budget_crash.py 的 4 个预算预留崩溃用例、tests/test_number_guard.py 的 18 个数字可追溯性用例、tests/test_evidence_guard.py 的 3 个「#seq → 真实消息 ID」规范化用例、tests/test_account_quota.py 的 9 个账户级配额用例（计量口径 2 + 门禁 3 + 接口 3 + 建会话受限 1））
 
 # 跨进程（真 subprocess + 共享 SQLite）
 cd backend && ../.venv/Scripts/python.exe -m unittest tests.test_run_repo tests.test_cross_process
