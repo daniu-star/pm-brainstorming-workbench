@@ -26,7 +26,7 @@ def _get_evidence(evidence_id: str, request: Request):
         if row is None:
             raise AppError(ErrorCode.NOT_FOUND, "证据不存在")
         if row.session_id:
-            common.require_owned_session(db, row.session_id, owner_email)
+            common.require_session_read(db, row.session_id, owner_email)
         payload = _evidence_payload(row)
     return payload
 
@@ -40,7 +40,7 @@ def get_evidence(evidence_id: str, request: Request):
 def get_session_evidence(session_id: str, evidence_id: str, request: Request):
     owner_email = common.require_user(request)
     with common.open_db() as db:
-        session = common.require_owned_session(db, session_id, owner_email)
+        session = common.require_session_read(db, session_id, owner_email)
         row = common.repo("session_repo").get_evidence(db, evidence_id)
         if row is None:
             raise AppError(ErrorCode.NOT_FOUND, "证据不存在")

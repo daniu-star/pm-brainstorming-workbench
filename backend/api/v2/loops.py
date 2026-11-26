@@ -69,7 +69,7 @@ def list_session_loops(session_id: str, request: Request, limit: int | None = No
     )
     loop_repo = common.repo("loop_repo")
     with common.open_db() as db:
-        common.require_owned_session(db, session_id, owner_email)
+        common.require_session_read(db, session_id, owner_email)
         rows = loop_repo.list_loops(db, session_id, limit=page_size)
         items = [
             loop_repo.loop_to_snapshot(db, row).model_dump(mode="json") for row in rows

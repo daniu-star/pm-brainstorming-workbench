@@ -298,6 +298,54 @@ def require_owned_session(db, session_id: str, owner_email: str, *, include_dele
     )
 
 
+def _resolve_session_access(
+    db, session_id: str, user_email: str, *, include_deleted: bool = False
+):
+    """解析会话与其上的角色；不存在 404、无任何权限 403。"""
+
+    session_repo_module = repo("session_repo")
+    canonical = session_repo_module.resolve_session_id(db, session_id)
+    if canonical is None or not C.is_session_id(canonical):
+        raise AppError(ErrorCode.NOT_FOUND, "会话不存在")
+    session = session_repo_module.get_session(db, canonical, include_deleted=include_deleted)
+    if session is None:
+        raise AppError(ErrorCode.NOT_FOUND, "会话不存在")
+    role = session_repo_module.session_role(db, session, user_email)
+    if role is None:
+        # 无权限与不存在对调用方等价，避免探测他人会话
+        raise AppError(ErrorCode.FORBIDDEN, "无权访问该会话")
+    return session, role
+
+
+def require_session_read(db, session_id: str, user_email: str, *, include_deleted: bool = False):
+    """读权限：所有者、editor、viewer 均可读。"""
+
+    session, _role = _resolve_session_access(
+        db, session_id, user_email, include_deleted=include_deleted
+    )
+    return session
+
+
+def require_session_write(db, session_id: str, user_email: str):
+    """写权限（提交命令）：所有者或 editor；viewer 只读。"""
+
+    session, role = _resolve_session_access(db, session_id, user_email)
+    if repo("session_repo").SESSION_ROLE_RANK[role] < 2:
+        raise AppError(ErrorCode.FORBIDDEN, "该会话对你只读，不能提交命令")
+    return session, role
+
+
+def require_session_owner(db, session_id: str, user_email: str, *, include_deleted: bool = False):
+    """管理权限（共享成员、删除会话）：仅所有者。"""
+
+    session, role = _resolve_session_access(
+        db, session_id, user_email, include_deleted=include_deleted
+    )
+    if role != repo("session_repo").SESSION_ROLE_OWNER:
+        raise AppError(ErrorCode.FORBIDDEN, "只有会话所有者可以执行该操作")
+    return session
+
+
 def require_owned_run(db, run_id: str, owner_email: str):
     return repo("run_repo").require_run(db, run_id, owner_email=owner_email)
 

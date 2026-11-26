@@ -82,7 +82,7 @@ def list_session_runs(
     page_limit = common.clamp_limit(limit, default=10, maximum=50)
     statuses = [item.strip() for item in (status or "").split(",") if item.strip()]
     with common.open_db() as db:
-        session = common.require_owned_session(db, session_id, owner_email)
+        session = common.require_session_read(db, session_id, owner_email)
         rows = common.repo("run_repo").list_session_runs(
             db, session.id, statuses=statuses or None, limit=page_limit
         )
@@ -94,7 +94,7 @@ def list_session_runs(
 def get_session(session_id: str, request: Request):
     owner_email = common.require_user(request)
     with common.open_db() as db:
-        session = common.require_owned_session(db, session_id, owner_email)
+        session = common.require_session_read(db, session_id, owner_email)
         payload = common.session_view(db, session).model_dump(mode="json")
         state = common.get_product_state(db, session.id)
     payload["brief"] = state.brief.model_dump(mode="json")
@@ -184,7 +184,7 @@ def list_messages(
         raise AppError(ErrorCode.INVALID_REQUEST, "before_seq 必须大于等于 1")
     stage_enum = common.iter_legacy_stage(stage)
     with common.open_db() as db:
-        session = common.require_owned_session(db, session_id, owner_email)
+        session = common.require_session_read(db, session_id, owner_email)
         rows = common.repo("session_repo").list_messages(
             db,
             session.id,
@@ -202,7 +202,7 @@ def list_messages(
 def get_product_state(session_id: str, request: Request, version: int | None = None):
     owner_email = common.require_user(request)
     with common.open_db() as db:
-        session = common.require_owned_session(db, session_id, owner_email)
+        session = common.require_session_read(db, session_id, owner_email)
         state = common.get_product_state(db, session.id, version)
     return state.model_dump(mode="json")
 

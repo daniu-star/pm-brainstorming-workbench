@@ -22,7 +22,7 @@ def canvas_payload(db, session_id: str, *, product_version: int | None = None) -
 def get_canvas(session_id: str, request: Request, product_version: int | None = None):
     owner_email = common.require_user(request)
     with common.open_db() as db:
-        session = common.require_owned_session(db, session_id, owner_email)
+        session = common.require_session_read(db, session_id, owner_email)
         payload = canvas_payload(db, session.id, product_version=product_version)
     return payload
 

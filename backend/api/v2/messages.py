@@ -23,7 +23,7 @@ def _find_message_row(db, message_id: str, owner_email: str):
             row = finder(db, message_id)
             if row is None:
                 return None
-            common.require_owned_session(db, row.session_id, owner_email)
+            common.require_session_read(db, row.session_id, owner_email)
             return row
 
     from repositories import database as database_module
@@ -50,7 +50,7 @@ def _find_message_row(db, message_id: str, owner_email: str):
 def _get_message_by_session(session_id: str, message_id: str, request: Request):
     owner_email = common.require_user(request)
     with common.open_db() as db:
-        session = common.require_owned_session(db, session_id, owner_email)
+        session = common.require_session_read(db, session_id, owner_email)
         row = common.repo("session_repo").get_message(db, session.id, message_id)
         if row is None:
             raise AppError(ErrorCode.NOT_FOUND, "消息不存在")

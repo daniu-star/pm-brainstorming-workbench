@@ -1161,6 +1161,13 @@ class ReviseBriefPayload(StrictModel):
         return value
 
 
+class SessionSharePayload(StrictModel):
+    """共享会话：把「查看」或「可提交命令」角色授予另一个账号。"""
+
+    email: str = Field(min_length=3, max_length=320)
+    role: Literal["viewer", "editor"] = "viewer"
+
+
 class LlmConfigPayload(StrictModel):
     """用户提交自己的模型 API 配置（BYOK）。
 

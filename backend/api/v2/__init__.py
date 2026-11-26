@@ -15,10 +15,12 @@ from api.v2 import (
     quota,
     runs,
     sessions,
+    shares,
 )
 
 router = APIRouter(prefix="/api/v2")
 router.include_router(sessions.router)
+router.include_router(shares.router)
 router.include_router(messages.router)
 router.include_router(evidence.router)
 router.include_router(commands.router)

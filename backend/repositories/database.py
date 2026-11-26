@@ -494,6 +494,26 @@ class SessionIdAliasRow(Base):
     __table_args__ = (Index("ix_session_id_aliases_session", "session_id"),)
 
 
+class SessionShareRow(Base):
+    """会话共享（查看 / 可提交命令两种角色）。
+
+    sessions 仍只有唯一的 ``owner_email``；共享只授予访问角色，不改变归属、
+    不复制数据。删除共享行即撤销访问。
+    """
+
+    __tablename__ = "session_shares"
+
+    session_id = Column(
+        String(64), ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    shared_with_email = Column(String(320), primary_key=True)
+    role = Column(String(16), nullable=False, default="viewer")
+    created_by = Column(String(320), nullable=False)
+    created_at = Column(String(32), nullable=False)
+
+    __table_args__ = (Index("ix_session_shares_email", "shared_with_email"),)
+
+
 class LlmConfigRow(Base):
     """账户自带模型（BYOK）配置：一个 owner 一行（PRD 扩展：平台免费、模型自付）。
 
@@ -812,6 +832,7 @@ __all__ = [
     "RunRow",
     "SessionIdAliasRow",
     "SessionRow",
+    "SessionShareRow",
     "StepCandidateRow",
     "StepRow",
     "configure",

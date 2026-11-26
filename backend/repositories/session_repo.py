@@ -43,6 +43,7 @@ from repositories.database import (
     ProductStateRow,
     SessionIdAliasRow,
     SessionRow,
+    SessionShareRow,
 )
 
 #: 区分「字段不改」与「字段置 None」。
@@ -203,6 +204,78 @@ def list_session_aliases(db, session_id: str) -> list[SessionIdAliasRow]:
     )
 
 
+SESSION_ROLE_OWNER = "owner"
+SESSION_ROLE_EDITOR = "editor"
+SESSION_ROLE_VIEWER = "viewer"
+SESSION_SHARE_ROLES = (SESSION_ROLE_VIEWER, SESSION_ROLE_EDITOR)
+SESSION_ROLE_RANK = {
+    SESSION_ROLE_VIEWER: 1,
+    SESSION_ROLE_EDITOR: 2,
+    SESSION_ROLE_OWNER: 3,
+}
+
+
+def session_role(db, session: SessionRow, email: str) -> str | None:
+    """该账号在会话里的角色：owner / editor / viewer；无权限返回 None。"""
+
+    if not email:
+        return None
+    if session.owner_email == email:
+        return SESSION_ROLE_OWNER
+    row = db.get(SessionShareRow, (session.id, email))
+    return None if row is None else str(row.role)
+
+
+def list_session_shares(db, session_id: str) -> list[SessionShareRow]:
+    stmt = (
+        select(SessionShareRow)
+        .where(SessionShareRow.session_id == session_id)
+        .order_by(SessionShareRow.created_at.asc())
+    )
+    return list(db.execute(stmt).scalars())
+
+
+def add_session_share(
+    db,
+    session: SessionRow,
+    *,
+    email: str,
+    role: str,
+    created_by: str,
+    now_iso: str | None = None,
+) -> SessionShareRow:
+    from core.auth import normalize_email  # 局部导入：避免仓储层与认证模块的启动顺序耦合
+
+    normalized = normalize_email(email)
+    if normalized == session.owner_email:
+        raise AppError(ErrorCode.INVALID_REQUEST, "不能把会话共享给会话所有者本人")
+    if role not in SESSION_SHARE_ROLES:
+        raise AppError(ErrorCode.INVALID_REQUEST, "共享角色必须是 viewer 或 editor")
+    existing = db.get(SessionShareRow, (session.id, normalized))
+    if existing is not None:
+        existing.role = role
+        return existing
+    row = SessionShareRow(
+        session_id=session.id,
+        shared_with_email=normalized,
+        role=role,
+        created_by=created_by,
+        created_at=now_iso or utc_now_iso(),
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def remove_session_share(db, session_id: str, email: str) -> bool:
+    row = db.get(SessionShareRow, (session_id, email))
+    if row is None:
+        return False
+    db.delete(row)
+    db.flush()
+    return True
+
+
 def require_session(
     db, session_id: str, *, owner_email: str, include_deleted: bool = False
 ) -> SessionRow:
@@ -226,7 +299,12 @@ def list_sessions(
     """按 (updated_at DESC, id DESC) 稳定排序；cursor 为上一页最后一条 id。"""
 
     limit = max(1, min(int(limit), 100))
-    stmt = select(SessionRow).where(SessionRow.owner_email == owner_email)
+    shared_ids = select(SessionShareRow.session_id).where(
+        SessionShareRow.shared_with_email == owner_email
+    )
+    stmt = select(SessionRow).where(
+        or_(SessionRow.owner_email == owner_email, SessionRow.id.in_(shared_ids))
+    )
     if not include_deleted:
         stmt = stmt.where(SessionRow.deleted_at.is_(None))
     if cursor:

@@ -8,7 +8,7 @@
 
 | 检查项 | 结果 |
 | --- | --- |
-| 后端全量 | `Ran 755 tests` / OK（含 M2/M3、闭环、数据生命周期、崩溃注入、旧 ID 别名、AC-20 数字守卫、结项报告容错、Worker 卡死诊断、维护性清理、账户配额、账户自带模型密钥） |
+| 后端全量 | `Ran 764 tests` / OK（含 M2/M3、闭环、数据生命周期、崩溃注入、旧 ID 别名、AC-20 数字守卫、结项报告容错、Worker 卡死诊断、维护性清理、账户配额、账户自带模型密钥） |
 | 前端类型 + 用例 | `npx tsc --noEmit` 0 错；`npm test` **277** 用例 pass（含页面级渲染 8 例 + 证据表单渲染 3 例 + 额度视图 6 例） |
 | 前端构建 + 冒烟 | `npm run build` exit 0（7 条路由，含 `/session/[id]/audit` 8.11 kB）；`npm run test:e2e` 1 pass |
 | 契约 parity | `tests.test_contract_parity` **13** 例，前后端枚举/常量/Literal 按序比对 |
@@ -49,7 +49,7 @@
 
 ## 4. 值得单独说明的修复
 
-以下 13 项是 34 批热修与 M1 验收期里影响面最大的缺陷，按「问题 → 修复 → 证据用例」列出；完整清单见 `docs/loop-runs/README.md`。
+以下 14 项是 35 批热修与 M1 验收期里影响面最大的缺陷，按「问题 → 修复 → 证据用例」列出；完整清单见 `docs/loop-runs/README.md`。
 
 | 问题（来源） | 修复 | 证据用例 |
 | --- | --- | --- |
@@ -64,6 +64,7 @@
 | 报告数字无来源：审计报告正文（支持论据/缺口/建议/摘要）里的数字没人核对，读起来像事实（第 28 批） | 报告落库前用同一套 `number_guard` 标注：来源消息/证据里找不到的数字写进 `unverified_numbers` 并生成补充建议；前端在报告顶部给「数字未验证」徽标 | `test_number_guard.py` 报告侧 2 例 + `test_audit_workflow.py::test_report_marks_numbers_absent_from_sources`（12/6 可追溯不误标、2/66/5 标注）+ `pages-render.test.cjs` 徽标 1 例 |
 | 平台替所有人付模型费：任何登录用户都能烧平台额度，而线上收款又需要营业执照（第 33 批） | 改为 BYOK：`llm_configs` 每账户一条（Fernet 加密、只回显末 4 位）；未配置时建会话 / 模型命令 / Worker 执行三处统一 428 `LLM_CONFIG_REQUIRED`，前端整屏「先配置你自己的模型 API」并带保存+连通性测试表单 | `test_llm_config.py` 11 例 + `llm-config.test.cjs` 5 例 |
 | 额度只存在于接口里：部署方设了上限，用户只能等被 429 拒绝才知道超了（第 34 批） | `GET /api/v2/quota` 的数据画成两处：`/settings/llm` 的「模型额度与用量」卡片（token / 调用次数进度条、预占与恢复倒计时），以及顶栏徽标（仅在设了上限时出现，≥80% 琥珀色、超额红色）；恢复时间按分钟归一，不会出现「23 小时 60 分钟」 |
+| 会话是「一个人的」：想给同事看一眼方案，只能把账号给对方登（第 35 批） | 会话共享：所有者把会话授予 viewer（只读）或 editor（可提交命令），`GET/POST/DELETE /api/v2/sessions/{id}/shares` 管理成员；共享只授权不复制数据，撤销即失效；被共享方在 `GET /sessions` 里能看到该会话，`/messages`、`/product-state` 等读接口全部放开 |
 | 越权引用：模型写他会话的 `evidence_id` / `message_id` 也能通过校验（第 9 批） | `evidence_guard` 逐条回查会话归属，先回喂修复一次，仍失败 → `MODEL_OUTPUT_INVALID` | `test_evidence_guard.py` 7 例 + `test_brainstorm_runner.py::test_foreign_evidence_ref_fails_after_one_repair` |
 
 ## 5. 运行方式
@@ -97,7 +98,7 @@
 ## 7. 如何复跑验收
 
 ```bash
-# 后端全量（755）
+# 后端全量（764）
 cd backend && ../.venv/Scripts/python.exe -m unittest discover -s tests
 
 # 前端类型、用例、构建、冒烟

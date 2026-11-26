@@ -42,9 +42,15 @@ def dispatch_command(session_id: str, body: CommandBody, request: Request) -> JS
     if body.expected_session_version is not None and body.expected_session_version < 1:
         raise AppError(ErrorCode.INVALID_REQUEST, "expected_session_version 必须大于等于 1")
 
+    # 共享协作：editor 可以提交命令，但以会话所有者身份落账（Run 归属、幂等键与
+    # 模型 Key 都沿用所有者，等价于「借用所有者的账户操作这个会话」）。
+    with common.open_db() as db:
+        session, _role = common.require_session_write(db, session_id, owner_email)
+        acting_email = session.owner_email
+
     # BYOK：平台不带模型额度，未配置自己的 Key 前只允许改稿/登记证据等同步命令。
     with common.open_db() as db:
-        common.service("llm_config_service").gate(db, owner_email, action=action.value)
+        common.service("llm_config_service").gate(db, acting_email, action=action.value)
 
     command = CommandRequest(
         request_id=request_id,
@@ -55,7 +61,7 @@ def dispatch_command(session_id: str, body: CommandBody, request: Request) -> JS
     with common.open_db() as db:
         receipt = common.service("command_service").submit_command(
             db,
-            owner_email=owner_email,
+            owner_email=acting_email,
             session_id=session_id,
             command=command,
         )
