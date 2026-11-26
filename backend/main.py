@@ -11,7 +11,7 @@ import logging
 import time as _time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -439,11 +439,68 @@ def _ops_sandbox() -> dict:
         return {"enabled": False, "allowed_commands": [], "timeout_seconds": 0, "max_output_bytes": 0, "note": ""}
 
 
+def _database_probe() -> tuple[bool, str]:
+    """真正打一次数据库（SELECT 1），返回 (是否可用, 失败原因)。
+
+    旧 /health 只看「配置是否存在」，数据库挂了也照样 200，运维据此会误判为健康
+    （第 42 批评测记录 P1-6）。
+    """
+
+    try:
+        from repositories import database as database_module
+
+        with database_module.session_scope() as db:
+            db.execute(_select(1))
+        return True, ""
+    except Exception as exc:  # noqa: BLE001 - 健康检查不能因为探测异常而 500
+        logger.warning("event=health.db_probe_failed error=%s", exc)
+        return False, f"数据库不可用：{type(exc).__name__}"
+
+
+def _readiness() -> dict:
+    """就绪判定：数据库 + 关键配置。返回 {"status", "blocking_reasons"}。"""
+
+    reasons: list[str] = []
+    db_ok, db_reason = _database_probe()
+    if not db_ok:
+        reasons.append(db_reason)
+    services = _service_status()
+    for name, label in (("auth", "登录密钥未配置（AUTH_SECRET_KEY 至少 32 字符）"), ("smtp", "邮件通道未配置")):
+        if not services.get(name):
+            reasons.append(label)
+    return {"status": "ok" if not reasons else "degraded", "blocking_reasons": reasons}
+
+
 @app.get("/health")
 async def health():
-    """公开健康检查：仅返回总体状态，不暴露配置细节（B070）。"""
+    """公开健康检查：仅返回总体状态，不暴露配置细节（B070）。
+
+    保留原语义（进程活着就 200），供老的 keep-warm / 反代探测继续使用；
+    需要「能不能干活」请用 ``/health/ready``。
+    """
+
     status = "ok" if all(_service_status().values()) else "degraded"
     return {"status": status}
+
+
+@app.get("/health/live")
+async def health_live():
+    """存活探针：只要进程能回这个响应就是活的（不查数据库、不查依赖）。"""
+
+    return {"status": "ok"}
+
+
+@app.get("/health/ready")
+async def health_ready(response: Response):
+    """就绪探针：数据库可用 + 关键配置齐全，否则 503 + blocking_reasons。
+
+    给外部监控 / 容器编排用，避免「进程活着但库连不上」被当成健康。
+    """
+
+    verdict = _readiness()
+    if verdict["status"] != "ok":
+        response.status_code = 503
+    return verdict
 
 
 def _url_host(value: str) -> str:

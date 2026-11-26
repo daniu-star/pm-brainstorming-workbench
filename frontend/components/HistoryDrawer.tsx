@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSessionStore } from "@/store/sessionStore";
-import { api } from "@/lib/api";
+import { deleteSession, errorMessage } from "@/lib/api";
 import { sessionRoleBadge } from "@/lib/access";
 
 interface HistoryDrawerProps {
@@ -39,16 +39,20 @@ export function HistoryDrawer({ isOpen, onClose }: HistoryDrawerProps) {
   const drawerRef = useRef<HTMLDivElement>(null);
   const lastActiveElementRef = useRef<HTMLElement | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // 删除失败必须让用户看到（旧实现 catch 里静默吞掉，条目还在、看着像按钮坏了）。
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // 删除会话（带确认），完成后刷新列表（B115）。
   const handleDelete = async (id: string) => {
     if (!window.confirm("确定删除该会话吗？删除后不可恢复。")) return;
     setDeletingId(id);
+    setDeleteError(null);
     try {
-      await api(`/api/session/${id}`, { method: "DELETE" });
+      // 第 42 批：改走 v2（幂等键 + 瞬时网络失败自动重试），旧 v1 DELETE 一次失败就报错。
+      await deleteSession(id);
       await fetchHistory();
-    } catch {
-      // 删除失败时静默保留条目，下次打开重试
+    } catch (err) {
+      setDeleteError(`删除失败：${errorMessage(err)}`);
     } finally {
       setDeletingId(null);
     }
@@ -113,6 +117,20 @@ export function HistoryDrawer({ isOpen, onClose }: HistoryDrawerProps) {
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto">
+          {deleteError && (
+            <div className="m-3 rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-300" role="alert">
+              <div className="flex items-start gap-2">
+                <span className="min-w-0 flex-1">{deleteError}</span>
+                <button
+                  type="button"
+                  onClick={() => setDeleteError(null)}
+                  className="shrink-0 text-[11px] text-red-200/80 hover:text-red-100"
+                >
+                  知道了
+                </button>
+              </div>
+            </div>
+          )}
           {historyLoading && (
             <div className="p-3 space-y-3">
               {[1, 2, 3, 4].map((i) => (

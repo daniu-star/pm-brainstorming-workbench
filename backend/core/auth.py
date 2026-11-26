@@ -36,7 +36,10 @@ EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 MAX_VERIFY_ATTEMPTS = 5
 
 # 限流阈值（B035）：每 IP 每小时最多发送 10 次，全局每分钟最多 30 次。
+# 第 42 批：容器平台前置代理下所有请求共享同一个 client IP，单靠 IP 桶会退化成
+# 「全站每小时 10 次」，因此额外加一个「按邮箱」的桶兜住单个邮箱的滥用。
 IP_SEND_LIMIT_PER_HOUR = 10
+EMAIL_SEND_LIMIT_PER_HOUR = 5
 GLOBAL_SEND_LIMIT_PER_MINUTE = 30
 IP_SEND_WINDOW_SECONDS = 3600
 GLOBAL_SEND_WINDOW_SECONDS = 60
@@ -130,8 +133,8 @@ def _gc_send_times(now: float) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def check_send_rate_limit(ip: str) -> None:
-    """发送验证码前的限流：每 IP 10 次/小时 + 全局 30 次/分钟（B035）。
+def check_send_rate_limit(ip: str, email: str | None = None) -> None:
+    """发送验证码前的限流：每 IP 10 次/小时 + 每邮箱 5 次/小时 + 全局 30 次/分钟（B035）。
 
     计数落在 ``rate_limits`` 表（整窗口对齐、原子自增），跨进程共享。
     数据库不可用时降级放行并记录告警——登录可用性优先于严格限流。
@@ -154,6 +157,18 @@ def check_send_rate_limit(ip: str) -> None:
             )
             if not allowed_ip:
                 raise AuthRateLimitError("发送过于频繁，请一小时后再试")
+            email_key = (email or "").strip().lower()
+            if email_key:
+                allowed_email = auth_repo.hit_rate_limit(
+                    db,
+                    scope="auth_send_email",
+                    key=email_key,
+                    limit=EMAIL_SEND_LIMIT_PER_HOUR,
+                    window_seconds=IP_SEND_WINDOW_SECONDS,
+                    now_epoch=now,
+                )
+                if not allowed_email:
+                    raise AuthRateLimitError("该邮箱发送过于频繁，请一小时后再试")
             allowed_global = auth_repo.hit_rate_limit(
                 db,
                 scope="auth_send_global",

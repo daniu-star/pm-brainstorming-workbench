@@ -33,16 +33,26 @@ export default function AccessSettingsPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // 三态：加载中 / 失败 / 有数据。旧实现在失败时 overview 仍为 null，
+  // 三个分区会一直显示「正在读取权限信息…」，用户误以为页面还在加载（P1-5）。
+  const [loading, setLoading] = useState(true);
 
   const reload = useCallback(async () => {
     setLoadError(null);
+    setLoading(true);
     try {
       setOverview(await getAccessOverview());
     } catch (err) {
       setOverview(null);
       setLoadError(accessErrorHint(err));
+    } finally {
+      setLoading(false);
     }
   }, []);
+  const placeholder = loading
+    ? "正在读取权限信息…"
+    : loadError
+      ? "权限信息读取失败，点上方「刷新」重试。": "（暂无数据）";
 
   useEffect(() => {
     void reload();
@@ -90,9 +100,10 @@ export default function AccessSettingsPage() {
           <button
             type="button"
             onClick={() => void reload()}
-            className="min-h-[36px] rounded-lg border border-zinc-700/70 px-3 text-xs text-zinc-300 hover:bg-zinc-800/60"
+            disabled={loading}
+            className="min-h-[36px] rounded-lg border border-zinc-700/70 px-3 text-xs text-zinc-300 hover:bg-zinc-800/60 disabled:opacity-50"
           >
-            刷新
+            {loading ? "刷新中…" : "刷新"}
           </button>
           <Link
             href="/settings/team"
@@ -121,7 +132,7 @@ export default function AccessSettingsPage() {
           我创建的会话{overview ? `（${overview.owned.length}）` : ""}
         </h2>
         {overview === null ? (
-          <p className="text-xs text-zinc-500">正在读取权限信息…</p>
+          <p className="text-xs text-zinc-500">{placeholder}</p>
         ) : overview.owned.length === 0 ? (
           <p className="text-xs text-zinc-500">还没有创建任何会话。</p>
         ) : (
@@ -134,7 +145,7 @@ export default function AccessSettingsPage() {
           共享给我的会话{overview ? `（${overview.incoming.length}）` : ""}
         </h2>
         {overview === null ? (
-          <p className="text-xs text-zinc-500">正在读取权限信息…</p>
+          <p className="text-xs text-zinc-500">{placeholder}</p>
         ) : overview.incoming.length === 0 ? (
           <p className="text-xs text-zinc-500">暂时没有别人共享给你的会话。</p>
         ) : (
@@ -184,7 +195,7 @@ export default function AccessSettingsPage() {
           我的成员组{overview ? `（${overview.groups.length}）` : ""}
         </h2>
         {overview === null ? (
-          <p className="text-xs text-zinc-500">正在读取权限信息…</p>
+          <p className="text-xs text-zinc-500">{placeholder}</p>
         ) : overview.groups.length === 0 ? (
           <p className="text-xs text-zinc-500">
             还没有成员组，去

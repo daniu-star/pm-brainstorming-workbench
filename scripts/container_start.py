@@ -88,6 +88,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--no-worker", action="store_true", help="只起 API（调试用）")
     parser.add_argument(
+        "--forwarded-allow-ips",
+        default=os.environ.get("FORWARDED_ALLOW_IPS", "*"),
+        help="信任哪些代理的 X-Forwarded-For（容器平台前置代理必须信任，否则限流按同一个 IP 计数）",
+    )
+    parser.add_argument(
         "--app-dir",
         default=os.getcwd(),
         help="Python 包根目录（镜像里就是 /app）",
@@ -119,8 +124,22 @@ def main(argv: list[str] | None = None) -> int:
             procs.append(_spawn(["-m", "workers.run_worker"], cwd=args.app_dir))
             # 让 Worker 先完成恢复，再开 API 端口，避免首请求踩空库。
             time.sleep(1.5)
+        # --proxy-headers / --forwarded-allow-ips：容器平台（HF Space 等）在应用前面还有
+        # 一层代理，不开这两项时 request.client.host 永远是代理地址，登录限流会退化为
+        # 全站共享一个额度（任何人打满 10 次/小时，所有人都无法登录）。
         api = _spawn(
-            ["-m", "uvicorn", "main:app", "--host", args.host, "--port", str(args.port)],
+            [
+                "-m",
+                "uvicorn",
+                "main:app",
+                "--host",
+                args.host,
+                "--port",
+                str(args.port),
+                "--proxy-headers",
+                "--forwarded-allow-ips",
+                args.forwarded_allow_ips,
+            ],
             cwd=args.app_dir,
         )
         procs.append(api)

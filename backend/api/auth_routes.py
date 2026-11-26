@@ -41,7 +41,7 @@ async def send_email_code(payload: EmailCodeRequest, request: Request):
     try:
         email = normalize_email(payload.email)
         # IP 维度限流：每 IP 10 次/小时，全局 30 次/分钟（B035）。
-        check_send_rate_limit(client_ip)
+        check_send_rate_limit(client_ip, email)
         retry_after, delivery = await asyncio.to_thread(issue_verification_code_with_delivery, email)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
