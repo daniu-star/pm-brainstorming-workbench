@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from api.v2 import (
+    access,
     audits,
     canvas,
     commands,
@@ -23,6 +24,9 @@ router = APIRouter(prefix="/api/v2")
 router.include_router(sessions.router)
 router.include_router(shares.router)
 router.include_router(groups.router)
+# 权限总览放在 groups 之后：它的 ``/sessions/{id}/share`` 与 shares 的
+# ``/sessions/{id}/shares...`` 前缀不同，不会互相遮蔽。
+router.include_router(access.router)
 router.include_router(messages.router)
 router.include_router(evidence.router)
 router.include_router(commands.router)

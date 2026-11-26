@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CodeIcon, HistoryIcon, LayersIcon, PlusIcon, UserIcon, VideoIcon } from "@/components/icons";
+import { CodeIcon, HistoryIcon, LayersIcon, PlusIcon, ShieldIcon, UserIcon, VideoIcon } from "@/components/icons";
 import { QuotaBadge } from "@/components/quota/QuotaBadge";
 import { api } from "@/lib/api";
 import { useSessionStore } from "@/store/sessionStore";
@@ -98,6 +98,15 @@ export function NavButtons({ currentPage, sessionId, onToggleHistory }: NavButto
       >
         <LayersIcon size={16} />
         <span className="hidden sm:inline">团队</span>
+      </Link>
+
+      <Link
+        href="/settings/access"
+        className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60 rounded-lg transition-all duration-200 min-h-[44px] min-w-[44px] justify-center whitespace-nowrap"
+        aria-label="权限总览"
+      >
+        <ShieldIcon size={16} />
+        <span className="hidden sm:inline">权限</span>
       </Link>
 
       <button

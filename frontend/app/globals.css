@@ -337,3 +337,15 @@ input {
     transition-duration: 1ms !important;
   }
 }
+
+/* 历史抽屉滑入（第 39 批从 HistoryDrawer 的 styled-jsx 挪到全局：
+   Tailwind 的 animate-[slideInRight_…] 引用全局动画名，styled-jsx 会重命名
+   @keyframes，导致抽屉此前其实没有动画）。 */
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}

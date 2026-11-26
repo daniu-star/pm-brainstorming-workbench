@@ -67,6 +67,10 @@ export interface SessionSummary {
   phase: string;
   message_count: number;
   created_at: string;
+  /** 当前账号在该会话上的角色（第 39 批；旧后端没有该字段时按 owner 处理）。 */
+  my_role?: "owner" | "editor" | "viewer";
+  /** 会话所有者邮箱（共享会话用来显示「来自谁」）。 */
+  owner_email?: string;
 }
 
 export const TYPE_CONFIG: Record<string, { label: string; color: string; bg: string }> = {

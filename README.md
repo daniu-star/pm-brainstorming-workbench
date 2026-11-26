@@ -12,6 +12,9 @@ AI-powered product brainstorming workbench with multi-role agents and visual can
 - **Hybrid Speech Recognition**: Server-side STT when configured, with browser recognition fallback
 - **Email Code Login**: Passwordless sign-in through NetEase SMTP verification codes
 - **Browser Gaze Measurement**: Local MediaPipe face, iris, head-pose, and gaze analysis in interview mode
+- **Session Sharing & Permissions**: share a session with teammates as viewer/editor, group them into reusable member groups, and review everything on one `/settings/access` page
+- **Loop Execution Sandbox**: opt-in (fail-closed) command runner that records every run as a loop artifact
+- **Ops Health Page**: `/ops` surfaces worker heartbeat, queue depth, storage size, sandbox and report-quality signals
 
 ## Tech Stack
 
@@ -195,6 +198,21 @@ python -m workers.run_worker            # 单轮调试：--once
 ```
 
 环境变量 `DATABASE_URL` 可覆盖数据库位置（默认 `backend/data/app.db`）。
+
+### 会话共享与权限（第 39 批）
+
+```bash
+GET    /api/v2/access                          # 权限总览：我创建的 / 共享给我的 / 成员组 / 计数
+GET    /api/v2/sessions/{id}/shares            # 共享成员列表（所有者与成员都能看）
+POST   /api/v2/sessions/{id}/shares            # 仅所有者：加人（viewer / editor）
+DELETE /api/v2/sessions/{id}/shares/{email}    # 仅所有者：移除
+POST   /api/v2/sessions/{id}/shares/from-group # 仅所有者：按成员组一次性授权
+DELETE /api/v2/sessions/{id}/share             # 成员主动退出共享
+```
+
+- 每个 `SessionView`（v2 列表/详情）与旧 `/api/session` 列表/详情都带 `my_role`，前端据此隐藏删除、共享管理等所有者操作。
+- 成员组只存名单、不授予权限；`session_shares` 行才是授权；删除成员组不回收已授予的访问。
+- 权限页 `/settings/access` 汇总三类信息，并提供「退出共享」。
 
 ### 旧数据迁移
 

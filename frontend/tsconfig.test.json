@@ -15,6 +15,7 @@
   },
   "include": [],
   "files": [
+    "lib/access.ts",
     "lib/api.ts",
     "lib/auditView.ts",
     "lib/briefDraft.ts",

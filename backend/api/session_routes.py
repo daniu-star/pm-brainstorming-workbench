@@ -46,8 +46,10 @@ def create_session(req: CreateSessionRequest, request: Request):
 def get_session(session_id: str, request: Request):
     owner_email = common.require_user(request)
     with common.open_db() as db:
-        session = common.require_owned_session(db, session_id, owner_email)
-        return common.legacy_session_payload(db, session)
+        # 第 39 批：共享成员也能用旧接口打开会话（只读/可操作由 v2 写闸门决定），
+        # 返回体补 my_role 让旧前端区分角色。
+        session = common.require_session_read(db, session_id, owner_email)
+        return common.legacy_session_payload(db, session, viewer_email=owner_email)
 
 
 @router.get("")
@@ -57,7 +59,10 @@ def list_sessions(request: Request):
         rows, _next_cursor = common.repo("session_repo").list_sessions(
             db, owner_email, limit=C.SESSIONS_PAGE_MAX
         )
-        return [common.legacy_session_payload(db, row) for row in rows]
+        return [
+            common.legacy_session_payload(db, row, viewer_email=owner_email)
+            for row in rows
+        ]
 
 
 @router.delete("/{session_id}")

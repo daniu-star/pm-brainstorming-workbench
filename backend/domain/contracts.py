@@ -1217,6 +1217,51 @@ class ApplyGroupReceipt(StrictModel):
     members_total: int = 0
 
 
+class AccessShareView(StrictModel):
+    """统一权限页里「我共享出去」的一条成员。"""
+
+    email: str
+    role: Literal["viewer", "editor"]
+    created_at: str = ""
+
+
+class AccessOwnedSessionView(StrictModel):
+    """我创建的会话 + 我共享给了谁（第 39 批统一权限页）。"""
+
+    session_id: str
+    title: str = ""
+    phase: SessionPhase
+    updated_at: str = ""
+    shares: list[AccessShareView] = Field(default_factory=list)
+
+
+class AccessIncomingSessionView(StrictModel):
+    """别人共享给我的会话 + 我的角色（第 39 批统一权限页）。"""
+
+    session_id: str
+    title: str = ""
+    phase: SessionPhase
+    owner_email: str
+    role: Literal["viewer", "editor"]
+    updated_at: str = ""
+
+
+class AccessOverviewTotals(StrictModel):
+    owned: int = 0
+    shared_out: int = 0
+    incoming: int = 0
+    groups: int = 0
+
+
+class AccessOverview(StrictModel):
+    """``GET /api/v2/access``：我的 / 共享出去的 / 共享给我的 / 成员组。"""
+
+    owned: list[AccessOwnedSessionView] = Field(default_factory=list)
+    incoming: list[AccessIncomingSessionView] = Field(default_factory=list)
+    groups: list[MemberGroupView] = Field(default_factory=list)
+    totals: AccessOverviewTotals = Field(default_factory=AccessOverviewTotals)
+
+
 class LlmConfigPayload(StrictModel):
     """用户提交自己的模型 API 配置（BYOK）。
 
@@ -1702,6 +1747,10 @@ class SessionView(StrictModel):
     updated_at: str = ""
     deleted_at: str | None = None
     message_count: int = 0
+    #: 当前请求账号在该会话上的角色（owner/editor/viewer，第 39 批）。
+    #: 列表与详情都返回它，前端据此隐藏「删除 / 共享管理」等所有者操作；
+    #: 早于本批的旧调用（如创建会话的幂等重放快照）缺省为 owner。
+    my_role: Literal["owner", "editor", "viewer"] = "owner"
 
 
 class MessageView(StrictModel):

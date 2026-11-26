@@ -65,7 +65,10 @@ def list_sessions(request: Request, cursor: str | None = None, limit: int | None
         rows, next_cursor = common.repo("session_repo").list_sessions(
             db, owner_email, cursor=cursor, limit=page_limit
         )
-        items = [common.session_view(db, row).model_dump(mode="json") for row in rows]
+        items = [
+            common.session_view(db, row, viewer_email=owner_email).model_dump(mode="json")
+            for row in rows
+        ]
     return {"items": items, "next_cursor": next_cursor}
 
 
@@ -95,7 +98,9 @@ def get_session(session_id: str, request: Request):
     owner_email = common.require_user(request)
     with common.open_db() as db:
         session = common.require_session_read(db, session_id, owner_email)
-        payload = common.session_view(db, session).model_dump(mode="json")
+        payload = common.session_view(
+            db, session, viewer_email=owner_email
+        ).model_dump(mode="json")
         state = common.get_product_state(db, session.id)
     payload["brief"] = state.brief.model_dump(mode="json")
     return payload

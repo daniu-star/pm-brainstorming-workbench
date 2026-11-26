@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSessionStore } from "@/store/sessionStore";
 import { api } from "@/lib/api";
+import { sessionRoleBadge } from "@/lib/access";
 
 interface HistoryDrawerProps {
   isOpen: boolean;
@@ -155,6 +156,10 @@ export function HistoryDrawer({ isOpen, onClose }: HistoryDrawerProps) {
             <div className="p-3 space-y-2">
               {historySessions.map((s) => {
                 const badge = PHASE_BADGES[s.phase] || PHASE_BADGES.define;
+                // 第 39 批：共享给我的会话显示角色徽标；只有所有者能删除，
+                // 否则点了只会静默 403，看起来像「按钮坏了」。
+                const sharedBadge = sessionRoleBadge(s.my_role);
+                const isOwner = !s.my_role || s.my_role === "owner";
                 return (
                   <div
                     key={s.id}
@@ -171,6 +176,11 @@ export function HistoryDrawer({ isOpen, onClose }: HistoryDrawerProps) {
                         <span className={`text-[10px] px-2 py-0.5 rounded-full border ${badge.color}`}>
                           {badge.label}
                         </span>
+                        {sharedBadge ? (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full border border-brand-500/40 bg-brand-600/10 text-brand-200">
+                            {sharedBadge}
+                          </span>
+                        ) : null}
                         <span className="text-[10px] text-zinc-500">
                           {s.message_count} 条消息
                         </span>
@@ -179,20 +189,22 @@ export function HistoryDrawer({ isOpen, onClose }: HistoryDrawerProps) {
                         </span>
                       </div>
                     </button>
-                    <button
-                      onClick={() => void handleDelete(s.id)}
-                      disabled={deletingId === s.id}
-                      aria-label={`删除会话：${s.problem_statement || "未命名会话"}`}
-                      className="touch-reveal absolute top-2 right-2 min-h-[36px] min-w-[36px] rounded-lg text-zinc-600 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:pointer-events-auto pointer-events-none group-hover:pointer-events-auto transition-all flex items-center justify-center disabled:opacity-50"
-                    >
-                      {deletingId === s.id ? (
-                        <span className="inline-block w-3 h-3 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin" />
-                      ) : (
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-                        </svg>
-                      )}
-                    </button>
+                    {isOwner ? (
+                      <button
+                        onClick={() => void handleDelete(s.id)}
+                        disabled={deletingId === s.id}
+                        aria-label={`删除会话：${s.problem_statement || "未命名会话"}`}
+                        className="touch-reveal absolute top-2 right-2 min-h-[36px] min-w-[36px] rounded-lg text-zinc-600 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:pointer-events-auto pointer-events-none group-hover:pointer-events-auto transition-all flex items-center justify-center disabled:opacity-50"
+                      >
+                        {deletingId === s.id ? (
+                          <span className="inline-block w-3 h-3 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                          </svg>
+                        )}
+                      </button>
+                    ) : null}
                   </div>
                 );
               })}
@@ -201,12 +213,7 @@ export function HistoryDrawer({ isOpen, onClose }: HistoryDrawerProps) {
         </div>
       </div>
 
-      <style jsx>{`
-        @keyframes slideInRight {
-          from { transform: translateX(100%); }
-          to { transform: translateX(0); }
-        }
-      `}</style>
+
     </>
   );
 }

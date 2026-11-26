@@ -328,6 +328,57 @@ def list_sessions(
 PURGED_TITLE = "（已删除）"
 
 
+def list_owned_sessions(db, owner_email: str, *, limit: int = 50) -> list[SessionRow]:
+    """我创建的会话（未删除），按最近更新排序（第 39 批统一权限页用）。"""
+
+    limit = max(1, min(int(limit), 100))
+    stmt = (
+        select(SessionRow)
+        .where(
+            SessionRow.owner_email == owner_email,
+            SessionRow.deleted_at.is_(None),
+        )
+        .order_by(SessionRow.updated_at.desc(), SessionRow.id.desc())
+        .limit(limit)
+    )
+    return list(db.execute(stmt).scalars().all())
+
+
+def list_incoming_shares(
+    db, email: str, *, limit: int = 50
+) -> list[tuple[SessionRow, str]]:
+    """别人共享给我的会话 + 我在其中的角色（第 39 批统一权限页用）。"""
+
+    limit = max(1, min(int(limit), 100))
+    stmt = (
+        select(SessionRow, SessionShareRow.role)
+        .join(SessionShareRow, SessionShareRow.session_id == SessionRow.id)
+        .where(
+            SessionShareRow.shared_with_email == email,
+            SessionRow.deleted_at.is_(None),
+        )
+        .order_by(SessionRow.updated_at.desc(), SessionRow.id.desc())
+        .limit(limit)
+    )
+    return [(row, str(role)) for row, role in db.execute(stmt).all()]
+
+
+def shares_by_session(db, session_ids: list[str]) -> dict[str, list[SessionShareRow]]:
+    """批量取共享行，避免「每个会话一次查询」的 N+1。"""
+
+    if not session_ids:
+        return {}
+    stmt = (
+        select(SessionShareRow)
+        .where(SessionShareRow.session_id.in_(session_ids))
+        .order_by(SessionShareRow.created_at.asc())
+    )
+    grouped: dict[str, list[SessionShareRow]] = {}
+    for row in db.execute(stmt).scalars().all():
+        grouped.setdefault(row.session_id, []).append(row)
+    return grouped
+
+
 def purge_session_content(db, session: SessionRow, *, now_iso: str | None = None) -> dict[str, int]:
     """清除会话的在线正文（AC-39：「删除后在线正文已清除」）。
 

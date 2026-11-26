@@ -197,11 +197,23 @@ def message_count(db, session_id: str) -> int:
     return len(session_repo.list_messages(db, session_id, limit=C.MESSAGES_PAGE_MAX))
 
 
-def session_view(db, session) -> SessionView:
-    """会话视图：附带最新闭环 id，供前端一次性渲染入口状态。"""
+def session_view(db, session, *, viewer_email: str | None = None) -> SessionView:
+    """会话视图：附带最新闭环 id 与当前账号的角色（第 39 批）。
+
+    ``viewer_email`` 为空时按「所有者本人」渲染（创建会话后的返回体属于这种情况）；
+    传入账号时用 ``session_role`` 判定 owner/editor/viewer，前端据此决定是否显示
+    删除、共享管理等所有者操作。
+    """
 
     loop_repo = repo("loop_repo")
     latest_loop = loop_repo.latest_loop_for_session(db, session.id)
+    role = "owner"
+    if viewer_email:
+        resolved = repo("session_repo").session_role(db, session, viewer_email)
+        if resolved is None:
+            role = "viewer"
+        else:
+            role = str(resolved)
     return SessionView(
         id=session.id,
         owner_email=session.owner_email,
@@ -217,6 +229,7 @@ def session_view(db, session) -> SessionView:
         deleted_at=session.deleted_at,
         message_count=message_count(db, session.id),
         current_loop_id=latest_loop.id if latest_loop is not None else None,
+        my_role=role,  # type: ignore[arg-type]
     )
 
 
@@ -537,17 +550,31 @@ def legacy_message(row) -> dict:
     return payload
 
 
-def legacy_session_payload(db, session, *, messages: list | None = None) -> dict:
-    """旧后端 /api/session 返回结构（phase 使用 v1 值）。"""
+def legacy_session_payload(
+    db,
+    session,
+    *,
+    messages: list | None = None,
+    viewer_email: str | None = None,
+) -> dict:
+    """旧后端 /api/session 返回结构（phase 使用 v1 值）。
+
+    第 39 批起附带 ``my_role``：旧前端历史列表用它区分「我创建的」与「共享给我的」。
+    """
 
     rows = messages
     if rows is None:
         rows = repo("session_repo").list_messages(db, session.id, limit=C.MESSAGES_PAGE_MAX)
+    role = "owner"
+    if viewer_email:
+        resolved = repo("session_repo").session_role(db, session, viewer_email)
+        role = str(resolved) if resolved else "viewer"
     return {
         "id": session.id,
         "problem_statement": session.problem_statement or "",
         "phase": legacy_phase(session.phase),
         "owner_email": session.owner_email,
+        "my_role": role,
         "messages": [legacy_message(row) for row in rows],
         "canvas_tree": None,
         "canvas_last_msg_index": 0,
