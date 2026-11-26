@@ -49,7 +49,11 @@ jobs:
       DATABASE_URL: sqlite:///./data/e2e.db
       PYTHONPATH: .
       PYTHONIOENCODING: utf-8
-      LLM_API_KEY: ""
+      LLM_API_KEY: "sk-ci-dummy-not-a-real-key"
+      # 播种脚本要用 core.auth.create_session_token() 造 Cookie；CI 上没有 backend/.env，
+      # 缺 AUTH_SECRET_KEY 会直接 AuthConfigurationError（历史上这个 job 一直红在这里）。
+      AUTH_SECRET_KEY: "ci-test-auth-secret-key-0123456789abcdef"
+      LLM_KEY_MODE: system
       NEXT_PUBLIC_API_URL: http://127.0.0.1:8001
       PM_API_URL: http://127.0.0.1:8001
       PM_WEB_URL: http://127.0.0.1:3001

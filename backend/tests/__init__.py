@@ -35,6 +35,19 @@ os.environ.setdefault(
 os.environ.setdefault("LLM_KEY_MODE", "system")
 settings.llm_key_mode = "system"
 
+# system 模式仍要求「账户 Key 存在」才会放行（tests/test_llm_config.py 里再显式切回 byok 验证闸门）。
+# 本机 backend/.env 里有真 Key，CI 上没有 -> 所有建会话用例会 428 LLM_CONFIG_REQUIRED。
+# 这里补一个显式的假 Key，只用于让闸门放行；没有任何用例会真的拿它调上游。
+os.environ.setdefault("LLM_API_KEY", "sk-ci-dummy-not-a-real-key")
+
+# 同理：CI 上没有 AUTH_SECRET_KEY（要求 >= 32 字符），任何 create_session_token() 都会抛
+# AuthConfigurationError。补一个固定的测试密钥，只用于本地/CI 造 Cookie。
+os.environ.setdefault("AUTH_SECRET_KEY", "ci-test-auth-secret-key-0123456789abcdef")
+if not settings.auth_secret_key:
+    settings.auth_secret_key = os.environ["AUTH_SECRET_KEY"]
+if not settings.llm_api_key:
+    settings.llm_api_key = os.environ["LLM_API_KEY"]
+
 from repositories.database import initialize_database  # noqa: E402  (需在环境变量之后)
 
 initialize_database()
