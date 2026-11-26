@@ -48,6 +48,21 @@ PATH_PREFIXES = (
     "core/",
     "rag/",
 )
+#: 这些路径是「本地生成物 / 密钥 / 依赖目录」，已被 .gitignore 排除：
+#: 干净检出（CI、新同事）里本来就不存在，因此不参与断链判定。
+GENERATED_PREFIXES = (
+    ".tmp/",
+    "backend/.tmp/",
+    "backend/data/",
+    "frontend/.next",
+    "frontend/node_modules",
+    "node_modules/",
+    ".run/",
+    "dist/",
+    "vendor/",
+)
+GENERATED_FILES = ("backend/.env", "frontend/.env", ".env", "package-lock.json")
+
 PATH_SUFFIXES = (
     ".py",
     ".ts",
@@ -170,6 +185,9 @@ def check_target(source: Path, target: str, basenames: dict[str, set[str]]) -> b
 
 
 def _check_one(source: Path, target: str, basenames: dict[str, set[str]]) -> bool:
+    # 0) 生成物 / 本地密钥 / 依赖目录：被 .gitignore 排除，干净检出里不存在，不算断链
+    if target in GENERATED_FILES or target.startswith(GENERATED_PREFIXES):
+        return True
     # 1) 相对当前文档目录  2) 相对仓库根  3) 相对后端/前端（文档常写成 domain/contracts.py）
     for candidate in (
         source.parent / target,
