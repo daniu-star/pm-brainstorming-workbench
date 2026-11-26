@@ -26,6 +26,11 @@ dist/
 *tmp_tests_eval*
 
 frontend/.tmp_tests/
+# 一次性补丁/调试脚本（不进仓库）
+**/.tmp_*.py
+**/.tmp_*.cjs
+**/.tmp_*.mjs
+**/.tmp_*.js
 # 运行期输出（unittest / 前端测试写到文件）
 *.tmp_*.txt
 backend/.tmp_*.txt
