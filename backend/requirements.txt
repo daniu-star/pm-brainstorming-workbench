@@ -11,6 +11,9 @@ alembic==1.20.1
 pydantic==2.10.4
 pydantic-settings==2.16.3
 python-dotenv==1.2.4
+# BYOK 的 API Key 加密（core/crypto.py 用 Fernet）；缺它时 llm_config_service 导入失败，
+# 建会话会退化成 503 FEATURE_NOT_READY —— CI 上曾因只装本文件而整批用例失败。
+cryptography>=42,<50
 
 # 模型与语音
 openai==1.59.8

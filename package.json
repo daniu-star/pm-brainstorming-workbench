@@ -1,7 +1,4 @@
 {
   "name": "pm-brainstorming-workbench",
-  "private": true,
-  "workspaces": [
-    "frontend"
-  ]
+  "private": true
 }
