@@ -21,6 +21,7 @@ import secrets
 import smtplib
 import ssl
 import time
+import urllib.request
 from collections import deque
 from dataclasses import dataclass
 from email.message import EmailMessage
@@ -213,6 +214,57 @@ def _hash_code(email: str, code: str) -> str:
     ).hexdigest()
 
 
+def _send_via_proxy(message: EmailMessage) -> bool:
+    """用 HTTP 代理投递验证码邮件（第 40 批部署适配）。
+
+    为什么需要：Hugging Face Space 等容器平台通常封禁出站 25/465/587，
+    直连 ``smtplib`` 会一直超时到 ``smtp_timeout_seconds``，登录体验极差。
+    配置 ``EMAIL_PROXY_URL`` + ``EMAIL_PROXY_KEY`` 后改为一次 HTTP POST，
+    由外部服务（Vercel Serverless / 自建中转）完成真正的 SMTP 投递。
+
+    只用标准库 ``urllib``，不给镜像增加 ``requests`` 依赖。
+    返回 ``True`` 表示代理投递成功；未配置或失败返回 ``False``，调用方回落直连 SMTP。
+    """
+    proxy_url = (settings.email_proxy_url or "").strip()
+    if not proxy_url:
+        return False
+
+    plain = message.get_body(preferencelist=("plain",))
+    html = message.get_body(preferencelist=("html",))
+    payload = {
+        "to_email": message["To"],
+        "subject": message["Subject"],
+        "text": plain.get_content() if plain is not None else "",
+        "html": html.get_content() if html is not None else "",
+        "smtp_host": settings.smtp_host,
+        "smtp_port": str(settings.smtp_port),
+        "smtp_user": settings.smtp_username,
+        "smtp_password": settings.smtp_password,
+        "smtp_from_name": "PM Brainstorm",
+    }
+    request = urllib.request.Request(
+        proxy_url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "X-API-Key": settings.email_proxy_key,
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=25) as response:
+            body = response.read().decode("utf-8", "replace")
+        parsed = json.loads(body or "{}")
+        if not parsed.get("success"):
+            logger.warning("event=auth.email_proxy_rejected body=%s", body[:200])
+            return False
+        logger.info("event=auth.email_proxy_sent")
+        return True
+    except Exception as error:  # noqa: BLE001 - 代理不可用时必须能回落直连
+        logger.warning("event=auth.email_proxy_failed error=%s", type(error).__name__)
+        return False
+
+
 def _send_verification_email(email: str, code: str) -> None:  # pragma: no cover - 网络
     sender = settings.smtp_from or settings.smtp_username
     message = EmailMessage()
@@ -235,6 +287,10 @@ def _send_verification_email(email: str, code: str) -> None:  # pragma: no cover
         """,
         subtype="html",
     )
+
+    # 先试 HTTP 代理（容器平台常封出站 SMTP 端口），失败再回落直连。
+    if _send_via_proxy(message):
+        return
 
     context = ssl.create_default_context()
     if settings.smtp_use_ssl:

@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 始终从 backend/.env 加载，避免启动目录不同导致配置静默丢失。
@@ -77,11 +77,17 @@ class Settings(BaseSettings):
     smtp_port: int = 465
     smtp_username: str = ""
     smtp_password: str = ""
-    smtp_from: str = ""
+    smtp_from: str = Field(default="", validation_alias=AliasChoices("SMTP_FROM", "SMTP_FROM_EMAIL"))
     smtp_use_ssl: bool = True
     smtp_timeout_seconds: float = 20.0
+    # 邮件 HTTP 代理（第 40 批）：部分容器平台会封掉出站 25/465/587，
+    # 直连 SMTP 会超时；配置代理后改为 POST 到该地址由外部转发，失败再回落直连。
+    email_proxy_url: str = ""
+    email_proxy_key: str = ""
 
-    auth_secret_key: str = ""
+    # V3 用 JWT_SECRET 签发登录 Cookie，V4 改名为 AUTH_SECRET_KEY。
+    # 线上 Space 里可能只配了旧名字，这里做兼容回退，避免升级后登录直接 500。
+    auth_secret_key: str = Field(default="", validation_alias=AliasChoices("AUTH_SECRET_KEY", "JWT_SECRET"))
     auth_cookie_name: str = "pm_brainstorm_session"
     auth_cookie_secure: bool = False
     auth_cookie_samesite: str = "lax"

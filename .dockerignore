@@ -1,0 +1,40 @@
+# 容器构建上下文裁剪：镜像里只需要 backend/ 与 scripts/container_start.py。
+# 注意 Docker 的 pattern 是对「相对路径全串」做匹配，`*.md` 只命中根目录的 md，
+# 因此 backend/rag/knowledge/**/*.md 不会被误伤（它们是 RAG 语料，必须进镜像）。
+.git
+.gitignore
+.github
+.venv
+venv
+node_modules
+**/node_modules
+frontend
+docs
+skills
+dist
+.run
+.tmp
+.superpowers
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+backend/data
+backend/.tmp_tests
+backend/.tmp_*
+backend/pm_api_v2_*
+backend/pm_legacy_*
+backend/runner-test-*
+backend/audit-test-*
+backend/probe-*
+backend/chrome-e2e-*.log
+backend/*.log
+*.env
+.env
+**/.env
+backend/.env
+*.md
+start.bat
+stop.bat

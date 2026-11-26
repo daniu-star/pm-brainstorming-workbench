@@ -1,6 +1,87 @@
+---
+title: PM Brainstorm Workbench
+emoji: 🧠
+colorFrom: yellow
+colorTo: red
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # PM Brainstorming Workbench
 
 AI-powered product brainstorming workbench with multi-role agents and visual canvas.
+
+## 线上部署（Vercel 前端 + Hugging Face Space 后端）
+
+线上站点是 <https://www.brainstorming.top>：**前端 Next.js 跑在 Vercel**，**后端 FastAPI 跑在 Hugging Face Space（Docker SDK）**，
+浏览器与前端同源通信，由 `frontend/next.config.js` 的 rewrites 把 `/backend/:path*` 反代到后端容器。
+
+### 目录里与部署相关的文件
+
+| 文件 | 作用 |
+| --- | --- |
+| `Dockerfile` | 后端镜像：`python:3.11-slim` + `backend/requirements.txt`，构建时预建 RAG 索引，`CMD` 走 `scripts/container_start.py` |
+| `.dockerignore` | 只把 `backend/` 与 `scripts/container_start.py` 送进构建上下文（不传 `frontend/`、`data/`、`.env`） |
+| `scripts/container_start.py` | 单容器里同时托管 `uvicorn main:app` 与 `workers.run_worker`（ADR-04 要求 Worker 常驻领取 Run） |
+| `frontend/vercel.json` | Vercel 项目配置：`framework=nextjs`，`NEXT_PUBLIC_API_URL=/backend` |
+| `frontend/next.config.js` | `/backend/:path*` → `BACKEND_ORIGIN`（默认指向本项目的 HF Space） |
+| `frontend/.env.example` | 本地用 `http://127.0.0.1:8001`，线上用 `/backend` |
+
+### 为什么必须两个进程
+
+V4 的命令先落库并返回 `run_id`，由独立 Worker 领取执行（ADR-04），SSE 只是订阅通道。
+单容器平台只提供**一个**前台进程，所以 `container_start.py` 用标准库 `subprocess` 同时拉起 Worker 与 API，
+Worker 先起 1.5 秒（先把表建好、把上次的孤儿 Run 收口），任一子进程退出就整体退出交给平台重启。
+
+### Hugging Face Space 需要配置的变量
+
+Space 的 *Settings → Variables and secrets* 里至少要有：
+
+| 变量 | 说明 |
+| --- | --- |
+| `AUTH_SECRET_KEY` | **必填**，≥32 字符随机串；缺失时登录会报 `AuthConfigurationError` |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_FROM` | 邮箱验证码登录必需（网易 163 用客户端授权码作密码） |
+| `AUTH_COOKIE_SECURE` | 线上为 `true`（HTTPS） |
+| `LLM_KEY_MODE` | 默认 `byok`：每个账号在「模型 API 设置」里填自己的 Key，服务端不承担模型成本 |
+| `EMAIL_PROXY_URL` / `EMAIL_PROXY_KEY` | 可选。容器平台封 SMTP 出站端口时，用 HTTP 代理投递验证码；未配置或代理失败会自动回落直连 SMTP |
+| `CORS_ORIGINS` | 兜底用；同源反代下 CORS 不参与，但直连调试时需要 `https://www.brainstorming.top` |
+
+> 从 V3 升级上来时的变量名：V4 仍兼容旧的 `JWT_SECRET` / `SMTP_FROM_EMAIL`（代码里自动回退），
+> 新名字分别是 `AUTH_SECRET_KEY` / `SMTP_FROM`；V3 的 `SMTP_USE_TLS` 在 V4 没有对应项（只用 `SMTP_USE_SSL`）。
+
+### 持久化
+
+SQLite 默认落在镜像内的 `/app/data` 目录（`app.db`）。HF Space 免费实例**没有持久卷**，重启会回到干净库；
+要长期保存数据，把 `DATABASE_URL` 指向外部数据库（如托管 Postgres，SQLAlchemy 直接可用），
+或把 `/app/data` 挂成持久卷。
+
+### 手动构建与本地验证
+
+```bash
+# 有 Docker：构建并起容器（首次会 pip 安装依赖 + 构建 RAG 索引）
+docker build -t pm-brainstorm-v4 .
+docker run --rm -p 7860:7860 -e AUTH_SECRET_KEY=<32位随机串> pm-brainstorm-v4
+
+# 没有 Docker：用同一套启动器在宿主机模拟容器（不装 Docker 也能验进程编排）
+cd backend && python ../scripts/container_start.py --port 8099 --app-dir .
+```
+
+### 验证码发不出去时
+
+HF Space 会封掉 25 / 465 / 587 出站（连不上 `smtp.163.com`），此时邮箱验证码登录会超时。两条路：
+
+1. **配 `EMAIL_PROXY_URL` / `EMAIL_PROXY_KEY`**：验证码先 POST 给代理投递；代理不可用会自动回落直连 SMTP，不会把登录打挂。
+2. 换成支持 HTTPS 发信的邮件服务商，同样通过 `EMAIL_PROXY_URL` 接。
+
+日志里看 `event=auth.email_proxy_sent`（代理成功）、`auth.email_proxy_failed`（代理失败已回落）、
+`auth.email_proxy_rejected`（代理返回 success=false）三种事件即可判断当前走哪条路。
+
+### 部署顺序
+
+1. 后端先上（Space build 完成、`/health` 返回 200）；
+2. 前端再上（Vercel 读 `frontend/vercel.json`，`NEXT_PUBLIC_API_URL=/backend`）；
+3. 冒烟：`GET /backend/health`、打开首页、走一次邮箱验证码登录、建一个会话看到首轮澄清回复。
 
 ## Features
 

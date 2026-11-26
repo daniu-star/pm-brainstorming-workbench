@@ -1,12 +1,12 @@
 # V4.0 发布就绪清单（WP-10）
 
 - 分支：`feat/prd-v4-m1`；对应 PRD：`docs/superpowers/specs/2026-11-18-pm-brainstorm-agent-architecture-prd-v4.md`
-- 验收记录：`docs/v4-acceptance-report.md`（800 后端用例 / 314 前端用例 / 契约 parity 13 / 跨进程 6 + 崩溃注入 3 + 预算崩溃 4 / 真 Worker E2E 30 项 + Loop 闭环 29 项 / 迁移演练 / 回滚演练（AC-34，`scripts/ac34_rollback_drill.py`）/ 真实浏览器 E2E AC-01/19/31/33（docs/browser-qa.md + docs/browser-qa/e2e/ 7 张截图）/ AC-20 数字可追溯性真模型端到端（`scripts/ac20_number_provenance.py` + `docs/ac20-number-provenance.md`） / 完整用户旅程真模型端到端（`scripts/full_journey_e2e.py` + `docs/full-journey-e2e.md`） / 结项报告真实模型路径（`scripts/audit_report_e2e.py` + `docs/audit-report-e2e.md`，含报告摘要落库）；文档索引见 docs/README.md；QA Loop 记录见 docs/qa-loop-runs/README.md，多角色 Loop 记录见 docs/loop-runs/README.md）
+- 验收记录：`docs/v4-acceptance-report.md`（816 后端用例 / 314 前端用例 / 契约 parity 13 / 跨进程 6 + 崩溃注入 3 + 预算崩溃 4 / 真 Worker E2E 30 项 + Loop 闭环 29 项 / 迁移演练 / 回滚演练（AC-34，`scripts/ac34_rollback_drill.py`）/ 真实浏览器 E2E AC-01/19/31/33（docs/browser-qa.md + docs/browser-qa/e2e/ 7 张截图）/ AC-20 数字可追溯性真模型端到端（`scripts/ac20_number_provenance.py` + `docs/ac20-number-provenance.md`） / 完整用户旅程真模型端到端（`scripts/full_journey_e2e.py` + `docs/full-journey-e2e.md`） / 结项报告真实模型路径（`scripts/audit_report_e2e.py` + `docs/audit-report-e2e.md`，含报告摘要落库）；文档索引见 docs/README.md；QA Loop 记录见 docs/qa-loop-runs/README.md，多角色 Loop 记录见 docs/loop-runs/README.md）
 
 ## 1. 发布前必须通过的命令
 
 ```bash
-# 后端（800 用例，含 Loop Studio 65 项 + 数据生命周期/预算档位/审计并发 13 项；第 9 批删 v1 死代码 27 例，新增引用归属 7 + 崩溃注入 3；第 10 批新增旧 ID 别名 6；第 11 批新增 AC-14 多失败重试 1；第 12 批新增 AC-10 预算预留崩溃 4；第 16 批新增 AC-20 数字守卫 18 + 序号引用规范化 3 + json_schema 降级缓存 1；第 17 批新增结项报告形状容错 5；第 18 批新增报告摘要断言 + health/detail 模型层诊断 3；第 20 批新增 Worker 卡死诊断 3 + 前端排队提示 5；第 21 批新增备份/校验/恢复演练 4；第 22 批新增发版体检脚本自检 7；第 23 批新增磁盘清理脚本自检 5；第 24 批新增 Worker 维护清理 4；第 25 批新增 audit/loop 页面服务端渲染 6；第 26 批新增中间载荷保留 3 + 增长报告/VACUUM 3 + Worker 维护补 1；第 28 批新增报告侧数字标注 3（后端 2 + 前端页面 1）；第 29 批新增报告读取重算 3 + 证据表单渲染 3 + 页面入口 1；第 30 批新增报告质量统计 5；第 31 批新增报告质量窗口回落 4；第 32 批新增账户级配额 9；第 33 批新增账户自带模型密钥 11；第 37 批新增团队工作区成员组 8；第 38 批新增执行沙箱 16 + 运维健康区块 4；第 39 批新增共享可见性与权限页 8）
+# 后端（816 用例，含 Loop Studio 65 项 + 数据生命周期/预算档位/审计并发 13 项；第 9 批删 v1 死代码 27 例，新增引用归属 7 + 崩溃注入 3；第 10 批新增旧 ID 别名 6；第 11 批新增 AC-14 多失败重试 1；第 12 批新增 AC-10 预算预留崩溃 4；第 16 批新增 AC-20 数字守卫 18 + 序号引用规范化 3 + json_schema 降级缓存 1；第 17 批新增结项报告形状容错 5；第 18 批新增报告摘要断言 + health/detail 模型层诊断 3；第 20 批新增 Worker 卡死诊断 3 + 前端排队提示 5；第 21 批新增备份/校验/恢复演练 4；第 22 批新增发版体检脚本自检 7；第 23 批新增磁盘清理脚本自检 5；第 24 批新增 Worker 维护清理 4；第 25 批新增 audit/loop 页面服务端渲染 6；第 26 批新增中间载荷保留 3 + 增长报告/VACUUM 3 + Worker 维护补 1；第 28 批新增报告侧数字标注 3（后端 2 + 前端页面 1）；第 29 批新增报告读取重算 3 + 证据表单渲染 3 + 页面入口 1；第 30 批新增报告质量统计 5；第 31 批新增报告质量窗口回落 4；第 32 批新增账户级配额 9；第 33 批新增账户自带模型密钥 11；第 37 批新增团队工作区成员组 8；第 38 批新增执行沙箱 16 + 运维健康区块 4；第 39 批新增共享可见性与权限页 8）
 cd backend && ../.venv/Scripts/python.exe -m unittest discover -s tests
 
 # 前端类型检查 + 逻辑用例 + 生产构建 + 冒烟 e2e
@@ -82,7 +82,7 @@ CI 配置见 `.github/workflows/ci.yml`（backend：安装依赖 → 全量测�
 - 删除会话为软删 + **默认清正文**（`session_repo.purge_session_content`）：消息正文/证据摘要/审计问答/审计报告/闭环产物清空，保留会话/消息/版本链等骨架行作为 tombstone（`test_data_lifecycle.py` 覆盖）。调试可用 `purge_content=False`。
 - 同步命令（确认定义/跳过/修订/加证据/确认决策/更正评估）各产生一条 `succeeded` Run，用于幂等回执，属预期行为。
 - **`next build` 与 `next dev` 共用 `frontend/.next`**：开发服务器运行时执行生产构建会破坏其路由缓存（动态路由全 500）。验证构建前先 `stop.bat`，构建后 `start.bat` 重新拉起。
-- Loop Studio（v5）的「测试执行」是模拟执行：产物 `simulated=true` 且必须注明「未实际执行」，否则确定性校验记 P0 阻塞并把总分压到 70；真实沙箱执行尚未实现。
+- Loop Studio（v5）的「测试执行」默认是模拟执行：产物 `simulated=true` 且必须注明「未实际执行」，否则确定性校验记 P0 阻塞并把总分压到 70。真实的执行沙箱在**默认关闭**状态下提供（`LOOP_SANDBOX_ENABLED=false`，白名单为空时一律 503）：开启后 argv 直传 `shell=False`、独立临时目录、剥离敏感环境变量、超时强杀、输出截断，每次运行都落 `sandbox_run` 产物；这是**进程级隔离，不是安全边界**，只在本地/受信环境开启。
 - Loop Studio 原型产物是文件内容 + 启动命令，不在服务端构建；`requires_human_build=true` 时由用户自行落地。
 - **模型鉴权失败会以 `LLM_AUTH_ERROR` 明确失败**（401/403，不可重试），错误信息直接提示更新 `backend/.env` 的 `LLM_API_KEY` 并重启服务；排查用 `.venv/Scripts/python.exe scripts/check_llm.py`。
 - **控制意图由 Worker 每轮扫描**：`end_audit`/`cancel_audit` 在活跃 Run 上只登记意图（`control_intents`，状态 `accepted`），由 `RunWorker.tick()` 每轮调用 `command_service.reconcile_control_intents` 在旧 Run 终结后建唯一 closing Run（或完成取消）。停掉 Worker 时结束/取消审计会停在 `scheduled`，属预期。
@@ -95,3 +95,19 @@ CI 配置见 `.github/workflows/ci.yml`（backend：安装依赖 → 全量测�
 ## 6. 本机验证的临时产物约定
 
 本机 `TEMP` 不可用，`tempfile.gettempdir()` 会回退到当前工作目录。测试/脚本已统一使用 `backend/.tmp/` 或显式临时目录；`.gitignore` 覆盖 `.tmp/`、backend 下的 `.tmp_tests/` 目录、`backend/pm_api_v2_*/`、`backend/pm_legacy_*/` 等模式，避免污染仓库。
+
+## 7. 线上部署（Vercel 前端 + Hugging Face Space 后端）
+
+线上站点 <https://www.brainstorming.top>：前端 Next.js 由 Vercel 从本仓库 `frontend/` 构建，后端 FastAPI 由 Hugging Face Space（docker SDK）构建，浏览器同源访问 `/backend/*` 由 `frontend/next.config.js` 的 rewrites 反代到 Space。
+
+部署顺序：
+
+1. **后端先上**：Space 使用仓库根 `Dockerfile`，`CMD` 起 `scripts/container_start.py`（同容器内托管 API + Worker），`EXPOSE 7860`；构建期已执行 `rag.index_builder.build_index()`。
+   Space 必须配置：`AUTH_SECRET_KEY`（≥32 字符，缺了登录 500）、`SMTP_HOST/SMTP_PORT/SMTP_USERNAME/SMTP_PASSWORD/SMTP_FROM`、`AUTH_COOKIE_SECURE=true`、`LLM_KEY_MODE=byok`；SMTP 出站被平台封锁时改用 `EMAIL_PROXY_URL`/`EMAIL_PROXY_KEY`。
+2. **前端再上**：Vercel 读 `frontend/vercel.json`（`NEXT_PUBLIC_API_URL=/backend`）；如后端不在默认 Space，改 `BACKEND_ORIGIN`。
+3. **冒烟**：`GET /health`、`GET /backend/health`、打开首页、走一次邮箱验证码登录、建会话看首轮提问、打开 `/ops` 与 `/settings/access`。
+
+回滚：V3 线上版本保存在 `backup/v3-production` 分支；需要回退时把该分支强制推回 `main`，Vercel 与 Space 会重新构建上一版。
+
+本地无 Docker 时可用同一套启动器模拟容器：`cd backend && python ../scripts/container_start.py --port 8099 --app-dir .`。
+
