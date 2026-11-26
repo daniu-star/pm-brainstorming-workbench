@@ -311,9 +311,20 @@ class LoopRunnerEndToEndTests(LoopRunnerTestCase):
 
         artifacts = self._artifact_rows()
         self.assertEqual(len(artifacts), 5)
+        self.assertNotIn(
+            LoopArtifactKind.sandbox_run.value,
+            {str(artifact.kind) for artifact in artifacts},
+            "沙箱产物只由 /sandbox-runs 追加，回合内不应出现",
+        )
         self.assertEqual(
             {str(artifact.kind) for artifact in artifacts},
-            {kind.value for kind in LoopArtifactKind},
+            {
+                LoopArtifactKind.mvp_spec.value,
+                LoopArtifactKind.validation.value,
+                LoopArtifactKind.prototype.value,
+                LoopArtifactKind.test_report.value,
+                LoopArtifactKind.scorecard.value,
+            },
         )
         scorecard = next(
             artifact for artifact in artifacts if artifact.kind == LoopArtifactKind.scorecard.value

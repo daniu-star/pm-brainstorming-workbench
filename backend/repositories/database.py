@@ -514,6 +514,41 @@ class SessionShareRow(Base):
     __table_args__ = (Index("ix_session_shares_email", "shared_with_email"),)
 
 
+class MemberGroupRow(Base):
+    """成员组：所有者维护的一份「常用协作名单」。
+
+    一个组只属于一个所有者；组本身不授予任何访问权，把组「应用到会话」时
+    才逐条写成 ``session_shares``（权限判断永远只看会话级共享行）。
+    """
+
+    __tablename__ = "member_groups"
+
+    id = Column(String(64), primary_key=True)
+    owner_email = Column(String(320), nullable=False)
+    name = Column(String(80), nullable=False)
+    created_at = Column(String(32), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("owner_email", "name", name="uq_member_groups_owner_name"),
+        Index("ix_member_groups_owner", "owner_email"),
+    )
+
+
+class MemberGroupMemberRow(Base):
+    """成员组里的一行：邮箱 + 角色（viewer / editor）。"""
+
+    __tablename__ = "member_group_members"
+
+    group_id = Column(
+        String(64), ForeignKey("member_groups.id", ondelete="CASCADE"), primary_key=True
+    )
+    email = Column(String(320), primary_key=True)
+    role = Column(String(16), nullable=False, default="viewer")
+    created_at = Column(String(32), nullable=False)
+
+    __table_args__ = (Index("ix_member_group_members_email", "email"),)
+
+
 class LlmConfigRow(Base):
     """账户自带模型（BYOK）配置：一个 owner 一行（PRD 扩展：平台免费、模型自付）。
 
@@ -629,7 +664,7 @@ class LoopArtifactRow(Base):
 
     __table_args__ = (
         CheckConstraint(
-            _in("kind", "'mvp_spec','validation','prototype','test_report','scorecard'"),
+            _in("kind", "'mvp_spec','validation','prototype','test_report','scorecard','sandbox_run'"),
             name="ck_loop_artifacts_kind",
         ),
         Index("ix_loop_artifacts_loop", "loop_id", "round_ordinal"),
@@ -778,6 +813,58 @@ def _additive_schema_upgrade(engine: Engine) -> None:
                 "WHERE created_at = ''"
             )
 
+        # loop_artifacts 的 CHECK 约束后来加入了 sandbox_run（真实执行沙箱产物）。
+        # SQLite 不能就地改 CHECK，只能重建表；旧库若仍带旧约束，插入 sandbox_run 会
+        # 直接 IntegrityError。这里探测 DDL 后原子重建（数据原样搬运，索引重建）。
+        _upgrade_loop_artifact_kind_check(conn)
+
+
+def _upgrade_loop_artifact_kind_check(conn) -> None:
+    """把旧 ``loop_artifacts.kind`` CHECK 约束升级为含 ``sandbox_run`` 的版本。
+
+    幂等：DDL 已含 ``sandbox_run`` 或表不存在时直接返回。
+    """
+
+    row = conn.exec_driver_sql(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='loop_artifacts'"
+    ).fetchone()
+    if row is None or not row[0]:
+        return
+    ddl = str(row[0])
+    if "sandbox_run" in ddl:
+        return
+
+    conn.exec_driver_sql(
+        """
+        CREATE TABLE loop_artifacts_new (
+            id VARCHAR(64) NOT NULL,
+            loop_id VARCHAR(64) NOT NULL,
+            round_ordinal INTEGER NOT NULL,
+            kind VARCHAR(16) NOT NULL,
+            title VARCHAR(300) NOT NULL,
+            payload_json TEXT NOT NULL,
+            created_at VARCHAR(32) NOT NULL,
+            CONSTRAINT pk_loop_artifacts_new PRIMARY KEY (id),
+            CONSTRAINT ck_loop_artifacts_kind CHECK (
+                kind IN ('mvp_spec','validation','prototype','test_report','scorecard','sandbox_run')
+            ),
+            CONSTRAINT fk_loop_artifacts_loop FOREIGN KEY(loop_id) REFERENCES loops (id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.exec_driver_sql(
+        "INSERT INTO loop_artifacts_new "
+        "(id, loop_id, round_ordinal, kind, title, payload_json, created_at) "
+        "SELECT id, loop_id, round_ordinal, kind, title, payload_json, created_at "
+        "FROM loop_artifacts"
+    )
+    conn.exec_driver_sql("DROP TABLE loop_artifacts")
+    conn.exec_driver_sql("ALTER TABLE loop_artifacts_new RENAME TO loop_artifacts")
+    conn.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_loop_artifacts_loop "
+        "ON loop_artifacts (loop_id, round_ordinal)"
+    )
+
 
 def dispose_engine() -> None:
     """释放当前引擎的所有连接（Windows 上不释放会锁住 sqlite 文件，导致临时目录删不掉）。"""
@@ -825,6 +912,8 @@ __all__ = [
     "LoopRow",
     "LoopRoundRow",
     "LoopStageResultRow",
+    "MemberGroupMemberRow",
+    "MemberGroupRow",
     "MessageRow",
     "MigrationRecordRow",
     "ProductStateRow",

@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 _ModelT = TypeVar("_ModelT")
 
 __all__ = [
+    "append_artifact",
     "create_loop",
     "get_loop",
     "require_loop",
@@ -419,6 +420,39 @@ def add_artifact(
         if old.kind == kind_value:
             db.delete(old)
     db.flush()
+    row = LoopArtifactRow(
+        id=C.new_id(),
+        loop_id=loop_id,
+        round_ordinal=int(ordinal),
+        kind=kind_value,
+        title=(title or "")[:300],
+        payload_json=_dumps(payload),
+        created_at=now,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def append_artifact(
+    db,
+    *,
+    loop_id: str,
+    ordinal: int,
+    kind: C.LoopArtifactKind | str,
+    title: str,
+    payload: Any,
+    now_iso: str | None = None,
+) -> LoopArtifactRow:
+    """追加一条产物（**不去重**）。
+
+    与 :func:`add_artifact` 的区别：后者按「同一轮 + 同一 kind」覆盖，适用于
+    每轮唯一的产物（mvp_spec / scorecard）；沙箱运行记录是**多次**事件，
+    每次都要留档，所以用本函数追加。
+    """
+
+    now = now_iso or C.utc_now_iso()
+    kind_value = kind.value if isinstance(kind, C.LoopArtifactKind) else str(kind)
     row = LoopArtifactRow(
         id=C.new_id(),
         loop_id=loop_id,

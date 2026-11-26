@@ -461,6 +461,9 @@ class LoopArtifactKind(StrEnum):
     prototype = "prototype"
     test_report = "test_report"
     scorecard = "scorecard"
+    #: 真实执行沙箱的一次运行记录（见 ``services/loop_sandbox.py``）——
+    #: 它把「开发/测试」阶段从文本产出推进到真实进程执行，结果作为证据留档。
+    sandbox_run = "sandbox_run"
 
 
 class CheckResult(StrEnum):
@@ -1168,6 +1171,52 @@ class SessionSharePayload(StrictModel):
     role: Literal["viewer", "editor"] = "viewer"
 
 
+class GroupMemberPayload(StrictModel):
+    """成员组里的一行：邮箱 + 角色（与单个会话共享同样的两种角色）。"""
+
+    email: str = Field(min_length=3, max_length=320)
+    role: Literal["viewer", "editor"] = "viewer"
+
+
+class CreateGroupPayload(StrictModel):
+    """新建成员组：名字在同一个所有者名下唯一。"""
+
+    name: str = Field(min_length=1, max_length=80)
+
+
+class MemberGroupMemberView(StrictModel):
+    email: str
+    role: Literal["viewer", "editor"] = "viewer"
+    created_at: str = ""
+
+
+class MemberGroupView(StrictModel):
+    id: str
+    name: str
+    owner_email: str = ""
+    members: list[MemberGroupMemberView] = Field(default_factory=list)
+    created_at: str = ""
+
+
+class MemberGroupListPage(StrictModel):
+    items: list[MemberGroupView] = Field(default_factory=list)
+
+
+class ApplyGroupPayload(StrictModel):
+    """把某个成员组一次性应用到会话。"""
+
+    group_id: str = Field(min_length=8, max_length=64)
+
+
+class ApplyGroupReceipt(StrictModel):
+    """把成员组一次性应用到某个会话：新增 / 已是成员（跳过）/ 组内总人数。"""
+
+    group_id: str
+    added: int = 0
+    already_shared: int = 0
+    members_total: int = 0
+
+
 class LlmConfigPayload(StrictModel):
     """用户提交自己的模型 API 配置（BYOK）。
 
@@ -1379,6 +1428,51 @@ class LoopArtifactView(StrictModel):
     title: str
     size_bytes: int = 0
     created_at: str = ""
+
+
+#: 沙箱运行结果的稳定枚举：前端按 status 分支，不解析文案。
+class SandboxStatus(StrEnum):
+    passed = "passed"
+    failed = "failed"
+    timeout = "timeout"
+
+
+class SandboxRunPayload(StrictModel):
+    """一次沙箱执行的请求：``command`` 是 argv 数组（不经 shell，避免注入）。"""
+
+    command: list[str] = Field(min_length=1, max_length=12)
+    timeout_seconds: int | None = Field(default=None, ge=1, le=60)
+
+
+class SandboxRunReceipt(StrictModel):
+    """沙箱执行结果（同时作为 ``sandbox_run`` 产物负载的公共字段集合）。"""
+
+    id: str
+    loop_id: str
+    status: SandboxStatus
+    command_display: str
+    exit_code: int | None = None
+    duration_ms: int = 0
+    timeout_seconds: int = 0
+    stdout_tail: str = ""
+    stderr_tail: str = ""
+    truncated: bool = False
+    created_at: str = ""
+
+
+class SandboxRunListPage(StrictModel):
+    items: list[SandboxRunReceipt] = Field(default_factory=list)
+    next_cursor: str | None = None
+
+
+class SandboxStatusView(StrictModel):
+    """沙箱能力开关视图：前端据此决定按钮可用性与提示文案。"""
+
+    enabled: bool = False
+    allowed_commands: list[str] = Field(default_factory=list)
+    timeout_seconds: int = 0
+    max_output_bytes: int = 0
+    note: str = ""
 
 
 class LoopRoundView(StrictModel):

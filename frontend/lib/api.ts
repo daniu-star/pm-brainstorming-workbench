@@ -301,6 +301,8 @@ export interface V2RequestOptions {
   /** 幂等请求 ID；写请求缺省自动生成 */
   requestId?: string;
   signal?: AbortSignal;
+  /** 单请求超时覆盖（毫秒）；沙箱执行这类长任务需要 > 默认 15s */
+  timeoutMs?: number;
   headers?: Record<string, string>;
 }
 
@@ -350,7 +352,7 @@ export async function apiV2<T>(path: string, options: V2RequestOptions = {}): Pr
   if (options.body !== undefined) headers["Content-Type"] = "application/json";
   if (isWrite && requestId) headers["Idempotency-Key"] = requestId;
 
-  const guard = guardRequest(options.signal, REQUEST_TIMEOUT_MS);
+  const guard = guardRequest(options.signal, options.timeoutMs ?? REQUEST_TIMEOUT_MS);
   let res: Response;
   try {
     res = await fetch(`${API_BASE}${path}${buildQuery(options.query)}`, {

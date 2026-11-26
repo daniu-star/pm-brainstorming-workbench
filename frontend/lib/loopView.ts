@@ -131,6 +131,7 @@ export const ARTIFACT_TITLES: Record<LoopArtifactKind, string> = {
   prototype: "原型代码",
   test_report: "测试报告",
   scorecard: "评分卡",
+  sandbox_run: "执行记录",
 };
 
 export const SCORE_LABELS: Record<LoopScoreKey, string> = {
@@ -1178,6 +1179,20 @@ export interface ArtifactTabState {
   available: boolean;
 }
 
+/**
+ * 本轮五类产物的固定顺序。
+ *
+ * `sandbox_run` 是第 38 批新增的「执行记录」产物，由沙箱面板单独展示，
+ * 不属于闭环五阶段的结构化产物，因此不进入 Tab。
+ */
+const ROUND_ARTIFACT_KINDS: LoopArtifactKind[] = [
+  "mvp_spec",
+  "validation",
+  "prototype",
+  "test_report",
+  "scorecard",
+];
+
 /** 五类产物 Tab 是否已有内容：看快照里的产物对象，或本轮 artifacts 列表。 */
 export function artifactTabs(
   snapshot: LoopSnapshot | null | undefined,
@@ -1192,7 +1207,7 @@ export function artifactTabs(
     if (snapshot.scorecard) present.add("scorecard");
   }
   for (const artifact of round?.artifacts ?? []) present.add(artifact.kind);
-  return LOOP_ARTIFACT_KINDS.map((kind) => ({
+  return ROUND_ARTIFACT_KINDS.map((kind) => ({
     kind,
     title: ARTIFACT_TITLES[kind],
     available: present.has(kind),

@@ -138,6 +138,39 @@ TaskKind.loop_round: ("workflows.loop", "run_loop_round"),
 - 测试：`loop-view.test.cjs`（≥12 断言，纯函数）、`loop-page.test.cjs`（≥6 用例，用 `fetch` 桩与 node 内置测试跑组件逻辑导出，不依赖 jsdom）；`tsconfig.test.json` 把两个新 lib/页面依赖加入编译面。
 - 真实命令必须全绿：`npx tsc --noEmit`、`npm test`、`npm run build`。
 
+## 7.5 执行沙箱与运维健康（第 38 批）
+
+### 能力开关（fail-closed）
+
+| 环境变量 | 语义 | 默认 |
+| --- | --- | --- |
+| `LOOP_SANDBOX_ENABLED` | 总开关；关闭时所有运行请求 503 `SANDBOX_DISABLED`（**先判开关再判白名单**，否则空白名单会把命令误报成「不在白名单」） | `false` |
+| `LOOP_SANDBOX_ALLOWED_COMMANDS` | 解释器白名单（逗号分隔）；按文件名与去扩展名双重匹配（Windows 的 `python.exe` 对得上 `python`）；为空时同样 503 | 空 |
+| `LOOP_SANDBOX_TIMEOUT_SECONDS` | 单次执行超时；超时 `taskkill /F /T`（POSIX 走进程组）强杀 | `20` |
+| `LOOP_SANDBOX_MAX_OUTPUT_BYTES` | stdout/stderr 各自保留上限，超出截断并置 `truncated=true` | `8192` |
+| `LOOP_SANDBOX_WORKDIR` | 可选的工作目录根；缺省在系统临时目录下每次新建 | 空 |
+
+安全口径：**进程级隔离，不是安全边界**——独立临时目录、最小环境（剥离 `LLM_`/`STT_`/`TTS_`/`SMTP_`/`AUTH_SECRET`/`OPENAI`/`DEEPSEEK`/`API_KEY`/`SECRET`/`TOKEN` 前缀键）、argv 直传 `shell=False` 且拒绝 shell 元字符（`&&`、`||`、`;`、`|`、`>`、`<`、`` ` ``、`$(`、`\x00`）。白名单里的解释器本身能跑任意代码，只建议本地 / 受信环境开启。
+
+### 接口
+
+- `GET /api/v2/sandbox`（登录即可）→ `SandboxStatusView{enabled, allowed_commands, timeout_seconds, max_output_bytes, note}`，前端据此决定「运行命令」是否可用、灰掉时给哪条提示。
+- `POST /api/v2/loops/{loop_id}/sandbox-runs`（201）→ `SandboxRunReceipt{id, loop_id, status(passed|failed|timeout), command_display, exit_code, duration_ms, timeout_seconds, stdout_tail, stderr_tail, truncated, created_at}`。
+  - 请求体 `SandboxRunPayload{command: string[1..12], timeout_seconds?: int[1..60]}`；参数为空 / 超长（≤200 字符）/ 含元字符 → 422 `SANDBOX_COMMAND_NOT_ALLOWED`；非白名单 → 同码；超时 → `status=timeout`（**不抛异常**，因为超时本身就是证据）。
+  - 实现分两段提交：先开库确认归属并记 `loop.current_round` → 关连接跑进程（最长 60s，不占 DB 连接）→ 重开库 `loop_repo.append_artifact(kind=sandbox_run)` 落档。
+- `GET /api/v2/loops/{loop_id}/sandbox-runs?limit=20`（≤50）→ `{items: SandboxRunReceipt[]}`，只取 `kind=sandbox_run`，最新在前，坏负载跳过。
+- 存储：`loop_artifacts.kind` 的 CHECK 约束新增 `sandbox_run`；旧库由 `database._upgrade_loop_artifact_kind_check` 原子重建表（`CREATE ..._new` → INSERT → DROP → RENAME → 重建索引），避免旧库插新 kind 直接 IntegrityError。
+
+### `/ops` 运维健康页
+
+`GET /health/detail` 新增三块（其余块不变）：
+
+- `storage`：`{db, db_bytes, counts{sessions,messages,runs,steps,events,evidence,loops,loop_artifacts}}`，`db_bytes = PRAGMA page_count * page_size`（WAL 下比文件大小更准）。
+- `queues`：`{queued, running, oldest_queued_age_seconds}`。
+- `sandbox`：`SandboxStatusView` 原样。
+
+前端 `app/ops/page.tsx`（`lib/ops.ts` 提供纯函数）：整体状态徽标、Worker（stalled 时给可操作 hint）、队列、存储、沙箱、模型配置（不回显 Key）、报告质量六张卡 + 「常见问题排查顺序」清单。
+
 ## 8. 汇报格式
 
 结束时回一条消息给 Lead：①改了哪些文件（逐个列出）②真实命令与结果（贴 `Ran N tests / OK`、`npx tsc`、`npm test` 的原始计数行）③偏差/未完成项（阻塞点写清）④需要 Lead 决策的接口问题。

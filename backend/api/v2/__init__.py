@@ -9,6 +9,7 @@ from api.v2 import (
     commands,
     controls,
     evidence,
+    groups,
     llm_config,
     loops,
     messages,
@@ -21,6 +22,7 @@ from api.v2 import (
 router = APIRouter(prefix="/api/v2")
 router.include_router(sessions.router)
 router.include_router(shares.router)
+router.include_router(groups.router)
 router.include_router(messages.router)
 router.include_router(evidence.router)
 router.include_router(commands.router)

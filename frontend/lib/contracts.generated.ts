@@ -551,6 +551,7 @@ export const LOOP_ARTIFACT_KINDS = [
   "prototype",
   "test_report",
   "scorecard",
+  "sandbox_run",
 ] as const;
 export type LoopArtifactKind = (typeof LOOP_ARTIFACT_KINDS)[number];
 

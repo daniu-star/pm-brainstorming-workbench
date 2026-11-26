@@ -143,6 +143,10 @@ Open http://localhost:3000
 | `ACCOUNT_DAILY_TOKEN_LIMIT` | Per-account rolling 24h token limit (used tokens + worst-case reservation of queued runs); `0` disables. Over quota: HTTP 429 `ACCOUNT_QUOTA_EXCEEDED` | `0` |
 | `ACCOUNT_DAILY_CALL_LIMIT` | Per-account rolling 24h upstream-call limit; `0` disables | `0` |
 | `LLM_KEY_MODE` | `byok` (default) — platform is free but does not pay for model usage: every account must save its own base_url/model/api_key under 模型 API 设置 before creating sessions; `system` — reuse the shared `.env` key (local dev / automated tests only) | `byok` |
+| `LOOP_SANDBOX_ENABLED` | Loop Studio 执行沙箱总开关（**fail-closed**：默认关闭；开启后仍需白名单）。进程级隔离，不是安全边界，只在本地/受信环境开启 | `false` |
+| `LOOP_SANDBOX_ALLOWED_COMMANDS` | 允许的解释器白名单（逗号分隔，按文件名或去扩展名匹配，如 `python,node`）；为空时一律 503 `SANDBOX_DISABLED` | (empty) |
+| `LOOP_SANDBOX_TIMEOUT_SECONDS` | 单次执行超时（秒），超时强杀进程树 | `20` |
+| `LOOP_SANDBOX_MAX_OUTPUT_BYTES` | 单次 stdout/stderr 保留上限（超出截断并标 `truncated`） | `8192` |
 | `LLM_EMBEDDING_MODEL` | Embedding model | `text-embedding-3-small` |
 | `CORS_ORIGINS` | Comma-separated allowed frontend origins | local ports 3000/3001 |
 | `STT_API_KEY` | Optional API key for server-side speech recognition | (browser fallback when omitted) |

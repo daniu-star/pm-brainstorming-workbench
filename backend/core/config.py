@@ -96,6 +96,18 @@ class Settings(BaseSettings):
     # 四角色并发脑暴之间的间隔（秒），默认 0 表示不等待（B080）。
     agent_role_interval: float = 0.0
 
+    # Loop Studio 真实执行沙箱：把「开发/测试」阶段的产物真正跑起来。
+    # 默认关闭；`loop_sandbox_allowed_commands` 为空时即使 enabled 也不会执行（fail-closed）。
+    # 说明：这是**进程级隔离**（独立临时目录、最小环境变量、超时、输出截断），
+    # 不是安全边界——只在本地/受信环境开启，不要对外暴露给不可信用户。
+    loop_sandbox_enabled: bool = False
+    #: 逗号分隔的可执行文件名白名单（例如 ``python,node``）；只匹配 basename。
+    loop_sandbox_allowed_commands: str = ""
+    loop_sandbox_timeout_seconds: int = 20
+    loop_sandbox_max_output_bytes: int = 8192
+    #: 沙箱工作目录的父目录；空 → 系统临时目录（每次运行建独立子目录并清理）。
+    loop_sandbox_workdir: str = ""
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_cors_origins(cls, value):

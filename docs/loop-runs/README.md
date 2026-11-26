@@ -252,7 +252,22 @@
 | 平台要替所有用户付模型费；而线上收款需要营业执照 + ICP 备案 + 公网 HTTPS 回调，本机暂时都做不到 | 改为 **BYOK**：新增 `llm_configs`（每账户一条，Fernet 加密、只回显末 4 位）；`llm_config_service.gate` 在建会话与提交需要模型的命令两处拦截，Worker 执行 Run 时再兜一层，未配置统一 428 `LLM_CONFIG_REQUIRED`；前端 `LlmConfigGate` 整屏引导 + `/settings/llm` 表单（保存并测试连通性）；`LLM_KEY_MODE=system` 仅供本地联调/自动化 | `backend/tests/test_llm_config.py` 11 例（加密脱敏 2 + 服务闸门 4 + 接口 3 + 执行器兜底 2）；`frontend/tests/llm-config.test.cjs` 5 例（闸门状态机）；755 后端 / 271 前端 |
 | 前端闸门首版没生效：`lib/llmConfig.ts` 调 `apiV2("/llm-config")`，而 `apiV2` 不会补 `/api/v2` 前缀（其余调用都传完整路径）→ 请求打到 `:8001/llm-config` 得 404，闸门按「读配置失败放行」直接渲染业务页面 | 四个调用改为完整路径 `/api/v2/llm-config`（含 `/test`） | 真 Chrome（CDP）复验：未配置时整屏「先配置你自己的模型 API」→ `/settings/llm` 表单可用 → `PUT` 保存后刷新自动放行，输出 `BYOK_GATE_CDP_OK` |
 
-当前基线：**后端 764 用例 OK / 前端 283 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（8 步，含 db-report） / 磁盘清理脚本（报告 + `--apply`） / 中间载荷 90 天保留策略 + `db_maintenance.py report|vacuum` / 账户级配额（429 `ACCOUNT_QUOTA_EXCEEDED` + `GET /api/v2/quota`） / 账户自带模型密钥（428 `LLM_CONFIG_REQUIRED` + 整屏配置引导 + 密钥加密只回末 4 位，真 Chrome 实测 `BYOK_GATE_CDP_OK`）**。
+## 第 37 批（团队工作区：成员组一次性授予多人，2026-11-26）
+
+| 问题 | 修复 | 证据 |
+| --- | --- | --- |
+| 会话共享只能一个个加人：同一批同事（评审组、设计组）每次都要重输邮箱，且「组」的概念只在人脑里；成员的只读/可操作角色也没法按组统一 | 新增 `member_groups` + `member_group_members` 两张表（组名同 owner 唯一、成员邮箱复合主键、组级联删成员）与 `member_group_repo`（`create_group/list_groups/require_group/add_member/remove_member/delete_group/apply_group`，每组上限 50 人）；**组只存名单、不授予权限**——`POST /sessions/{id}/shares/from-group` 由会话所有者把组内成员按各自角色写入 `session_shares`（跳过所有者本人与已在列表里的人，返回 `added/already_shared/members_total`）；新增 `GET/POST /api/v2/groups`、`DELETE /api/v2/groups/{id}`、`POST/DELETE /api/v2/groups/{id}/members[/{email}]` | `backend/tests/test_member_groups.py` 8 例（建组/同名 422/重复加人改角色/不能加所有者/viewer 只读/陌生人 403/应用幂等 `added=0`/删组保留已授予访问）；前端 `app/settings/team` 团队工作区 + 会话页「共享」面板里的「从成员组一次性添加」；`frontend/tests/team-groups.test.cjs` 9 例 |
+| 删组会不会把已发出去的访问权一起收回？语义必须说清 | 明确「组=名单、共享行=授权」：删组只删名单，已授予的 `session_shares` 保留（要收回得逐个移除共享） | 用例断言「删组后成员仍能读、移除共享行后 403」；页面文案同步写明 |
+
+## 第 38 批（Loop Studio 真实执行沙箱 + /ops 运维健康页，2026-11-26）
+
+| 问题 | 修复 | 证据 |
+| --- | --- | --- |
+| Loop Studio 的「开发/测试」阶段只能生成文本产物，没有真的跑过一次代码——用户无法验证 MVP 规格里的命令是否可执行 | 新增 `services/loop_sandbox.py`：**fail-closed**（`LOOP_SANDBOX_ENABLED` 默认关，且 `LOOP_SANDBOX_ALLOWED_COMMANDS` 为空时一律 503 `SANDBOX_DISABLED`）；argv 直传 `shell=False` 并拒绝 `&&`/`\|`/`;`/`>`/`$(` 等元字符；独立临时目录 + 剥离 `LLM_`/`SMTP_`/`AUTH_SECRET` 等敏感环境变量 + 超时 `taskkill /F /T` 强杀 + 输出截断；每次运行都作为 `sandbox_run` 产物落档（`loop_repo.append_artifact` 不去重）；新增 `GET /api/v2/sandbox`（能力视图）与 `POST/GET /api/v2/loops/{id}/sandbox-runs`（长任务分两段：先确认归属 → 关连接跑进程 → 重开库落证据，避免长时间占用 DB 连接） | `backend/tests/test_loop_sandbox.py` 16 例（默认关闭/空白名单/白名单外 422/4 组元字符/超长参数/成功 `passed`/非 0 退出 `failed`/超时 `timeout`/输出截断/多次追加/他人闭环 403/子进程看不到密钥/UTF-8 环境/临时目录清理）；前端 `components/loop/SandboxPanel.tsx` + `lib/loopSandbox.ts`（argv 解析与预校验）+ `tests/loop-sandbox.test.cjs` 9 例 |
+| 线上排障要登服务器：Worker 是否卡死、库多大、队列多深、沙箱为什么是灰的，全都没有页面 | 新增 `/ops` 运维健康页（只读聚合 `GET /health/detail`）：`storage`（`page_count*page_size` + 8 张主表行数）、`queues`（排队/运行/最久排队时长）、`sandbox`（开关+白名单+超时）、`worker`（stalled + 可操作 hint）、`report_quality`、`budget_profile` 与 `llm` 块；页面附「常见问题排查顺序」 | `backend/tests/test_ops_health.py` 4 例；`frontend/app/ops/page.tsx` + `lib/ops.ts` + `tests/ops.test.cjs` 8 例 |
+| 沙箱执行最长 60 秒，而前端 `apiV2` 默认 15 秒超时 → 按钮先报 `TIMEOUT` 但服务端还在跑 | `V2RequestOptions` 新增 `timeoutMs` 覆盖，沙箱调用按「服务端超时 + 10 秒」放宽 | `lib/loopSandbox.ts::runSandbox` 传 `timeoutMs`；`tsc` 通过 |
+
+当前基线：**后端 792 用例 OK / 前端 306 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（8 步，含 db-report） / 磁盘清理脚本（报告 + `--apply`） / 中间载荷 90 天保留策略 + `db_maintenance.py report|vacuum` / 账户级配额（429 `ACCOUNT_QUOTA_EXCEEDED` + `GET /api/v2/quota`） / 账户自带模型密钥（428 `LLM_CONFIG_REQUIRED` + 整屏配置引导 + 密钥加密只回末 4 位，真 Chrome 实测 `BYOK_GATE_CDP_OK`） / 团队工作区成员组（组=名单、共享行=授权，应用幂等） / Loop 执行沙箱（fail-closed + argv 直传 + 超时强杀 + 产物留档）与 `/ops` 运维健康页（storage/queues/sandbox 三块）**。
 
 ## 第 22 批（发版前一键体检，2026-11-24）
 

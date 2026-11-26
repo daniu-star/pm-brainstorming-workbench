@@ -145,6 +145,27 @@ cd backend
 | AC-31 | 点真实「退出登录」→ 换 B Cookie 登录：历史抽屉只有 B、页面无 A 消息、storage 无 A 会话 ID、直接打开 A 会话显示「加载失败」 | `docs/browser-qa/e2e/ac-31-account-a.png`、`ac-31-account-b.png` |
 | AC-33 | 点「同意并开启摄像头面试」→ 真实 `NotAllowedError` 浮层（headless 默认拒绝 `getUserMedia`）→「继续仅文字面试」后文字输入可用；TTS 播放中麦克风 `disabled`、切「文字」立即无「正在发言…/正在播报」；点麦克风→真实拒绝浮层；文字回答提交后审计推进（`question_count` 1→2） | `docs/browser-qa/e2e/ac-33-camera-denied.png`、`ac-33-voice-playing.png`、`ac-33-text-answer.png` |
 
+## 7. 第 38 批补充：`/ops` 运维健康页 + Loop 执行沙箱面板（2026-11-26）
+
+`/ops` 与 Loop 工作室的「执行沙箱」面板不进日常 e2e（需要登录 + 已配置 BYOK），按发布前本地跑一次：
+
+```bash
+# 前置：start.bat 拉起 8001/3001，且 backend/.env 里 LOOP_SANDBOX_ENABLED=true、白名单含 python
+# 用 scripts/browser_e2e/{cdp,seed}.py 铸 Cookie 后：
+#   1) 打开 /ops：断言出现「运维健康」与 Worker/队列/存储/沙箱/模型/报告质量 六张卡；
+#   2) 打开 /session/{id}/loop：断言出现「执行沙箱」面板；
+#   3) 在面板输入 python -c "print(6*7)" → 点「运行命令」→ 断言出现「通过」「退出码 0」「42」。
+```
+
+| 场景 | 断言要点 | 截图 |
+| --- | --- | --- |
+| `/ops` 运维健康页 | 整体状态徽标、六张卡（Worker/队列/存储/沙箱/模型/报告质量）、沙箱块显示「已开启 · 白名单 python、node · 超时 20 秒」 | `docs/browser-qa/e2e/ops-health-page.png` |
+| Loop 执行沙箱 | 面板出现 → 输入 `python -c "print(6*7)"` → 点「运行命令」→ 运行记录显示「通过」「退出码 0 · 耗时 …」「stdout: 42」；无未捕获异常 | `docs/browser-qa/e2e/loop-sandbox-run.png` |
+
+实测（2026-11-26，本机 headless Chrome）：`LOOP_SANDBOX_CDP_OK ['ops-page', 'sandbox-panel', 'sandbox-run-passed']`；
+同一会话内的 API 冒烟另验了超时（`timeout_seconds=1` + `sleep(5)` → `status=timeout`、`exit_code=None`、`duration_ms≈1.2s`）、
+元字符拒绝（`print(1) && echo 2` → 422 `SANDBOX_COMMAND_NOT_ALLOWED`）与列表接口（2 条、最新在前）。
+
 实现说明：
 
 - `cdp.py`：极简 CDP 客户端（`Target.createTarget` / `Page.navigate` / `Runtime.evaluate` /

@@ -8,6 +8,7 @@ M1（v4 契约）变更：
 """
 import asyncio
 import logging
+import time as _time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
@@ -25,6 +26,7 @@ from api.voice_routes import router as voice_router
 from core.auth import auth_is_configured, smtp_is_configured, verify_session_token
 from core.config import settings
 from domain.errors import ErrorCode
+from sqlalchemy import func as _func, select as _select
 
 # 统一日志格式：时间 / 级别 / 模块（B074）。
 logging.basicConfig(
@@ -345,6 +347,98 @@ def _worker_status() -> dict:
         db.close()
 
 
+def _ops_storage() -> dict:
+    """存储用量（第 38 批 /ops 页）：库文件大小 + 主要表的行数。
+
+    只做只读统计：行数是 ``COUNT(*)``（本地 SQLite 足够快），
+    库大小取 ``PRAGMA page_count * page_size``，不读文件系统元数据
+    （WAL 模式下文件大小会滞后于逻辑页数）。
+    """
+
+    from repositories import database as _database
+
+    try:
+        engine = _database.get_engine()
+        with engine.connect() as conn:
+            page_count = conn.exec_driver_sql("PRAGMA page_count").scalar() or 0
+            page_size = conn.exec_driver_sql("PRAGMA page_size").scalar() or 0
+        counts: dict[str, int] = {}
+        with _database.session_scope() as db:
+            for name, model in (
+                ("sessions", _database.SessionRow),
+                ("messages", _database.MessageRow),
+                ("runs", _database.RunRow),
+                ("steps", _database.StepRow),
+                ("events", _database.EventRow),
+                ("evidence", _database.EvidenceRow),
+                ("loops", _database.LoopRow),
+                ("loop_artifacts", _database.LoopArtifactRow),
+            ):
+                counts[name] = int(
+                    db.execute(_select(_func.count()).select_from(model)).scalar_one()
+                )
+        return {
+            "db": True,
+            "db_bytes": int(page_count) * int(page_size),
+            "counts": counts,
+        }
+    except Exception:  # pragma: no cover - 诊断接口不应让健康检查崩溃
+        logger.exception("event=health.storage_failed")
+        return {"db": False, "db_bytes": 0, "counts": {}}
+
+
+def _ops_queues() -> dict:
+    """队列深度：排队中 / 运行中的 Run 数与最久排队时长。"""
+
+    from repositories import database as _database
+
+    try:
+        now = _time.time()
+        oldest_iso = None
+        with _database.session_scope() as db:
+            queued = int(
+                db.execute(
+                    _select(_func.count())
+                    .select_from(_database.RunRow)
+                    .where(_database.RunRow.status == "queued")
+                ).scalar_one()
+            )
+            running = int(
+                db.execute(
+                    _select(_func.count())
+                    .select_from(_database.RunRow)
+                    .where(_database.RunRow.status == "running")
+                ).scalar_one()
+            )
+            oldest_iso = db.execute(
+                _select(_func.min(_database.RunRow.created_at)).where(
+                    _database.RunRow.status == "queued"
+                )
+            ).scalar()
+        oldest_epoch = _parse_iso_seconds(oldest_iso)
+        oldest_age = None if oldest_epoch is None else round(max(0.0, now - oldest_epoch), 1)
+        return {
+            "queued": queued,
+            "running": running,
+            "oldest_queued_age_seconds": oldest_age,
+        }
+    except Exception:  # pragma: no cover
+        logger.exception("event=health.queues_failed")
+        return {"queued": 0, "running": 0, "oldest_queued_age_seconds": None}
+
+
+def _ops_sandbox() -> dict:
+    """沙箱能力开关：/ops 页要能看出「为什么执行按钮是灰的」。"""
+
+    try:
+        from services import loop_sandbox
+
+        return loop_sandbox.sandbox_status().model_dump(mode="json")
+    except Exception:  # pragma: no cover
+        logger.exception("event=health.sandbox_failed")
+        return {"enabled": False, "allowed_commands": [], "timeout_seconds": 0, "max_output_bytes": 0, "note": ""}
+
+
 @app.get("/health")
 async def health():
     """公开健康检查：仅返回总体状态，不暴露配置细节（B070）。"""
@@ -390,4 +484,8 @@ async def health_detail(request: Request):
         },
         # 报告质量（第 30 批）：模型是否老在报告里写没有来源的数字。
         "report_quality": _report_quality(),
+        # /ops 运维页（第 38 批）：存储用量、队列深度、沙箱开关。
+        "storage": _ops_storage(),
+        "queues": _ops_queues(),
+        "sandbox": _ops_sandbox(),
     }

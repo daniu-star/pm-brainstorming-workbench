@@ -4,11 +4,14 @@
  * 会话共享面板（只挂在会话页头部，只有所有者能看到管理按钮）。
  *
  * 交互：
- * * 打开时拉 `GET /api/v2/sessions/{id}/shares`；
+ * * 打开时拉 `GET /api/v2/sessions/{id}/shares` 与团队成员组列表；
  * * 填邮箱 + 选角色 → `POST`，列表就地更新；
- * * 每行「移除」→ `DELETE`，成功后从列表删掉。
- * 角色语义见 `frontend/lib/shares.ts` 的 SHARE_ROLE_HINTS。
+ * * 每行「移除」→ `DELETE`，成功后从列表删掉；
+ * * 选一个成员组 → 「应用到这个会话」→ `POST /shares/from-group`，按组内角色一次性写入，
+ *   幂等（已在共享列表里的人被跳过），成功后重新拉一遍共享列表。
+ * 角色语义见 `frontend/lib/shares.ts` 的 SHARE_ROLE_HINTS；组语义见 `frontend/lib/teamGroups.ts`。
  */
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { errorMessage, isApiError } from "@/lib/api";
 import {
@@ -22,6 +25,14 @@ import {
   type SessionShare,
   type SessionShareRole,
 } from "@/lib/shares";
+import {
+  applyGroupHint,
+  applyGroupToSession,
+  groupErrorHint,
+  groupSummary,
+  listTeamGroups,
+  type TeamGroup,
+} from "@/lib/teamGroups";
 
 const INPUT_CLASS =
   "w-full min-h-[40px] rounded-lg border border-zinc-700/70 bg-dark-900/70 px-3 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-brand-500/60 focus:outline-none";
@@ -41,6 +52,10 @@ export function SharePanel({
   const [role, setRole] = useState<SessionShareRole>("viewer");
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [groups, setGroups] = useState<TeamGroup[] | null>(null);
+  const [groupError, setGroupError] = useState<string | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState("");
+  const [groupNotice, setGroupNotice] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     setLoadError(null);
@@ -56,6 +71,43 @@ export function SharePanel({
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  useEffect(() => {
+    let aborted = false;
+    listTeamGroups()
+      .then((page) => {
+        if (aborted) return;
+        const items = page.items ?? [];
+        setGroups(items);
+        setSelectedGroup((prev) => prev || items[0]?.id || "");
+      })
+      .catch((err) => {
+        if (aborted) return;
+        setGroups([]);
+        setGroupError(errorMessage(err));
+      });
+    return () => {
+      aborted = true;
+    };
+  }, []);
+
+  const applyGroup = async () => {
+    if (!selectedGroup) {
+      setGroupNotice("先选择一个成员组");
+      return;
+    }
+    setBusy(true);
+    setGroupNotice(null);
+    try {
+      const receipt = await applyGroupToSession(sessionId, selectedGroup);
+      setGroupNotice(applyGroupHint(receipt));
+      await reload();
+    } catch (err) {
+      setGroupNotice(groupErrorHint(err));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const submit = async () => {
     const normalized = normalizeShareEmail(email);
@@ -179,6 +231,60 @@ export function SharePanel({
             ))}
           </ul>
         )}
+      </div>
+
+      <div className="mt-3 border-t border-zinc-800/60 pt-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="text-[11px] font-semibold text-zinc-300">从成员组一次性添加</h3>
+          {groups && groups.length > 0 ? (
+            <>
+              <select
+                aria-label="选择成员组"
+                className={`${INPUT_CLASS} sm:w-[220px]`}
+                value={selectedGroup}
+                onChange={(event) => setSelectedGroup(event.target.value)}
+                disabled={busy}
+              >
+                {groups.map((group) => (
+                  <option key={group.id} value={group.id}>
+                    {group.name}（{groupSummary(group)}）
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => void applyGroup()}
+                disabled={busy || !selectedGroup}
+                className="min-h-[36px] shrink-0 rounded-lg border border-zinc-600/70 bg-zinc-800/40 px-3 text-[11px] text-zinc-200 hover:bg-zinc-800/70 disabled:opacity-50"
+              >
+                应用到这个会话
+              </button>
+            </>
+          ) : groups === null ? (
+            <span className="text-[11px] text-zinc-500">正在读取成员组…</span>
+          ) : (
+            <span className="text-[11px] text-zinc-500">
+              还没有成员组，先
+              <Link href="/settings/team" className="ml-1 text-brand-300 underline">
+                在团队工作区建一个
+              </Link>
+              。
+            </span>
+          )}
+        </div>
+        {groupError ? (
+          <p role="alert" className="mt-1 text-[11px] text-red-400">
+            读取成员组失败：{groupError}
+          </p>
+        ) : null}
+        {groupNotice ? (
+          <p role="status" className="mt-1 text-[11px] text-amber-300">
+            {groupNotice}
+          </p>
+        ) : null}
+        <p className="mt-1 text-[11px] text-zinc-500">
+          组内成员按各自的只读 / 可操作角色写入，已在列表里的人会被跳过。
+        </p>
       </div>
     </section>
   );

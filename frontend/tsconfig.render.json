@@ -17,6 +17,7 @@
   "files": [
     "app/session/[id]/audit/page.tsx",
     "app/session/[id]/loop/page.tsx",
+    "app/settings/team/page.tsx",
     "components/Toast.tsx",
     "components/brief/BriefCard.tsx",
     "components/canvas/CanvasPanel.tsx",
@@ -35,6 +36,8 @@
     "lib/sse.ts",
     "lib/stateGuards.ts",
     "lib/types.ts",
-    "store/sessionStore.ts"
+    "store/sessionStore.ts",
+    "components/loop/SandboxPanel.tsx",
+    "app/ops/page.tsx"
   ]
 }

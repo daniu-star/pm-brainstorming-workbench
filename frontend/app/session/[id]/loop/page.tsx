@@ -17,6 +17,7 @@ import { useParams } from "next/navigation";
 import { LayersIcon } from "@/components/icons";
 import { toast } from "@/components/Toast";
 import { isApiError, getLoopArtifact, getLoopRound, listLoops } from "@/lib/api";
+import { SandboxPanel } from "@/components/loop/SandboxPanel";
 import { useSessionStore } from "@/store/sessionStore";
 import type {
   LoopArtifactKind,
@@ -1627,6 +1628,7 @@ function LoopPageContent() {
               isCurrent={isCurrentLoop}
             />
             <RoundComparisonBar comparison={comparison} />
+            <SandboxPanel loopId={currentLoop.loop_id} readOnly={!isCurrentLoop} />
             {isCurrentLoop ? (
               <DecisionBar
                 snapshot={currentLoop}
