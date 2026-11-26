@@ -102,6 +102,35 @@ class ReadinessProbeTests(V2ApiTestBase):
         self.assertEqual(self.client.get("/health").status_code, 200)
 
 
+class CorsPolicyTests(V2ApiTestBase):
+    """CORS 白名单不能出现通配符（第 42 批评测记录 D=85 的单点绕过）。"""
+
+    def test_parse_drops_wildcard_and_keeps_allowlist(self) -> None:
+        from core.config import _parse_cors_origins
+
+        parsed = _parse_cors_origins("https://evil.example,*")
+        self.assertEqual(parsed, ["https://evil.example"])
+        self.assertNotIn("*", parsed)
+
+    def test_wildcard_only_falls_back_to_known_origins(self) -> None:
+        from core.config import _parse_cors_origins
+
+        parsed = _parse_cors_origins("*")
+        self.assertNotIn("*", parsed)
+        self.assertIn("https://www.brainstorming.top", parsed)
+        self.assertTrue(any("localhost" in o for o in parsed))
+
+    def test_unknown_origin_gets_no_cors_headers(self) -> None:
+        resp = self.client.get("/health", headers={"Origin": "https://evil.example"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotIn("access-control-allow-origin", {k.lower() for k in resp.headers})
+
+    def test_allowlisted_origin_gets_cors_headers(self) -> None:
+        resp = self.client.get("/health", headers={"Origin": "http://localhost:3001"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers.get("access-control-allow-origin"), "http://localhost:3001")
+
+
 class PersistenceWarningTests(V2ApiTestBase):
     """线上 P0-2：无持久卷时不能让数据丢失这件事「静默发生」。"""
 

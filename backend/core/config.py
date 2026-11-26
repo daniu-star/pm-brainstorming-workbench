@@ -17,11 +17,43 @@ _DEFAULT_CORS_ORIGINS = [
     "http://127.0.0.1:3001",
 ]
 
+# 生产站点（同源反代后其实用不到 CORS，但保留白名单以免哪天需要直连）。
+_KNOWN_PRODUCTION_ORIGINS = ["https://www.brainstorming.top", "https://brainstorming.top"]
+
+_WILDCARD_ORIGIN = "*"
+
 
 def _parse_cors_origins(raw: str | None) -> list[str]:
+    """解析逗号分隔的允许来源，并**丢弃通配符**。
+
+    通配符 ``*`` 与 ``allow_credentials=True`` 组合时，Starlette 会把请求的
+    ``Origin`` 原样回显、再带 ``Access-Control-Allow-Credentials: true``——
+    等于允许任意站点携带会话 Cookie 读接口（线上评测记录 D=85 的单点绕过）。
+    这里直接拒绝通配符：要么给具体域名，要么就靠同源反代（推荐）。
+    """
+
     if not raw:
         return list(_DEFAULT_CORS_ORIGINS)
-    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+    parsed: list[str] = []
+    for origin in (item.strip() for item in raw.split(",")):
+        if not origin:
+            continue
+        if origin == _WILDCARD_ORIGIN:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "event=cors.wildcard_origin_ignored hint=拒绝通配符来源（与 allow_credentials 组合等于放开任意站点），"
+                "请改成具体域名或走同源反代"
+            )
+            continue
+        parsed.append(origin)
+
+    # 配置里只写了通配符时回落到默认本地白名单 + 已知生产域，避免变成「空白名单」后
+    # 本地开发也全被浏览器拦掉。
+    if not parsed:
+        return [*_DEFAULT_CORS_ORIGINS, *_KNOWN_PRODUCTION_ORIGINS]
+    return parsed
 
 
 class Settings(BaseSettings):

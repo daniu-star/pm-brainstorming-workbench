@@ -98,7 +98,7 @@
 ## 7. 如何复跑验收
 
 ```bash
-# 后端全量（825）
+# 后端全量（837）
 cd backend && ../.venv/Scripts/python.exe -m unittest discover -s tests
 
 # 前端类型、用例、构建、冒烟
