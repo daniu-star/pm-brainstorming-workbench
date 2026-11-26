@@ -204,6 +204,55 @@ cd backend
 同一轮的真 HTTP 冒烟另验了 `DELETE /api/v2/sessions/{id}/share`（成员退出后 v2 详情 403）、
 `/api/v2/sessions` 与旧 `/api/session` 的 `my_role`（owner / viewer）、`/health/detail` 六个块。
 
+## 10. 第 43 批补充：线上同源修复与登录链路复验（2026-11-27）
+
+线上曾出现「点『配置模型 API Key』报 `读取模型配置失败：网络连接失败`」+ 页面偶发英文
+`Failed to fetch`，根因是构建产物把 API 基址编成了 `https://123chenjunliang-pm-brainstorm-workbench.hf.space`
+（跨域），而 HF Space 平台代理对 `OPTIONS` 预检**不回** `Access-Control-Allow-Credentials`，
+浏览器因此对所有带 JSON 的 POST/PUT 直接拒发。修复后 `frontend/lib/api.ts::resolveApiBase()`
+在生产页面强制同源 `/backend`（仅 `NEXT_PUBLIC_ALLOW_CROSS_ORIGIN_API=1` 例外）。
+
+### 复跑方式
+
+```powershell
+# 1) 确认线上 bundle 已编入同源逻辑（应能看到 return "localhost"===e||...?"/backend"）
+curl.exe -s "https://www.brainstorming.top/_next/static/chunks/819-8c3bedec9b691589.js" | Select-String '"/backend"'
+
+# 2) 真机：打开 /login 填邮箱发码，确认无跨域脚本、无英文报错、验证码走日志兜底
+.\venv\Scripts\python.exe -X utf8 scripts\check_retry_cdp.py --web https://www.brainstorming.top
+```
+
+### 本次实测（2026-11-27 01:5x，CDP 真 Chrome）
+
+| 检查 | 结果 |
+| --- | --- |
+| `/login` 可渲染（标题「登录」） | `login-page` 命中 |
+| 页面无指向 `hf.space` / `123chenjunliang` 的脚本 | `no-cross-origin-script` 命中 |
+| 邮箱可填入并触发 React onChange | `email-filled` 命中 |
+| 点击「发送验证码」后进入验证码阶段 | `code-stage-visible` 命中 |
+| 页面无「网络连接失败」文案 | `no-network-error-copy` 命中 |
+| 出现「邮件通道不可用 / 服务日志」兜底提示 | `log-fallback-notice` 命中 |
+| 无未捕获异常 | `no-page-errors` 命中 |
+
+实测输出：`LOGIN43_LIVE_OK`（8 项全部命中），邮箱 `probe43-<uuid>@example.com`。
+
+截图：`docs/browser-qa/e2e/login43-live-same-origin.png`
+
+### 平台层口径（重要，勿再误判为应用缺陷）
+
+经 `Origin: null`、`Origin: https://random-xyz.example` 两种请求复核：
+
+- 直连 Space `https://123chenjunliang-pm-brainstorm-workbench.hf.space/health` → 回包带
+  `access-control-allow-origin: <回显> `、`access-control-allow-credentials: true`、
+  `access-control-expose-headers: *`，并带 HF 代理专属头 `x-request-id`、`x-proxied-replica`、`x-proxied-path`；
+- 同源反代 `https://www.brainstorming.top/backend/health` → 同样的反射头；
+- 但应用侧 `backend/core/config.py::_parse_cors_origins` 已丢弃 `*` 并回落白名单，
+  `backend/tests/test_platform_readiness.py::CorsPolicyTests` 4 例证明未知 Origin 不会被应用回显。
+
+结论：**凭据反射发生在 Hugging Face Space 的平台代理层，不是本仓库的中间件**；
+真实缓解依赖 Cookie `SameSite=lax`（跨站 fetch 不携带会话 Cookie）。
+如需彻底消除，只能换掉平台前置代理或改为自有反代。
+
 ## 9. 第 41 批补充：断网/网关抖动时的中文提示与自愈（2026-11-26）
 
 线上曾出现「点『配置模型 API Key』报『读取模型配置失败：网络连接失败』」与页面偶发英文
