@@ -8,9 +8,9 @@
 
 | 检查项 | 结果 |
 | --- | --- |
-| 后端全量 | `Ran 837 tests` / OK（含 M2/M3、闭环、数据生命周期、崩溃注入、旧 ID 别名、AC-20 数字守卫、结项报告容错、Worker 卡死诊断、维护性清理、账户配额、账户自带模型密钥） |
+| 后端全量 | `Ran 841 tests` / OK（含 M2/M3、闭环、数据生命周期、崩溃注入、旧 ID 别名、AC-20 数字守卫、结项报告容错、Worker 卡死诊断、维护性清理、账户配额、账户自带模型密钥） |
 | 前端类型 + 用例 | `npx tsc --noEmit` 0 错；`npm test` **334** 用例 pass（含页面级渲染 8 例 + 证据表单渲染 3 例 + 额度视图 6 例） |
-| 前端构建 + 冒烟 | `npm run build` exit 0（7 条路由，含 `/session/[id]/audit` 8.11 kB）；`npm run test:e2e` 1 pass |
+| 前端构建 + 冒烟 | `npm run build` exit 0（12 条路由，含 `/settings/access`、`/ops`、`/settings/team`、`/session/[id]/loop`）；`npm run test:e2e` 1 pass |
 | 契约 parity | `tests.test_contract_parity` **13** 例，前后端枚举/常量/Literal 按序比对 |
 | 跨进程并发 | `tests.test_cross_process` **6** 例（同 request_id 单 Run、SESSION_BUSY、双 Worker 单领、审计并发、end/cancel 竞争、验证码限流共享） |
 | 崩溃注入 | `tests.test_control_crash` **3** 例（真 kill/restart）+ `tests.test_crash_atomicity`（真 `os._exit(9)`） |
@@ -98,7 +98,7 @@
 ## 7. 如何复跑验收
 
 ```bash
-# 后端全量（837）
+# 后端全量（841）
 cd backend && ../.venv/Scripts/python.exe -m unittest discover -s tests
 
 # 前端类型、用例、构建、冒烟
