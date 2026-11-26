@@ -155,6 +155,30 @@ class DeploymentEnvCompatTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"SMTP_FROM_EMAIL": "sender@example.com"}, clear=False):
             fresh = Settings(_env_file=None)
         self.assertEqual(fresh.smtp_from, "sender@example.com")
+class SpaceDeployScriptTests(unittest.TestCase):
+    """Space 部署脚本契约：只推可部署子集（二进制会被 HF pre-receive 钩子拒收）。"""
+
+    def setUp(self) -> None:
+        self.script = REPO_ROOT / "scripts" / "deploy_hf_space.py"
+        self.text = self.script.read_text(encoding="utf-8")
+
+    def test_script_exists_and_uses_subset_archive(self) -> None:
+        self.assertTrue(self.script.is_file())
+        # 子集必须覆盖镜像构建所需文件，且用 git archive 导出（只含已跟踪文件）。
+        for name in ("Dockerfile", ".dockerignore", "README.md", "backend", "scripts/container_start.py"):
+            self.assertIn(f'"{name}"', self.text, name)
+        self.assertIn("git archive", " ".join(self.text.split()))
+
+    def test_script_pushes_force_to_space_main_branch(self) -> None:
+        self.assertIn("space-main", self.text)
+        self.assertIn("push", self.text)
+        self.assertIn("--force", self.text)
+        # 不允许把前端目录带进 Space（wasm 模型是二进制）。
+        self.assertNotIn('"frontend"', self.text)
+
+    def test_script_cleans_up_worktree(self) -> None:
+        self.assertIn("worktree", self.text)
+        self.assertIn("shutil.rmtree", self.text)
 
 
 if __name__ == "__main__":

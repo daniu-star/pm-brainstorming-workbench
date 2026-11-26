@@ -81,6 +81,23 @@ HF Space 会封掉 25 / 465 / 587 出站（连不上 `smtp.163.com`），此时�
 日志里看 `event=auth.email_proxy_sent`（代理成功）、`auth.email_proxy_failed`（代理失败已回落）、
 `auth.email_proxy_rejected`（代理返回 success=false）、`auth.code_log_fallback`（已写日志兜底）四种事件即可判断当前走哪条路。
 
+### 重新部署 Space（只推可部署子集）
+
+HF Space 的 pre-receive 钩子拒收二进制文件（仓库里的 MediaPipe wasm、浏览器验收截图），
+所以 Space 只接收 `Dockerfile`、`.dockerignore`、`README.md`、`backend/`、
+`scripts/container_start.py` 这一份子集。用脚本一键完成：
+
+```bash
+git push origin feat/prd-v4-m1:main          # 先让 Vercel 重建前端
+python scripts/deploy_hf_space.py --dry-run  # 看将推送哪些文件
+python scripts/deploy_hf_space.py            # 子集提交 + 强推 Space main，自动 rebuild
+```
+
+脚本在临时 worktree 里基于 `space-main` 分支重建提交，不会动主分支；无变更时直接跳过。
+推送后 Space 的 runtime.stage 会经历 BUILDING → RUNNING；用浏览器或 curl 打开
+https://www.brainstorming.top/backend/health 与 https://www.brainstorming.top/backend/openapi.json
+（后者能列出 /api/v2/access 等新路由）确认新版上线。
+
 ### 部署顺序
 
 1. 后端先上（Space build 完成、`/health` 返回 200）；
