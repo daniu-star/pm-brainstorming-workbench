@@ -56,6 +56,15 @@ async def lifespan(app: FastAPI):
     except Exception:  # noqa: BLE001 - 数据库不可用不应阻止只读接口启动，但必须留痕
         logger.exception("数据库初始化失败")
 
+    # 快照持久化（第 46 批）：HF 免费实例没有持久卷，靠私有 dataset 仓库兜底。
+    # 未配置 DB_SNAPSHOT_REPO/TOKEN 时 start() 就是 no-op，本地开发完全不受影响。
+    from core.db_snapshot import SnapshotUploader, snapshot_config
+
+    uploader = SnapshotUploader(snapshot_config())
+    if uploader.enabled:
+        logger.info("event=db_snapshot.enabled repo=%s", uploader._config.get("repo"))  # noqa: SLF001
+    uploader.start()
+
     # 启动时确保 RAG 知识库索引存在且最新（B004）。
     try:
         from rag.index_builder import build_if_stale
@@ -67,6 +76,12 @@ async def lifespan(app: FastAPI):
         logger.exception("RAG 知识库索引构建失败")
 
     yield
+
+    # 退出前先把库快照推上去（第 46 批），再清理内存状态。
+    try:
+        uploader.stop(flush=True)
+    except Exception:  # noqa: BLE001 - 收尾失败不能影响关停
+        logger.exception("event=db_snapshot.shutdown_failed")
 
     from core.auth import _gc_verification_codes, _gc_send_times
     import time
@@ -483,9 +498,11 @@ def _persistence_warnings() -> list[str]:
     """数据持久化告警（不阻塞服务，但必须说出来）。
 
     线上评测记录 P0-2：HF 免费实例没有持久卷，SQLite 落在容器内 ``/app/data``，
-    平台回收/重启后用户、会话、审计、模型密钥全部清零且不可恢复。这件事没法在
-    代码里修（要么挂持久卷，要么用外部数据库），但可以不让它「静默发生」——
-    ``/health`` 与 ``/health/ready`` 都带上 ``warnings``，``/ops`` 页能直接看到。
+    平台回收/重启后用户、会话、审计、模型密钥全部清零且不可恢复。
+
+    第 46 批起有第三条路：把 SQLite 快照周期推到私有 HF dataset（``DB_SNAPSHOT_REPO``），
+    重启时先恢复再建表。这条路**不是强一致**——最坏会丢掉一个快照周期内的写入，
+    所以仍然要在 ``warnings`` 里说清楚丢多少，只是不再是「全丢」。
     """
 
     warnings: list[str] = []
@@ -495,10 +512,21 @@ def _persistence_warnings() -> list[str]:
         database_url = (os.environ.get("DATABASE_URL") or "").strip()
         on_space = bool(os.environ.get("SPACE_ID") or os.environ.get("SPACE_HOST"))
         if not database_url and on_space:
-            warnings.append(
-                "运行在 Hugging Face Space 且未设置 DATABASE_URL：SQLite 位于容器内，"
-                "实例重启或休眠回收后数据会丢失（请挂持久卷或改用外部数据库）"
-            )
+            from core.db_snapshot import snapshot_config
+
+            config = snapshot_config()
+            if config["enabled"]:
+                interval = int(config["interval_seconds"])  # type: ignore[arg-type]
+                warnings.append(
+                    f"运行在 Hugging Face Space 且未设置 DATABASE_URL：数据靠每 {interval} 秒的"
+                    f" SQLite 快照恢复到私有 dataset（{config['repo']}）。快照不是强一致，"
+                    f"最坏会丢失最近 {interval} 秒内的写入"
+                )
+            else:
+                warnings.append(
+                    "运行在 Hugging Face Space 且未设置 DATABASE_URL：SQLite 位于容器内，"
+                    "实例重启或休眠回收后数据会丢失（请挂持久卷或改用外部数据库）"
+                )
     except Exception as exc:  # noqa: BLE001 - 诊断信息失败不能影响健康接口
         logger.warning("event=health.persistence_probe_failed error=%s", exc)
     return warnings
@@ -524,7 +552,37 @@ def _readiness() -> dict:
         # 说成「完全健康」，监控可以直接按 persistent=false 设阈值（第 45 批）。
         "degraded_reasons": warnings,
         "persistent": not warnings,
+        # 数据落在哪儿（第 46 批）：外部数据库 / 周期快照 / 容器内临时盘，一眼可辨。
+        "persistence": _persistence_mode(),
     }
+
+
+def _persistence_mode() -> dict:
+    """描述当前持久化方式，供监控与 ``/ops`` 页直接判定（第 46 批）。"""
+
+    mode: dict = {"kind": "ephemeral", "durable": False}
+    try:
+        database_url = (os.environ.get("DATABASE_URL") or "").strip()
+        on_space = bool(os.environ.get("SPACE_ID") or os.environ.get("SPACE_HOST"))
+        if database_url and not database_url.startswith("sqlite"):
+            mode = {"kind": "external", "durable": True}
+        elif database_url and not on_space:
+            mode = {"kind": "local-file", "durable": True}
+        else:
+            from core.db_snapshot import snapshot_config
+
+            config = snapshot_config()
+            if config["enabled"]:
+                mode = {
+                    "kind": "snapshot",
+                    "durable": True,
+                    "repo": config["repo"],
+                    "interval_seconds": config["interval_seconds"],
+                    "worst_case_loss_seconds": config["interval_seconds"],
+                }
+    except Exception as exc:  # noqa: BLE001 - 诊断失败不能影响健康接口
+        logger.warning("event=health.persistence_mode_failed error=%s", exc)
+    return mode
 
 
 @app.get("/health")

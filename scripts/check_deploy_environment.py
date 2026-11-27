@@ -95,6 +95,20 @@ def check_database(env: dict[str, str], *, tcp: TcpProbe = _tcp_probe) -> Check:
         # 而不是像本机那样只给建议。显式接受风险时才降级为 warn。
         on_container_platform = bool((env.get("SPACE_ID") or env.get("SPACE_HOST") or "").strip())
         accepted = (env.get("ACCEPT_EPHEMERAL_STORAGE") or "").strip().lower() in {"1", "true", "yes"}
+        # 第 46 批：SQLite 周期快照到私有 dataset，也算一种可恢复的持久化方案。
+        # 它不是强一致（最坏丢一个周期），所以判 warn 而不是 ok —— 让人看见代价。
+        snapshot_repo = (env.get("DB_SNAPSHOT_REPO") or "").strip()
+        snapshot_token = (
+            env.get("DB_SNAPSHOT_TOKEN") or env.get("DB_SYNC_TOKEN") or env.get("HF_API_TOKEN") or ""
+        ).strip()
+        if snapshot_repo and snapshot_token:
+            interval = (env.get("DB_SNAPSHOT_INTERVAL_SECONDS") or "").strip() or "120"
+            return Check(
+                "database",
+                WARN,
+                f"平台环境未设置 DATABASE_URL，但启用了 SQLite 周期快照（{snapshot_repo}，每 {interval} 秒）",
+                "快照不是强一致：重启最多丢最近一个周期的写入；要零丢失请挂持久卷或改用外部数据库",
+            )
         if on_container_platform and not accepted:
             return Check(
                 "database",

@@ -45,6 +45,8 @@ Space 的 *Settings → Variables and secrets* 里至少要有：
 | `AUTH_COOKIE_SECURE` | 线上为 `true`（HTTPS） |
 | `LLM_KEY_MODE` | 默认 `byok`：每个账号在「模型 API 设置」里填自己的 Key，服务端不承担模型成本 |
 | `EMAIL_PROXY_URL` / `EMAIL_PROXY_KEY` | 可选。容器平台封 SMTP 出站端口时，用 HTTP 代理投递验证码；未配置或代理失败会自动回落直连 SMTP |
+| `DB_SNAPSHOT_REPO` / `DB_SNAPSHOT_TOKEN` | 可选。免费实例没有持久卷时，把 SQLite 周期快照推送到私有 dataset（如 `owner/pm-brainstorm-db`），启动时先恢复再建表；令牌可复用 Space secret `DB_SYNC_TOKEN`。**快照不是强一致，最坏丢一个周期** |
+| `DB_SNAPSHOT_INTERVAL_SECONDS` | 快照周期，默认 `120`，下限 `30` |
 | `CORS_ORIGINS` | 兜底用；同源反代下 CORS 不参与，但直连调试时需要 `https://www.brainstorming.top` |
 
 > 从 V3 升级上来时的变量名：V4 仍兼容旧的 `JWT_SECRET` / `SMTP_FROM_EMAIL`（代码里自动回退），
@@ -97,6 +99,18 @@ python scripts/deploy_hf_space.py            # 子集提交 + 强推 Space main�
 推送后 Space 的 runtime.stage 会经历 BUILDING → RUNNING；用浏览器或 curl 打开
 https://www.brainstorming.top/backend/health 与 https://www.brainstorming.top/backend/openapi.json
 （后者能列出 /api/v2/access 等新路由）确认新版上线。
+
+### 免费实例如何保住数据（第 46 批）
+
+HF 免费实例没有持久卷，容器一重启 `/app/data` 就没了。三条路，按可靠性排序：
+
+1. **外部 Postgres**（`DATABASE_URL=postgresql://…`）——最稳，需要自己有一个库；
+2. **SQLite 周期快照到私有 dataset**（本仓内置）：
+   - 建一个私有 dataset（例如 `owner/pm-brainstorm-db`），把有写权限的令牌写成 Space secret `DB_SYNC_TOKEN`；
+   - 配变量 `DB_SNAPSHOT_REPO=owner/pm-brainstorm-db`、`DB_SNAPSHOT_INTERVAL_SECONDS=120`；
+   - 启动时 `scripts/container_start.py` 会**先恢复快照、再建表**，运行期每 120 秒推一次；退出前再推一次；
+   - 代价：快照不是强一致，容器被硬杀最多丢最近一个周期的写入（`/health/ready` 的 `persistence.kind=snapshot` 会写清 `worst_case_loss_seconds`）；
+3. **什么都不配**——重启即清空，只适合演示；`/health/ready` 会返回 `persistent: false` 并在 `degraded_reasons` 里写明。
 
 ### 部署顺序
 

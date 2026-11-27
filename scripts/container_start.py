@@ -34,11 +34,17 @@ SHUTDOWN_GRACE_SECONDS = 15.0
 
 
 def _prepare_database(*, app_dir: str) -> int:
-    """幂等建表（等价于 ``launch.ps1`` 里那一步），Worker 起来前必须完成。
+    """恢复远端快照 + 幂等建表，Worker 起来前必须完成。
+
+    顺序很关键：**先恢复、后建表**。``initialize_database()`` 会在空目录上直接
+    ``CREATE TABLE``，一旦先跑它，本地库就「非空」了，快照恢复会被跳过（第 46 批
+    踩过的坑）。未配置 ``DB_SNAPSHOT_REPO`` 时 ``restore_snapshot`` 是 no-op。
 
     返回子进程退出码；非 0 表示建表失败（缺依赖/目录不可写），调用方应整体失败。
     """
     code = (
+        "from core.db_snapshot import restore_snapshot, snapshot_config;"
+        " print('[container] snapshot restore:', restore_snapshot(snapshot_config()), flush=True);"
         "from repositories.database import initialize_database;"
         " initialize_database(); print('[container] db-ready', flush=True)"
     )
