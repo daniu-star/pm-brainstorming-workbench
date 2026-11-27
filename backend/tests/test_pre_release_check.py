@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import pathlib
 import sys
 import unittest
@@ -82,6 +83,57 @@ class PreReleaseCheckTests(unittest.TestCase):
             self.mod._http_ok = original
         self.assertFalse(result.ok)
         self.assertIn("start.bat", result.detail)
+
+    def test_deploy_env_step_passes_with_warnings_only(self) -> None:
+        payload = {
+            "ok": True,
+            "checks": [
+                {"name": "auth", "level": "ok", "detail": "ok", "hint": ""},
+                {"name": "database", "level": "warn", "detail": "no url", "hint": "挂卷"},
+            ],
+        }
+        original = self.mod._run
+        self.mod._run = lambda *a, **k: (0, json.dumps(payload, ensure_ascii=False))
+        try:
+            result = self.mod.step_deploy_env()
+        finally:
+            self.mod._run = original
+        self.assertTrue(result.ok)
+        self.assertIn("2 项检查", result.detail)
+        self.assertIn("database", result.detail)
+
+    def test_deploy_env_step_fails_on_fail_level(self) -> None:
+        payload = {
+            "ok": False,
+            "checks": [
+                {"name": "auth", "level": "fail", "detail": "missing", "hint": "填 AUTH_SECRET_KEY"},
+                {"name": "cors", "level": "fail", "detail": "wildcard", "hint": "写具体域名"},
+            ],
+        }
+        original = self.mod._run
+        self.mod._run = lambda *a, **k: (1, json.dumps(payload, ensure_ascii=False))
+        try:
+            result = self.mod.step_deploy_env()
+        finally:
+            self.mod._run = original
+        self.assertFalse(result.ok)
+        self.assertIn("必须修复 2", result.detail)
+        self.assertIn("auth", result.detail)
+
+    def test_deploy_env_step_survives_non_json_output(self) -> None:
+        original = self.mod._run
+        self.mod._run = lambda *a, **k: (0, "Traceback: boom")
+        try:
+            result = self.mod.step_deploy_env()
+        finally:
+            self.mod._run = original
+        self.assertFalse(result.ok)
+        self.assertEqual(result.detail, "输出不是 JSON")
+
+    def test_deploy_env_is_scheduled_before_backend_tests(self) -> None:
+        steps = list(self.mod.ALL_STEPS)
+        self.assertIn("deploy-env", steps)
+        self.assertLess(steps.index("deploy-env"), steps.index("backend-tests"))
 
 
 if __name__ == "__main__":

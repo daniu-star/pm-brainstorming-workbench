@@ -42,6 +42,7 @@ WEB_URL = os.environ.get("PM_WEB_URL", "http://127.0.0.1:3001")
 
 ALL_STEPS = (
     "docs",
+    "deploy-env",
     "backend-import",
     "backend-tests",
     "frontend-types",
@@ -54,6 +55,7 @@ ALL_STEPS = (
 # 单步超时（秒）：给足 CI/慢盘余量
 TIMEOUTS = {
     "docs": 120,
+    "deploy-env": 120,
     "backend-import": 120,
     "backend-tests": 900,
     "frontend-types": 300,
@@ -153,6 +155,36 @@ def step_docs() -> Result:
     match = re.search(r"扫描 (\d+) 个文件，疑似断链 (\d+) 条", out)
     detail = f"扫描 {match.group(1)} 个文件，断链 {match.group(2)} 条" if match else (out.strip().splitlines() or [""])[-1]
     return Result("docs", ok, time.time() - started, detail, _tail(out))
+
+
+def step_deploy_env() -> Result:
+    """部署环境自检（第 44 批）：缺 AUTH_SECRET_KEY / CORS 通配 / SMTP 被封这类
+    问题不会让测试变红，却会让线上直接不可用，所以在发版前单独拦一道。
+
+    只读环境变量，不发邮件、不调模型；`DATABASE_URL`/`SESSION_DATA_DIR` 缺失记 warn
+    不算失败（本地开发就是这种状态），fail 才阻断。
+    """
+
+    started = time.time()
+    code, out = _run(
+        [sys.executable, "scripts/check_deploy_environment.py", "--json", "--env-file", "backend/.env"],
+        cwd=REPO,
+        timeout=TIMEOUTS["deploy-env"],
+    )
+    try:
+        payload = json.loads(out.strip().splitlines()[-1] if out.strip() else "{}")
+    except json.JSONDecodeError:
+        return Result("deploy-env", False, time.time() - started, "输出不是 JSON", _tail(out))
+    checks = payload.get("checks") or []
+    fails = [item["name"] for item in checks if item.get("level") == "fail"]
+    warns = [item["name"] for item in checks if item.get("level") == "warn"]
+    ok = code == 0 and not fails
+    detail = f"{len(checks)} 项检查 / 必须修复 {len(fails)} / 建议 {len(warns)}"
+    if fails:
+        detail += f"（{', '.join(fails)}）"
+    elif warns:
+        detail += f"（{', '.join(warns)}）"
+    return Result("deploy-env", ok, time.time() - started, detail, _tail(out))
 
 
 def step_backend_import() -> Result:
@@ -298,6 +330,7 @@ def step_backup_drill() -> Result:
 
 STEPS = {
     "docs": step_docs,
+    "deploy-env": step_deploy_env,
     "backend-import": step_backend_import,
     "backend-tests": step_backend_tests,
     "frontend-types": step_frontend_types,

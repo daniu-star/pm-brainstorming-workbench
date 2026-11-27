@@ -26,14 +26,23 @@ from api.v2 import router as v2_router
 from api.voice_routes import router as voice_router
 from core.auth import auth_is_configured, smtp_is_configured, verify_session_token
 from core.config import settings
+from core.log_context import (
+    bind_request_id,
+    install_request_id_filter,
+    new_request_id,
+    reset_request_id,
+)
 from domain.errors import ErrorCode
 from sqlalchemy import func as _func, select as _select
 
-# 统一日志格式：时间 / 级别 / 模块（B074）。
+# 统一日志格式：时间 / 级别 / 模块 / 请求号（B074；请求号见第 44 批）。
+# `%(request_id)s` 由 core.log_context.RequestIdFilter 注入，未绑定请求时为 "-"，
+# 这样用户报障时前端错误体里的 request_id 能直接在服务端日志里 grep 到。
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    format="%(asctime)s %(levelname)s [%(name)s] [rid=%(request_id)s] %(message)s",
 )
+install_request_id_filter()
 logger = logging.getLogger(__name__)
 
 
@@ -93,27 +102,39 @@ async def require_authenticated_api(request: Request, call_next):
     if request.method == "OPTIONS":
         return await call_next(request)
 
-    # 供统一错误体使用的 request_id（可选传入）。
+    # 请求号：优先用调用方传入的，缺失则生成一个（第 44 批）。
+    # 它同时进入 request.state（错误体用）、日志上下文（每条日志带 rid）与响应头，
+    # 用户报障时把界面上的 request_id 给过来即可在服务端日志里定位整条链路。
     raw_request_id = (
         request.headers.get("X-Request-ID") or request.headers.get("Idempotency-Key") or ""
     ).strip()
-    if raw_request_id:
-        request.state.request_id = raw_request_id
+    request_id = raw_request_id or new_request_id()
+    request.state.request_id = request_id
+    token = bind_request_id(request_id)
+    try:
+        path = request.url.path
+        is_public = path == "/health" or path.startswith("/api/auth")
+        if path.startswith("/api/") and not is_public:
+            email = verify_session_token(request.cookies.get(settings.auth_cookie_name))
+            if not email:
+                payload = error_payload(
+                    ErrorCode.UNAUTHENTICATED,
+                    "请先使用邮箱登录",
+                    request_id=request_id,
+                )
+                payload["detail"] = "请先使用邮箱登录"  # 旧前端兼容
+                response: Response = JSONResponse(status_code=401, content=payload)
+            else:
+                request.state.user_email = email
+                response = await call_next(request)
+        else:
+            response = await call_next(request)
+    finally:
+        reset_request_id(token)
 
-    path = request.url.path
-    is_public = path == "/health" or path.startswith("/api/auth")
-    if path.startswith("/api/") and not is_public:
-        email = verify_session_token(request.cookies.get(settings.auth_cookie_name))
-        if not email:
-            payload = error_payload(
-                ErrorCode.UNAUTHENTICATED,
-                "请先使用邮箱登录",
-                request_id=raw_request_id,
-            )
-            payload["detail"] = "请先使用邮箱登录"  # 旧前端兼容
-            return JSONResponse(status_code=401, content=payload)
-        request.state.user_email = email
-    return await call_next(request)
+    # 回显请求号，方便浏览器 Network 面板与界面文案对齐（不覆盖上游已设置的值）。
+    response.headers.setdefault("X-Request-ID", request_id)
+    return response
 
 
 # v2 端点（canonical 路径）
