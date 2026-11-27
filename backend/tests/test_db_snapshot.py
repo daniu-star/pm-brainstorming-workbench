@@ -96,6 +96,15 @@ class SnapshotConfigTests(unittest.TestCase):
         )
         self.assertFalse(config["enabled"])
 
+    def test_empty_database_url_falls_back_to_default_path(self) -> None:
+        # 容器里 DATABASE_URL 是空串，默认库在 <backend>/data/app.db；
+        # 这里算成空串会让快照功能静默失效（线上首部署的坑）。
+        config = db_snapshot.snapshot_config(
+            {"DB_SNAPSHOT_REPO": "owner/db", "DB_SNAPSHOT_TOKEN": "hf_x", "DATABASE_URL": ""}
+        )
+        self.assertTrue(config["enabled"])
+        self.assertTrue(str(config["local_path"]).endswith("data/app.db"))
+
 
 class SnapshotCodecTests(unittest.TestCase):
     def test_encode_decode_roundtrip(self) -> None:

@@ -73,6 +73,17 @@ UrlOpen = Callable[..., object]
 # --------------------------------------------------------------------------- #
 
 
+def default_sqlite_path() -> str:
+    """默认库路径，与 ``repositories.database.DEFAULT_DB_FILE`` 保持一致。
+
+    容器里 ``DATABASE_URL`` 是空字符串（见 Dockerfile），默认库其实落在
+    ``<backend>/data/app.db``。快照模块必须复用同一规则，否则「没配 DATABASE_URL」
+    时会把 local_path 算成空串、快照功能静默失效（第 46 批线上首次部署踩过）。
+    """
+
+    return (Path(__file__).resolve().parents[1] / "data" / "app.db").as_posix()
+
+
 def snapshot_config(env: dict[str, str] | None = None) -> dict[str, object]:
     """从环境变量读配置；返回 ``{"enabled": bool, ...}``（缺项即 disabled）。"""
 
@@ -93,9 +104,13 @@ def snapshot_config(env: dict[str, str] | None = None) -> dict[str, object]:
     except ValueError:
         interval = DEFAULT_INTERVAL_SECONDS
     interval = max(MIN_INTERVAL_SECONDS, interval)
-    local_path = (source.get("DB_SNAPSHOT_PATH") or "").strip() or sqlite_path_from_database_url(
-        source.get("DATABASE_URL") or ""
-    )
+    database_url = (source.get("DATABASE_URL") or "").strip()
+    local_path = (source.get("DB_SNAPSHOT_PATH") or "").strip()
+    if not local_path:
+        if database_url:
+            local_path = sqlite_path_from_database_url(database_url)
+        else:
+            local_path = default_sqlite_path()
     return {
         "enabled": bool(repo and token and local_path),
         "repo": repo,
