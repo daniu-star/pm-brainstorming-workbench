@@ -1,12 +1,12 @@
 # V4.0 发布就绪清单（WP-10）
 
 - 分支：`feat/prd-v4-m1`；对应 PRD：`docs/superpowers/specs/2026-11-18-pm-brainstorm-agent-architecture-prd-v4.md`
-- 验收记录：`docs/v4-acceptance-report.md`（874 后端用例 / 334 前端用例 / 契约 parity 13 / 跨进程 6 + 崩溃注入 3 + 预算崩溃 4 / 真 Worker E2E 30 项 + Loop 闭环 29 项 / 迁移演练 / 回滚演练（AC-34，`scripts/ac34_rollback_drill.py`）/ 真实浏览器 E2E AC-01/19/31/33（docs/browser-qa.md + docs/browser-qa/e2e/ 7 张截图）/ AC-20 数字可追溯性真模型端到端（`scripts/ac20_number_provenance.py` + `docs/ac20-number-provenance.md`） / 完整用户旅程真模型端到端（`scripts/full_journey_e2e.py` + `docs/full-journey-e2e.md`） / 结项报告真实模型路径（`scripts/audit_report_e2e.py` + `docs/audit-report-e2e.md`，含报告摘要落库）；文档索引见 docs/README.md；QA Loop 记录见 docs/qa-loop-runs/README.md，多角色 Loop 记录见 docs/loop-runs/README.md）
+- 验收记录：`docs/v4-acceptance-report.md`（885 后端用例 / 334 前端用例 / 契约 parity 13 / 跨进程 6 + 崩溃注入 3 + 预算崩溃 4 / 真 Worker E2E 30 项 + Loop 闭环 29 项 / 迁移演练 / 回滚演练（AC-34，`scripts/ac34_rollback_drill.py`）/ 真实浏览器 E2E AC-01/19/31/33（docs/browser-qa.md + docs/browser-qa/e2e/ 7 张截图）/ AC-20 数字可追溯性真模型端到端（`scripts/ac20_number_provenance.py` + `docs/ac20-number-provenance.md`） / 完整用户旅程真模型端到端（`scripts/full_journey_e2e.py` + `docs/full-journey-e2e.md`） / 结项报告真实模型路径（`scripts/audit_report_e2e.py` + `docs/audit-report-e2e.md`，含报告摘要落库）；文档索引见 docs/README.md；QA Loop 记录见 docs/qa-loop-runs/README.md，多角色 Loop 记录见 docs/loop-runs/README.md）
 
 ## 1. 发布前必须通过的命令
 
 ```bash
-# 后端（874 用例，含 Loop Studio 65 项 + 数据生命周期/预算档位/审计并发 13 项；第 9 批删 v1 死代码 27 例，新增引用归属 7 + 崩溃注入 3；第 10 批新增旧 ID 别名 6；第 11 批新增 AC-14 多失败重试 1；第 12 批新增 AC-10 预算预留崩溃 4；第 16 批新增 AC-20 数字守卫 18 + 序号引用规范化 3 + json_schema 降级缓存 1；第 17 批新增结项报告形状容错 5；第 18 批新增报告摘要断言 + health/detail 模型层诊断 3；第 20 批新增 Worker 卡死诊断 3 + 前端排队提示 5；第 21 批新增备份/校验/恢复演练 4；第 22 批新增发版体检脚本自检 7；第 23 批新增磁盘清理脚本自检 5；第 24 批新增 Worker 维护清理 4；第 25 批新增 audit/loop 页面服务端渲染 6；第 26 批新增中间载荷保留 3 + 增长报告/VACUUM 3 + Worker 维护补 1；第 28 批新增报告侧数字标注 3（后端 2 + 前端页面 1）；第 29 批新增报告读取重算 3 + 证据表单渲染 3 + 页面入口 1；第 30 批新增报告质量统计 5；第 31 批新增报告质量窗口回落 4；第 32 批新增账户级配额 9；第 33 批新增账户自带模型密钥 11；第 37 批新增团队工作区成员组 8；第 38 批新增执行沙箱 16 + 运维健康区块 4；第 39 批新增共享可见性与权限页 8；第 42 批新增平台加固 12，含 CORS 通配符拒绝 4）
+# 后端（885 用例，含 Loop Studio 65 项 + 数据生命周期/预算档位/审计并发 13 项；第 9 批删 v1 死代码 27 例，新增引用归属 7 + 崩溃注入 3；第 10 批新增旧 ID 别名 6；第 11 批新增 AC-14 多失败重试 1；第 12 批新增 AC-10 预算预留崩溃 4；第 16 批新增 AC-20 数字守卫 18 + 序号引用规范化 3 + json_schema 降级缓存 1；第 17 批新增结项报告形状容错 5；第 18 批新增报告摘要断言 + health/detail 模型层诊断 3；第 20 批新增 Worker 卡死诊断 3 + 前端排队提示 5；第 21 批新增备份/校验/恢复演练 4；第 22 批新增发版体检脚本自检 7；第 23 批新增磁盘清理脚本自检 5；第 24 批新增 Worker 维护清理 4；第 25 批新增 audit/loop 页面服务端渲染 6；第 26 批新增中间载荷保留 3 + 增长报告/VACUUM 3 + Worker 维护补 1；第 28 批新增报告侧数字标注 3（后端 2 + 前端页面 1）；第 29 批新增报告读取重算 3 + 证据表单渲染 3 + 页面入口 1；第 30 批新增报告质量统计 5；第 31 批新增报告质量窗口回落 4；第 32 批新增账户级配额 9；第 33 批新增账户自带模型密钥 11；第 37 批新增团队工作区成员组 8；第 38 批新增执行沙箱 16 + 运维健康区块 4；第 39 批新增共享可见性与权限页 8；第 42 批新增平台加固 12，含 CORS 通配符拒绝 4；第 44 批新增请求号贯通 8 + 部署自检 25 + 体检接线 4；第 45 批新增平台数据丢失判定 3 + 非 UTF-8 控制台回归 2 + ready 降级字段 2）
 cd backend && ../.venv/Scripts/python.exe -m unittest discover -s tests
 
 # 前端类型检查 + 逻辑用例 + 生产构建 + 冒烟 e2e
@@ -123,7 +123,7 @@ CI 配置见 `.github/workflows/ci.yml`（backend：安装依赖 → 全量测�
 
 | 项 | fail 条件 | 修法 |
 | --- | --- | --- |
-| database | `DATABASE_URL` 主机/端口连不上 | 放行出口 IP、核对端口；无 URL 只记 warn（SQLite 会随重启丢） |
+| database | `DATABASE_URL` 主机/端口连不上；**或运行在 HF Space（`SPACE_ID`/`SPACE_HOST` 存在）却没配 `DATABASE_URL`** | 放行出口 IP、核对端口；平台环境必须挂持久卷或改外部数据库，确属临时演示时显式设 `ACCEPT_EPHEMERAL_STORAGE=1` 表示接受数据丢失（此时降级为 warn）；本机无 URL 仍只记 warn |
 | auth | `AUTH_SECRET_KEY`（兼容旧名 `JWT_SECRET`）缺失或 <32 字符 | 换成 `python -c "import secrets;print(secrets.token_urlsafe(32))"` 生成的串 |
 | cookie | 线上 HTTPS 但 `AUTH_COOKIE_SECURE` 未开（warn） | 设 `AUTH_COOKIE_SECURE=true` |
 | cors | `CORS_ORIGINS` 含 `*` | 写具体域名；代码侧也会丢弃通配符 |
@@ -132,6 +132,12 @@ CI 配置见 `.github/workflows/ci.yml`（backend：安装依赖 → 全量测�
 | storage | `SESSION_DATA_DIR` 不可写 | 换可写目录或修权限 |
 
 发版体检（`scripts/pre_release_check.py`）已把这项加为第二步 `deploy-env`：warn 不阻断，fail 直接让 `PRE_RELEASE_FAILED`。
+
+**第 45 批补强（R3 评分卡意见）**：容器内 SQLite 此前在三条闸门上都被制度化放行——自检判 warn、体检第二步 warn 不阻断、`/health/ready` 的 `blocking_reasons` 为空。现在：
+
+1. `check_deploy_environment.py` 在平台环境（`SPACE_ID`/`SPACE_HOST` 存在）缺 `DATABASE_URL` 时判 **fail**（退出码 1，体检阻断），只有显式 `ACCEPT_EPHEMERAL_STORAGE=1` 才降级为 warn 并点名「已显式接受数据丢失」；
+2. `/health/ready` 在 `blocking_reasons` 之外新增 `degraded_reasons`（能跑但有已知降级）与 `persistent`（布尔，监控可直接设阈值）；**状态码仍为 200**，因为改成 503 会被 HF 判定不健康并反复重启；
+3. 自检的文本输出改用 ASCII 标记（`[OK]`/`[!]`/`[X]`）并给 stdout/stderr 设 `errors="replace"`，修掉 Windows GBK 控制台下 `UnicodeEncodeError: 'gbk' codec can't encode character '\u2713'` 导致 README 那条命令直接崩掉的缺陷。
 
 **平台层限制（2026-11-27 线上实测）**：经 Vercel 反代到 HF Space 时，客户端没有自带 `X-Request-ID` 的情况下，服务端新建的 id **不会出现在响应头里**（Vercel 会重写响应头，只保留它自己的 `X-Proxied-Path`/`X-Proxied-Replica`）；但错误体里的 `request_id` 与服务端日志里的 `[rid=...]` 始终可用，排障链路不受影响。客户端自带 `X-Request-ID`（或带 `Idempotency-Key`）时，响应头与错误体都会原样沿用该 id。
 

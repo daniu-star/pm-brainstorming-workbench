@@ -90,6 +90,26 @@ def _tcp_probe(host: str, port: int, timeout: float) -> bool:
 def check_database(env: dict[str, str], *, tcp: TcpProbe = _tcp_probe) -> Check:
     url = (env.get("DATABASE_URL") or "").strip()
     if not url:
+        # 平台环境判定（第 45 批）：HF Space 每次重启/休眠回收都会重建容器层，
+        # 容器内 SQLite 必然丢数据 —— 这属于「上线即数据丢失」，默认判 fail，
+        # 而不是像本机那样只给建议。显式接受风险时才降级为 warn。
+        on_container_platform = bool((env.get("SPACE_ID") or env.get("SPACE_HOST") or "").strip())
+        accepted = (env.get("ACCEPT_EPHEMERAL_STORAGE") or "").strip().lower() in {"1", "true", "yes"}
+        if on_container_platform and not accepted:
+            return Check(
+                "database",
+                FAIL,
+                "平台环境未设置 DATABASE_URL：SQLite 位于容器内，重启或休眠回收即丢全部数据",
+                "给 Space 挂持久卷，或改用外部数据库（Supabase/Neon 的 Postgres URL）；"
+                "若确认只是临时演示并接受数据丢失，请显式设置 ACCEPT_EPHEMERAL_STORAGE=1",
+            )
+        if on_container_platform and accepted:
+            return Check(
+                "database",
+                WARN,
+                "平台环境未设置 DATABASE_URL，且已显式接受数据丢失（ACCEPT_EPHEMERAL_STORAGE=1）",
+                "仅适用于临时演示：每次重启、休眠回收都会清空全部会话",
+            )
         return Check(
             "database",
             WARN,
@@ -240,7 +260,9 @@ def overall_exit_code(checks: Iterable[Check]) -> int:
 
 
 def render_text(checks: Iterable[Check]) -> str:
-    symbols = {OK: "✓", WARN: "!", FAIL: "✗"}
+    # ASCII 图标：Windows 默认控制台是 GBK/cp437，编码不了 ✓/✗，
+    # 直接用会抛 UnicodeEncodeError（第 45 批修复）。
+    symbols = {OK: "[OK]", WARN: "[!]", FAIL: "[X]"}
     lines = ["部署环境自检（check_deploy_environment）", ""]
     for check in checks:
         lines.append(f"{symbols.get(check.level, '?')} {check.name:<9} {check.detail}")
@@ -252,7 +274,22 @@ def render_text(checks: Iterable[Check]) -> str:
     return "\n".join(lines)
 
 
+def _tolerate_console_encoding() -> None:
+    """让非 UTF-8 控制台把无法编码的字符替换掉，而不是抛异常崩掉整条命令。
+
+    Windows 默认代码页是 GBK（中文）/cp437（英文），`✓`/`✗` 这类字符编码不了，
+    直接 print 会抛 UnicodeEncodeError（第 45 批真缺陷，R3 评分卡实测）。
+    """
+
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")  # type: ignore[attr-defined]
+        except (AttributeError, OSError, ValueError):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _tolerate_console_encoding()
     parser = argparse.ArgumentParser(description="部署环境自检（不发送邮件、不调用模型）")
     parser.add_argument("--env-file", default="", help="可选：读取 KEY=VALUE 的 env 文件")
     parser.add_argument("--json", action="store_true", help="输出 JSON 而不是文本")

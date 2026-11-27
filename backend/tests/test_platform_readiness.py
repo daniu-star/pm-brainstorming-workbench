@@ -151,6 +151,34 @@ class PersistenceWarningTests(V2ApiTestBase):
         ):
             self.assertEqual(main._persistence_warnings(), [])
 
+    def test_ready_exposes_degraded_reasons_and_persistent_flag(self) -> None:
+        """``/health/ready`` 必须能区分「完全健康」与「能跑但数据会丢」。
+
+        R3 评分卡的意见：``blocking_reasons: []`` 会让容器内 SQLite 看起来完全健康，
+        监控没法据此设阈值；但改成 503 又会被 HF 判定不健康并反复重启，
+        因此用 ``degraded_reasons`` + ``persistent`` 两个字段表达降级。
+        """
+
+        with mock.patch.dict(
+            "os.environ", {"SPACE_ID": "demo/space", "DATABASE_URL": ""}, clear=False
+        ):
+            body = self.client.get("/health/ready").json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["blocking_reasons"], [])
+        self.assertFalse(body["persistent"])
+        self.assertEqual(body["degraded_reasons"], body["warnings"])
+        self.assertTrue(any("数据会丢失" in reason for reason in body["degraded_reasons"]))
+
+    def test_ready_reports_persistent_when_database_url_set(self) -> None:
+        with mock.patch.dict(
+            "os.environ",
+            {"SPACE_ID": "demo/space", "DATABASE_URL": "postgresql://u:p@db.example.com:5432/app"},
+            clear=False,
+        ):
+            body = self.client.get("/health/ready").json()
+        self.assertTrue(body["persistent"])
+        self.assertEqual(body["degraded_reasons"], [])
+
     def test_local_runs_stay_warning_free(self) -> None:
         env = dict(os.environ)
         env.pop("SPACE_ID", None)

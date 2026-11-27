@@ -68,6 +68,30 @@ class DatabaseCheckTests(unittest.TestCase):
         self.assertEqual(check.level, deploy.WARN)
         self.assertIn("重启", check.hint)
 
+    def test_container_platform_without_url_fails(self) -> None:
+        """HF Space 这类平台每次重启都会重建容器层，容器内 SQLite 必然丢数据。"""
+
+        check = deploy.check_database({"SPACE_ID": "123chenjunliang/pm-brainstorm-workbench"}, tcp=_reachable)
+        self.assertEqual(check.level, deploy.FAIL)
+        self.assertIn("重启", check.detail)
+        self.assertIn("ACCEPT_EPHEMERAL_STORAGE", check.hint)
+
+    def test_container_platform_with_explicit_acceptance_warns(self) -> None:
+        """显式接受数据丢失（临时演示）时降级为 warn，但必须点名这是接受风险。"""
+
+        check = deploy.check_database(
+            {"SPACE_ID": "x/y", "ACCEPT_EPHEMERAL_STORAGE": "1"}, tcp=_reachable
+        )
+        self.assertEqual(check.level, deploy.WARN)
+        self.assertIn("已显式接受", check.detail)
+
+    def test_local_machine_without_url_still_warns(self) -> None:
+        """本机开发没有 DATABASE_URL 很正常，不能被平台判定误伤。"""
+
+        check = deploy.check_database({}, tcp=_reachable)
+        self.assertEqual(check.level, deploy.WARN)
+        self.assertNotIn("已显式接受", check.detail)
+
     def test_postgres_unreachable_fails(self) -> None:
         check = deploy.check_database(
             {"DATABASE_URL": "postgresql://u:p@db.example.com:5432/app"}, tcp=_unreachable
@@ -203,6 +227,63 @@ class OverallTests(unittest.TestCase):
             self.assertTrue(file_only["AUTH_SECRET_KEY"].startswith("from-file"))
         finally:
             env_path.unlink(missing_ok=True)
+
+
+class ConsoleEncodingTests(unittest.TestCase):
+    """Windows 默认控制台是 GBK/cp437：`✓`/`✗` 编码不了会让整条命令崩掉。
+
+    这是 R3 评分卡实测出的真缺陷（README 里那条命令在 GBK 控制台直接抛
+    UnicodeEncodeError），因此必须有回归用例把「非 UTF-8 也能跑」钉住。
+    """
+
+    def test_text_output_survives_non_utf8_console(self) -> None:
+        import subprocess
+
+        env = dict(**__import__("os").environ)
+        env["PYTHONIOENCODING"] = "gbk"
+        env["SESSION_DATA_DIR"] = str(_TEST_ROOT / f"gbk-{uuid.uuid4().hex[:8]}")
+        proc = subprocess.run(
+            [sys.executable, "-X", "utf8", str(_SCRIPT), "--env-file", "does-not-exist.env", "--skip-network"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            timeout=120,
+        )
+        self.assertNotIn("UnicodeEncodeError", proc.stderr or "")
+        # 父进程按 UTF-8 解码 GBK 字节会得到乱码，所以只断言 ASCII 标记：
+        # 这条用例要钉住的是「非 UTF-8 控制台不会崩」，不是「中文能还原」。
+        self.assertIn("check_deploy_environment", proc.stdout or "")
+        self.assertIn("[OK]", proc.stdout or "")
+
+    def test_json_output_survives_non_utf8_console(self) -> None:
+        import subprocess
+
+        env = dict(**__import__("os").environ)
+        env["PYTHONIOENCODING"] = "gbk"
+        env["SESSION_DATA_DIR"] = str(_TEST_ROOT / f"gbk-json-{uuid.uuid4().hex[:8]}")
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-X",
+                "utf8",
+                str(_SCRIPT),
+                "--json",
+                "--env-file",
+                "does-not-exist.env",
+                "--skip-network",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            timeout=120,
+        )
+        self.assertNotIn("UnicodeEncodeError", proc.stderr or "")
+        payload = json.loads(proc.stdout.strip().splitlines()[-1])
+        self.assertIn("checks", payload)
 
 
 if __name__ == "__main__":

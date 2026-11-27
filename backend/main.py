@@ -515,10 +515,15 @@ def _readiness() -> dict:
     for name, label in (("auth", "登录密钥未配置（AUTH_SECRET_KEY 至少 32 字符）"), ("smtp", "邮件通道未配置")):
         if not services.get(name):
             reasons.append(label)
+    warnings = _persistence_warnings()
     return {
         "status": "ok" if not reasons else "degraded",
         "blocking_reasons": reasons,
-        "warnings": _persistence_warnings(),
+        "warnings": warnings,
+        # 「能跑，但有已知降级」：与 blocking_reasons 区分开，避免把「数据会丢」
+        # 说成「完全健康」，监控可以直接按 persistent=false 设阈值（第 45 批）。
+        "degraded_reasons": warnings,
+        "persistent": not warnings,
     }
 
 
