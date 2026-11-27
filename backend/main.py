@@ -544,6 +544,7 @@ def _readiness() -> dict:
         if not services.get(name):
             reasons.append(label)
     warnings = _persistence_warnings()
+    persistence = _persistence_mode()
     return {
         "status": "ok" if not reasons else "degraded",
         "blocking_reasons": reasons,
@@ -551,9 +552,11 @@ def _readiness() -> dict:
         # 「能跑，但有已知降级」：与 blocking_reasons 区分开，避免把「数据会丢」
         # 说成「完全健康」，监控可以直接按 persistent=false 设阈值（第 45 批）。
         "degraded_reasons": warnings,
-        "persistent": not warnings,
+        # persistent 表示「重启后数据能不能回来」（第 46 批）：快照方案能回来，
+        # 所以要跟着 persistence.durable 走；warnings 仍然保留，说明最坏丢多少。
+        "persistent": bool(persistence.get("durable")),
         # 数据落在哪儿（第 46 批）：外部数据库 / 周期快照 / 容器内临时盘，一眼可辨。
-        "persistence": _persistence_mode(),
+        "persistence": persistence,
     }
 
 

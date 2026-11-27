@@ -187,6 +187,42 @@ class PersistenceWarningTests(V2ApiTestBase):
         with mock.patch.dict("os.environ", env, clear=True):
             self.assertEqual(main._persistence_warnings(), [])
 
+    def test_snapshot_mode_counts_as_persistent_with_worst_case_loss(self) -> None:
+        """第 46 批：SQLite 周期快照到私有 dataset 也是「能回来」，但要说出代价。"""
+
+        env = {
+            "SPACE_ID": "demo/space",
+            "DATABASE_URL": "",
+            "DB_SNAPSHOT_REPO": "owner/pm-brainstorm-db",
+            "DB_SYNC_TOKEN": "hf_demo",
+            "DB_SNAPSHOT_INTERVAL_SECONDS": "120",
+        }
+        with mock.patch.dict("os.environ", env, clear=False):
+            body = self.client.get("/health/ready").json()
+            warnings = main._persistence_warnings()
+        self.assertEqual(body["status"], "ok")
+        self.assertTrue(body["persistent"], body)
+        self.assertEqual(body["persistence"]["kind"], "snapshot")
+        self.assertEqual(body["persistence"]["repo"], "owner/pm-brainstorm-db")
+        self.assertEqual(body["persistence"]["worst_case_loss_seconds"], 120)
+        self.assertTrue(any("120 秒" in w for w in warnings), warnings)
+
+    def test_ephemeral_mode_is_not_persistent(self) -> None:
+        env = {
+            "SPACE_ID": "demo/space",
+            "DATABASE_URL": "",
+            "DB_SNAPSHOT_REPO": "",
+            "DB_SNAPSHOT_TOKEN": "",
+            "DB_SYNC_TOKEN": "",
+            "HF_TOKEN": "",
+            "HF_API_TOKEN": "",
+        }
+        with mock.patch.dict("os.environ", env, clear=False):
+            body = self.client.get("/health/ready").json()
+        self.assertEqual(body["persistence"]["kind"], "ephemeral")
+        self.assertFalse(body["persistent"])
+        self.assertTrue(any("数据会丢失" in reason for reason in body["degraded_reasons"]))
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
