@@ -283,6 +283,7 @@
 | 用户报「点了就失败」时，前端错误体里的 `request_id` 在服务端日志里查不到，只能靠时间戳猜是哪一条 | 新增 `backend/core/log_context.py`（`ContextVar` + `RequestIdFilter`）；中间件为每个请求生成或沿用 `X-Request-ID`/`Idempotency-Key`，写入 `request.state`、日志上下文并回显响应头；日志格式改为 `[rid=%(request_id)s]` | `backend/tests/test_log_context.py` 8 例（未绑定回落 `-`、绑定/重置往返、响应头回显、调用方传入不覆盖、连续请求 id 不同、401 错误体与日志同 id） |
 | 「登录发不出去」「重启丢数据」这类问题在应用层表现成一串看似无关的报错，线上排查靠人肉逐个试环境变量 | 新增 `scripts/check_deploy_environment.py`：数据库 URL/端口、`AUTH_SECRET_KEY` 长度（兼容旧名 `JWT_SECRET`）、Cookie secure、CORS 通配符、邮件通道（代理或 SMTP 可达性）、LLM 模式、存储目录可写，逐项给 ok/warn/fail + 修法；`--json` 机器可读、`--skip-network` 离线 | `backend/tests/test_deploy_env_check.py` 25 例；实跑本机 `0 项必须修复，2 项建议处理`；发版体检新增第二步 `deploy-env`（warn 不阻断、fail 阻断） |
 | 体检脚本「8 步」不含环境变量检查，配置类故障只能等线上炸了才发现 | `scripts/pre_release_check.py` 的 `ALL_STEPS` 插入 `deploy-env`（`docs → deploy-env → backend-import → …`），`backend/tests/test_pre_release_check.py` 增 4 例（warn 通过、fail 阻断、非 JSON 输出降级、顺序在 backend-tests 之前） | 体检 9 步；后端全量 `Ran 874 tests / OK`；前端 334/334；`tsc --noEmit` 0 错 |
+| 线上到底跑的是不是最新代码、请求号能不能真的串起来，只能靠猜 | 第 44 批上线后做强证据验证：GitHub CI run `45932843781` success（backend/frontend/browser-e2e 三 job 全绿）；`scripts/deploy_hf_space.py` 推送 Space `f4fbdcf` 且 `stage=RUNNING`；线上带 `X-Request-ID: probe_abc123456789` 请求 `GET /backend/api/v2/quota`，响应头 `X-Request-Id` 与错误体 `request_id` **双双沿用**该 id | 见 `docs/v4-release-checklist.md` 6.7 段的平台层限制说明（经 Vercel 反代时，服务端新建 id 不回显响应头，但错误体与日志始终可用） |
 
 ## 第 43 批（CI 从恒红到全绿：4 个根因 + 文档检查口径，2026-11-27）
 

@@ -133,6 +133,9 @@ CI 配置见 `.github/workflows/ci.yml`（backend：安装依赖 → 全量测�
 
 发版体检（`scripts/pre_release_check.py`）已把这项加为第二步 `deploy-env`：warn 不阻断，fail 直接让 `PRE_RELEASE_FAILED`。
 
+**平台层限制（2026-11-27 线上实测）**：经 Vercel 反代到 HF Space 时，客户端没有自带 `X-Request-ID` 的情况下，服务端新建的 id **不会出现在响应头里**（Vercel 会重写响应头，只保留它自己的 `X-Proxied-Path`/`X-Proxied-Replica`）；但错误体里的 `request_id` 与服务端日志里的 `[rid=...]` 始终可用，排障链路不受影响。客户端自带 `X-Request-ID`（或带 `Idempotency-Key`）时，响应头与错误体都会原样沿用该 id。
+
+
 ## 6.8 线上必须同源接入（第 42 批，P0）
 
 线上前端（Vercel）访问后端必须走同源 `/backend` 反代，**不能**直连 HF Space 域名：
