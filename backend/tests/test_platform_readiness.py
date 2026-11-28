@@ -207,6 +207,81 @@ class PersistenceWarningTests(V2ApiTestBase):
         self.assertEqual(body["persistence"]["worst_case_loss_seconds"], 120)
         self.assertTrue(any("120 秒" in w for w in warnings), warnings)
 
+    def test_stale_snapshot_downgrades_durability_and_warns(self) -> None:
+        """第 47 批（R4 P1）：快照连续失败时，durable 不能继续报 true。"""
+
+        env = {
+            "SPACE_ID": "demo/space",
+            "DATABASE_URL": "",
+            "DB_SNAPSHOT_REPO": "owner/pm-brainstorm-db",
+            "DB_SYNC_TOKEN": "hf_demo",
+            "DB_SNAPSHOT_INTERVAL_SECONDS": "120",
+        }
+
+        class _StaleUploader:
+            def status(self) -> dict[str, object]:
+                return {
+                    "enabled": True,
+                    "repo": "owner/pm-brainstorm-db",
+                    "interval_seconds": 120,
+                    "uploads": 3,
+                    "skipped": 0,
+                    "failures": 5,
+                    "consecutive_failures": 4,
+                    "last_ok_age_seconds": 900.0,
+                    "last_error": "failed: OSError: network down",
+                    "stale": True,
+                }
+
+        with mock.patch.dict("os.environ", env, clear=False), mock.patch.object(
+            main, "_SNAPSHOT_UPLOADER", _StaleUploader()
+        ):
+            body = self.client.get("/health/ready").json()
+        self.assertEqual(body["persistence"]["kind"], "snapshot")
+        self.assertFalse(body["persistent"], body)
+        self.assertTrue(body["persistence"]["snapshot"]["stale"])
+        self.assertFalse(body["persistence"]["durable"])
+        self.assertTrue(
+            any("连续失败 4 次" in reason for reason in body["degraded_reasons"]),
+            body["degraded_reasons"],
+        )
+
+    def test_healthy_snapshot_keeps_durability(self) -> None:
+        env = {
+            "SPACE_ID": "demo/space",
+            "DATABASE_URL": "",
+            "DB_SNAPSHOT_REPO": "owner/pm-brainstorm-db",
+            "DB_SYNC_TOKEN": "hf_demo",
+            "DB_SNAPSHOT_INTERVAL_SECONDS": "120",
+        }
+
+        class _HealthyUploader:
+            def status(self) -> dict[str, object]:
+                return {
+                    "enabled": True,
+                    "repo": "owner/pm-brainstorm-db",
+                    "interval_seconds": 120,
+                    "uploads": 7,
+                    "skipped": 2,
+                    "failures": 0,
+                    "consecutive_failures": 0,
+                    "last_ok_age_seconds": 12.0,
+                    "last_error": None,
+                    "stale": False,
+                }
+
+        with mock.patch.dict("os.environ", env, clear=False), mock.patch.object(
+            main, "_SNAPSHOT_UPLOADER", _HealthyUploader()
+        ):
+            body = self.client.get("/health/ready").json()
+        self.assertTrue(body["persistent"], body)
+        self.assertTrue(body["persistence"]["durable"])
+        self.assertFalse(body["persistence"]["snapshot"]["stale"])
+        self.assertFalse(
+            any("连续失败" in reason for reason in body["degraded_reasons"]),
+            body["degraded_reasons"],
+        )
+
     def test_ephemeral_mode_is_not_persistent(self) -> None:
         env = {
             "SPACE_ID": "demo/space",

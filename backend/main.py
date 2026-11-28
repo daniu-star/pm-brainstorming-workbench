@@ -45,6 +45,9 @@ logging.basicConfig(
 install_request_id_filter()
 logger = logging.getLogger(__name__)
 
+#: 运行中的快照上传器（第 47 批）：仅供健康接口读取状态，不参与业务逻辑。
+_SNAPSHOT_UPLOADER = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -63,6 +66,9 @@ async def lifespan(app: FastAPI):
     uploader = SnapshotUploader(snapshot_config())
     if uploader.enabled:
         logger.info("event=db_snapshot.enabled repo=%s", uploader._config.get("repo"))  # noqa: SLF001
+    # 第 47 批：健康接口要能看到「快照到底成没成」，所以留一个模块级引用。
+    global _SNAPSHOT_UPLOADER
+    _SNAPSHOT_UPLOADER = uploader
     uploader.start()
 
     # 启动时确保 RAG 知识库索引存在且最新（B004）。
@@ -82,6 +88,8 @@ async def lifespan(app: FastAPI):
         uploader.stop(flush=True)
     except Exception:  # noqa: BLE001 - 收尾失败不能影响关停
         logger.exception("event=db_snapshot.shutdown_failed")
+    finally:
+        _SNAPSHOT_UPLOADER = None
 
     from core.auth import _gc_verification_codes, _gc_send_times
     import time
@@ -545,6 +553,14 @@ def _readiness() -> dict:
             reasons.append(label)
     warnings = _persistence_warnings()
     persistence = _persistence_mode()
+    snapshot = persistence.get("snapshot") if isinstance(persistence, dict) else None
+    if isinstance(snapshot, dict) and snapshot.get("stale"):
+        age = snapshot.get("last_ok_age_seconds")
+        warnings.append(
+            f"快照上传已连续失败 {snapshot.get('consecutive_failures')} 次"
+            f"（距上次成功 {age} 秒）：最近一次错误 {snapshot.get('last_error')}。"
+            "在此期间重启会丢回上一个成功快照"
+        )
     return {
         "status": "ok" if not reasons else "degraded",
         "blocking_reasons": reasons,
@@ -583,6 +599,14 @@ def _persistence_mode() -> dict:
                     "interval_seconds": config["interval_seconds"],
                     "worst_case_loss_seconds": config["interval_seconds"],
                 }
+                # 第 47 批（R4 P1）：持久化的「声明」必须跟「实测」对齐——
+                # 快照连续失败或久未成功时，durable 不能继续报 true。
+                uploader = _SNAPSHOT_UPLOADER
+                if uploader is not None:
+                    status = uploader.status()
+                    mode["snapshot"] = status
+                    if status.get("stale"):
+                        mode["durable"] = False
     except Exception as exc:  # noqa: BLE001 - 诊断失败不能影响健康接口
         logger.warning("event=health.persistence_mode_failed error=%s", exc)
     return mode

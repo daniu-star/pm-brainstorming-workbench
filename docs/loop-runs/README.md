@@ -276,6 +276,16 @@
 | 想知道「我把哪些会话共享给了谁 / 谁共享了会话给我 / 成员组都有谁」只能逐个会话点开，且成员无法自己退出共享 | 新增 `GET /api/v2/access`（owned 含 shares / incoming 含 role+owner_email / groups / totals）；新增 `DELETE /api/v2/sessions/{id}/share` 让成员退出自己的共享（所有者退出 422、陌生人 403）；新增 `frontend/app/settings/access/page.tsx` + 顶栏「权限」入口 | 后端 8 例外加真 Cookie 冒烟；前端 `/settings/access` SSR 断言三分区与入口；`session_repo.list_owned_sessions/list_incoming_shares/shares_by_session` 避免 N+1 |
 | 发布验证 | 后端全量 `Ran 825 tests / OK`；前端 `314/314` + `tsc --noEmit` 0 错；`PRE_RELEASE_OK 8 步 / 178.4s`；真 Cookie 冒烟 28 项（含成员退出后 403、旧列表 `my_role`）；真 Chrome `ACCESS_CDP_OK` 13 项；停栈后 `npm run build` exit 0（12 条路由）再 `start.bat` 拉起，构建后冒烟 10 项全 200 | 提交 `4bcef3a`（功能）、`2c9334f`（验收证据）；截图 `docs/browser-qa/e2e/access-*.png`；备份 `BACKUP_OK 20261126-144004` |
 
+## 第 47 批（R4 评分卡：快照失败可见 + 历史压平 + 文档自证 + 跨进程 flake，2026-11-28）
+
+| 问题 | 修复 | 验证 |
+| --- | --- | --- |
+| R4 P1：快照上传失败对健康检查不可见 —— `persistent` 由静态配置推断，`failures` 计数没有任何出口，上传长期失败时 `/health/ready` 仍报 `durable:true` | `SnapshotUploader` 增 `last_ok_at`/`last_error`/`consecutive_failures` 与 `status()`；`stale = 连续失败 ≥2 或距上次成功 > interval×3`；`_persistence_mode()` 挂 `persistence.snapshot` 并在 `stale` 时把 `durable` 降为 `false`；`_readiness()` 追加「快照已连续失败 N 次…」warnings | `backend/tests/test_db_snapshot.py::SnapshotStatusTests` 7 例、`tests/test_platform_readiness.py` 2 例（stale 时 `persistent=false` 且 warnings 含失败次数）；`Ran 925 tests / OK` |
+| R4 P2：`snapshot_squash_url` 定义了却从未调用，每次变更整文件 commit（约 101KB）会让私有 dataset 无限膨胀 | `SnapshotUploader._maybe_squash()`：每 `squash_every`（默认 50）次成功上传压平一次；**压平失败只告警，不影响上传成功状态/`failures`/`stale`**；`status()` 暴露 `squashes`/`squash_every`/`last_squash_error` | `SnapshotSquashTests` 4 例（阈值前不调用、阈值后调用且 URL 带 `/api` 前缀、压平 500 不改判上传、URL 拼接） |
+| R4 P2：文档自相矛盾（`acceptance-report` 注释 841 vs 输出 913、`loop-runs` 当前基线写「8 步」、`checklist` 声称前端提示会展示 `request_id`） | 841→925、8 步→9 步（第 44 批起已插 `deploy-env`）、`request_id` 那段改成「界面只展示易读文案，不显示 id，需要时从 Network 面板错误响应体取」 | `python scripts/verify_docs_refs.py --strict` 26 文件 0 断链 |
+| R4 P2：`test_pre_release_check` 的 `--list` 用例把 9 行步骤名打到测试输出里，`OK` 之后仍冒字 | 该用例改 `contextlib.redirect_stdout` 捕获并断言包含全部步骤名 | `Ran 11 tests / OK`，全量输出尾部干净 |
+| 既有 flake：跨进程限流用例子进程自己取 `int(time.time())`，父进程在 59.9s、子进程在 60.1s 时窗口翻页 → 计数重置、断言失败（全量跑 137s 时命中一次） | 时间戳由父进程传入（`NOW` 环境变量），两个进程固定落在同一 60 秒窗口 | `tests.test_cross_process` 连跑 3 次 6/6 OK；后端全量 `Ran 925 tests / OK` |
+
 ## 第 46 批（数据持久化：SQLite 周期快照到私有 dataset，2026-11-27）
 
 | 问题 | 修复 | 验证 |
@@ -361,10 +371,11 @@
 | 真机验收 | CDP 真 Chrome 打开 `https://www.brainstorming.top/login` 发码：无跨域脚本、无英文报错、出现日志兜底提示、`page_errors` 为空 → `LOGIN43_LIVE_OK`（8 项）。证据见 `docs/browser-qa.md` 第 10 节与 `docs/browser-qa/e2e/login43-live-same-origin.png` |
 | CI | run `45872510869`（head `99c0f7a`）三 job 全 success；此前 `45867837383`、`45871541688`、`45865717810` 亦全绿 |
 | 独立评分 R1 | `loop/rounds/R1/scorecard.md`：**85.95 → FAIL**（A95/B70/C86/D85/E90/F82/G90/H92） |
+| 独立评分 R4 | `loop/rounds/R4/scorecard.md`：**88.75 → FAIL**（A95/B70/C86/D90/E90/F100/G90/H97）。P0-1 已从「重启全量丢失」压到「最坏 120 秒有界丢失」，但按 rubric「部分修复不算关闭」仍需可复跑的重启演练证据 |
 | 独立评分 R2 | `loop/rounds/R2/scorecard.md`：**88.30 → FAIL**（A95/B70/C86/**D90**/E90/**F100**/**G86**/H92）。已关闭：CI 恒红、应用侧 CORS 通配；未关闭：P0-1 线上无持久卷（需挂卷或换外部库）、P1 平台代理层凭据反射、日志缺 `request_id` |
 | 结论 | 线上「报错」类缺陷已清零（根因是构建期 API 基址为跨域 + 平台代理拦预检）；评分闸门仍未过，差在 **P0-1 基础设施决策**（用户侧）与 B 维 5 个 >1500 行文件的大重构（需单独排期，一次改动风险高于收益） |
 
-当前基线：**后端 913 用例 OK / 前端 334 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（8 步，含 db-report） / 磁盘清理脚本（报告 + `--apply`） / 中间载荷 90 天保留策略 + `db_maintenance.py report|vacuum` / 账户级配额（429 `ACCOUNT_QUOTA_EXCEEDED` + `GET /api/v2/quota`） / 账户自带模型密钥（428 `LLM_CONFIG_REQUIRED` + 整屏配置引导 + 密钥加密只回末 4 位，真 Chrome 实测 `BYOK_GATE_CDP_OK`） / 团队工作区成员组（组=名单、共享行=授权，应用幂等） / Loop 执行沙箱（fail-closed + argv 直传 + 超时强杀 + 产物留档）与 `/ops` 运维健康页（storage/queues/sandbox 三块） / 共享可见性与权限总览（`my_role` 贯通 v2 与旧接口、`GET /api/v2/access`、成员退出共享、真 Chrome `ACCESS_CDP_OK` 13 项） / 生产构建 `npm run build` exit 0（12 条路由） / 生产 API 基址强制同源 `/backend`（跨域预检被平台代理拦截，登录与写操作曾 100% 失败） / 网络韧性（4 次尝试 + 首跳 12s + 抖动退避 + 顶栏重试进度 + SSE 断线转轮询） / 平台加固（`--proxy-headers`、邮箱维度限流、`/health/live`+`/health/ready`） / 请求号贯通（响应头 + 错误体 + 每条日志 `[rid=...]`，见 `core/log_context.py`） / 部署变量自检 `scripts/check_deploy_environment.py`（7 项 ok/warn/fail，体检第 2 步）**。
+当前基线：**后端 925 用例 OK / 前端 334 用例 + `tsc --noEmit` 0 错 / 真实浏览器 e2e AC-01+AC-19+AC-31+AC-33 PASS / 回滚演练 ROLLBACK_DRILL_OK / AC-20 真模型端到端 7 个未验证节点（人工核对） / 完整用户旅程真模型端到端 53,910 tokens / 结项报告真实模型路径 `generated_by=model` + 摘要落库（562 字） / 文档引用体检 601 条 0 断链（CI 已接入） / Worker 卡死诊断（`stalled`+`hint`）与前端排队提示 / 备份 `BACKUP_OK`+`VERIFY_OK`+`RESTORE_DRILL_OK` / 发版体检 `PRE_RELEASE_OK`（9 步，含 deploy-env 与 db-report） / 磁盘清理脚本（报告 + `--apply`） / 中间载荷 90 天保留策略 + `db_maintenance.py report|vacuum` / 账户级配额（429 `ACCOUNT_QUOTA_EXCEEDED` + `GET /api/v2/quota`） / 账户自带模型密钥（428 `LLM_CONFIG_REQUIRED` + 整屏配置引导 + 密钥加密只回末 4 位，真 Chrome 实测 `BYOK_GATE_CDP_OK`） / 团队工作区成员组（组=名单、共享行=授权，应用幂等） / Loop 执行沙箱（fail-closed + argv 直传 + 超时强杀 + 产物留档）与 `/ops` 运维健康页（storage/queues/sandbox 三块） / 共享可见性与权限总览（`my_role` 贯通 v2 与旧接口、`GET /api/v2/access`、成员退出共享、真 Chrome `ACCESS_CDP_OK` 13 项） / 生产构建 `npm run build` exit 0（12 条路由） / 生产 API 基址强制同源 `/backend`（跨域预检被平台代理拦截，登录与写操作曾 100% 失败） / 网络韧性（4 次尝试 + 首跳 12s + 抖动退避 + 顶栏重试进度 + SSE 断线转轮询） / 平台加固（`--proxy-headers`、邮箱维度限流、`/health/live`+`/health/ready`） / 请求号贯通（响应头 + 错误体 + 每条日志 `[rid=...]`，见 `core/log_context.py`） / 部署变量自检 `scripts/check_deploy_environment.py`（7 项 ok/warn/fail，体检第 2 步）**。
 
 ## 第 22 批（发版前一键体检，2026-11-24）
 

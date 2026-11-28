@@ -314,14 +314,15 @@ class CrossProcessCase(unittest.TestCase):
 
         body = (
             "from repositories import auth_repo\n"
-            "now = int(time.time())\n"
+            "now = int(os.environ['NOW'])\n"
             "with database.session_scope() as db:\n"
             "    first = auth_repo.verify_code(db, email=os.environ['OWNER'], code_hash=os.environ['CODE_HASH'], now_epoch=now)\n"
             "    second = auth_repo.verify_code(db, email=os.environ['OWNER'], code_hash=os.environ['CODE_HASH'], now_epoch=now)\n"
             "    limited = auth_repo.hit_rate_limit(db, scope='send-code', key='203.0.113.9', limit=2, window_seconds=60, now_epoch=now)\n"
             "print(json.dumps({'first': first, 'second': second, 'limited': limited}))\n"
         )
-        proc = self._spawn(body, CODE_HASH=code_hash)
+        # 时间戳必须由父进程传入：否则两个进程可能落在不同的 60 秒限流窗口里。
+        proc = self._spawn(body, CODE_HASH=code_hash, NOW=str(now_epoch))
         out, err = proc.communicate(timeout=120)
         self.assertEqual(proc.returncode, 0, f"{out}\n{err[-2000:]}")
         payload = json.loads([ln for ln in out.splitlines() if ln.strip().startswith("{")][-1])

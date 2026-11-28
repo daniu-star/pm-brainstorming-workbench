@@ -64,6 +64,10 @@ MIN_INTERVAL_SECONDS = 30
 #: 单次上传超时：库通常几百 KB，20s 足够；失败只记日志不阻塞业务。
 UPLOAD_TIMEOUT_SECONDS = 30
 DOWNLOAD_TIMEOUT_SECONDS = 30
+#: 每成功上传多少次，把私有 dataset 的提交历史压平一次（第 47 批，R4 P2）。
+#: 快照是整文件覆盖，历史留着没有价值，只会让仓库越长越大。
+DEFAULT_SQUASH_EVERY = 50
+SQUASH_TIMEOUT_SECONDS = 30
 
 UrlOpen = Callable[..., object]
 
@@ -274,10 +278,61 @@ class SnapshotUploader:
         self.uploads = 0
         self.skipped = 0
         self.failures = 0
+        #: 最近一次「真正上传成功」的墙钟秒数（第 47 批：失败必须可见）。
+        self.last_ok_at: float | None = None
+        #: 最近一次失败原因（成功后清空），供健康接口与 /ops 直接展示。
+        self.last_error: str | None = None
+        #: 连续失败次数（成功一次即清零）。
+        self.consecutive_failures = 0
+        #: 距上次压平历史成功了多少次上传（第 47 批）。
+        self.squashes = 0
+        self._uploads_since_squash = 0
+        self.last_squash_error: str | None = None
 
     @property
     def enabled(self) -> bool:
         return bool(self._config.get("enabled"))
+
+    def status(self) -> dict[str, object]:
+        """快照通道的只读状态（第 47 批：让失败对健康检查可见）。"""
+
+        interval = int(self._config.get("interval_seconds") or DEFAULT_INTERVAL_SECONDS)
+        age: float | None = None
+        if self.last_ok_at is not None:
+            age = max(0.0, time.time() - self.last_ok_at)
+        stale = bool(
+            self.enabled
+            and (self.consecutive_failures >= 2 or (age is not None and age > interval * 3))
+        )
+        return {
+            "enabled": self.enabled,
+            "repo": self._config.get("repo") or "",
+            "interval_seconds": interval,
+            "uploads": self.uploads,
+            "skipped": self.skipped,
+            "failures": self.failures,
+            "consecutive_failures": self.consecutive_failures,
+            "last_ok_age_seconds": None if age is None else round(age, 1),
+            "last_error": self.last_error,
+            "squashes": self.squashes,
+            "squash_every": int(self._config.get("squash_every") or DEFAULT_SQUASH_EVERY),
+            "last_squash_error": self.last_squash_error,
+            "stale": stale,
+        }
+
+    def record_failure(self, reason: str) -> str:
+        """统一登记失败：计数 + 记录原因（返回传入的 reason 便于 flush 直接返回）。"""
+
+        self.failures += 1
+        self.consecutive_failures += 1
+        self.last_error = reason
+        return reason
+
+    def record_success(self) -> None:
+        self.uploads += 1
+        self.consecutive_failures = 0
+        self.last_error = None
+        self.last_ok_at = time.time()
 
     # -- 生命周期 -------------------------------------------------------- #
 
@@ -318,14 +373,49 @@ class SnapshotUploader:
             tmp.unlink(missing_ok=True)
         return text, size
 
+    def _maybe_squash(self) -> None:
+        """每 ``squash_every`` 次成功上传压平一次提交历史。
+
+        压平只是「省仓库体积」的维护动作：失败必须只告警，不能把一次已经成功的
+        快照上传判成失败（否则健康检查会误报 stale）。
+        """
+
+        every = int(self._config.get("squash_every") or DEFAULT_SQUASH_EVERY)
+        if every <= 0 or self._uploads_since_squash < every:
+            return
+        repo = str(self._config.get("repo") or "")
+        if not repo:
+            return
+        try:
+            request = _request(
+                snapshot_squash_url(repo),
+                token=str(self._config["token"]),
+                data=b"",
+                content_type="application/json",
+            )
+            with self._urlopen(request, timeout=SQUASH_TIMEOUT_SECONDS) as response:  # type: ignore[union-attr]
+                response.read()
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")[:200] if hasattr(exc, "read") else ""
+            self.last_squash_error = f"HTTP {exc.code} {detail}".strip()
+            logger.warning("event=db_snapshot.squash failed=%s", self.last_squash_error)
+            return
+        except Exception as exc:  # noqa: BLE001 - 维护动作失败不能拖垮上传
+            self.last_squash_error = f"{type(exc).__name__}: {exc}"
+            logger.warning("event=db_snapshot.squash failed=%s", self.last_squash_error)
+            return
+        self._uploads_since_squash = 0
+        self.squashes += 1
+        self.last_squash_error = None
+        logger.info("event=db_snapshot.squash ok count=%s repo=%s", self.squashes, repo)
+
     def flush(self, *, reason: str = "manual") -> str:
         if not self.enabled:
             return "skipped: 未配置"
         try:
             payload = self._payload()
         except Exception as exc:  # noqa: BLE001
-            self.failures += 1
-            result = f"failed: {type(exc).__name__}: {exc}"
+            result = self.record_failure(f"failed: {type(exc).__name__}: {exc}")
             logger.warning("event=db_snapshot.%s %s", reason, result)
             return result
         if payload is None:
@@ -355,19 +445,19 @@ class SnapshotUploader:
             except (ValueError, AttributeError):
                 pass
             self._last_digest = text
-            self.uploads += 1
+            self.record_success()
+            self._uploads_since_squash += 1
+            self._maybe_squash()
             result = f"uploaded: {size} 字节 -> {len(text)} 字符 commit={commit or '?'}"
             logger.info("event=db_snapshot.%s ok=%s", reason, result)
             return result
         except urllib.error.HTTPError as exc:
-            self.failures += 1
             detail = exc.read().decode("utf-8", "replace")[:200] if hasattr(exc, "read") else ""
-            result = f"failed: HTTP {exc.code} {detail}".strip()
+            result = self.record_failure(f"failed: HTTP {exc.code} {detail}".strip())
             logger.warning("event=db_snapshot.%s %s", reason, result)
             return result
         except Exception as exc:  # noqa: BLE001
-            self.failures += 1
-            result = f"failed: {type(exc).__name__}: {exc}"
+            result = self.record_failure(f"failed: {type(exc).__name__}: {exc}")
             logger.warning("event=db_snapshot.%s %s", reason, result)
             return result
 

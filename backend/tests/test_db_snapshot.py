@@ -17,6 +17,7 @@ import json
 import os
 import sqlite3
 import tempfile
+import time
 import urllib.error
 import unittest
 from pathlib import Path
@@ -343,6 +344,188 @@ class SnapshotUploaderTests(unittest.TestCase):
             finally:
                 conn.close()
         self.assertEqual(rows, 3)
+
+
+class SnapshotUploaderHelper:
+    """测试辅助：造一个能被快照的 SQLite 库，以及会失败的 urlopen 桩。"""
+
+    @staticmethod
+    def make_db(path: Path, rows: int = 1) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(path))
+        try:
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+            for index in range(rows):
+                conn.execute("INSERT INTO t (name) VALUES (?)", (f"n{index}",))
+            conn.commit()
+        finally:
+            conn.close()
+
+    @staticmethod
+    def failing_urlopen():
+        def opener(request, timeout=None):  # noqa: ANN001, ARG001 - 桩只需要抛错
+            raise OSError("network down")
+
+        return opener
+
+
+class SnapshotStatusTests(unittest.TestCase):
+    """第 47 批（R4 P1）：上传失败必须能被健康检查看见。"""
+
+    def _uploader(self, tmpdir: str, *, enabled: bool = True) -> db_snapshot.SnapshotUploader:
+        config = {
+            "enabled": enabled,
+            "repo": "owner/db",
+            "token": "hf_x",
+            "interval_seconds": 120,
+            "local_path": str(Path(tmpdir) / "app.db"),
+        }
+        return db_snapshot.SnapshotUploader(config)
+
+    def test_disabled_status_is_never_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status = self._uploader(tmpdir, enabled=False).status()
+        self.assertFalse(status["enabled"])
+        self.assertFalse(status["stale"])
+        self.assertEqual(status["repo"], "owner/db")
+        self.assertEqual(status["interval_seconds"], 120)
+
+    def test_fresh_enabled_status_is_not_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status = self._uploader(tmpdir).status()
+        self.assertTrue(status["enabled"])
+        self.assertFalse(status["stale"])
+        self.assertIsNone(status["last_ok_age_seconds"])
+
+    def test_single_failure_is_tolerated_two_failures_are_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            uploader = self._uploader(tmpdir)
+            uploader.record_failure("failed: HTTP 500")
+            self.assertFalse(uploader.status()["stale"], "单次失败可能只是抖动")
+            uploader.record_failure("failed: HTTP 500")
+            status = uploader.status()
+        self.assertTrue(status["stale"])
+        self.assertEqual(status["consecutive_failures"], 2)
+        self.assertEqual(status["failures"], 2)
+        self.assertEqual(status["last_error"], "failed: HTTP 500")
+
+    def test_record_success_clears_failures_and_marks_fresh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            uploader = self._uploader(tmpdir)
+            uploader.record_failure("failed: boom")
+            uploader.record_failure("failed: boom")
+            uploader.record_success()
+            status = uploader.status()
+        self.assertFalse(status["stale"])
+        self.assertEqual(status["consecutive_failures"], 0)
+        self.assertIsNone(status["last_error"])
+        self.assertEqual(status["uploads"], 1)
+        self.assertEqual(status["failures"], 2)
+        self.assertIsNotNone(status["last_ok_age_seconds"])
+
+    def test_age_beyond_three_intervals_is_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            uploader = self._uploader(tmpdir)
+            uploader.record_success()
+            # 模拟「上次成功是 10 分钟前」：阈值是 interval*3 = 360 秒。
+            uploader.last_ok_at = time.time() - 600
+            status = uploader.status()
+        self.assertTrue(status["stale"])
+        self.assertGreaterEqual(status["last_ok_age_seconds"], 599)
+
+    def test_flush_failure_uses_record_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            uploader = self._uploader(tmpdir)
+            SnapshotUploaderHelper.make_db(Path(tmpdir) / "app.db")
+            uploader._urlopen = SnapshotUploaderHelper.failing_urlopen()
+            result = uploader.flush()
+            status = uploader.status()
+        self.assertTrue(result.startswith("failed:"), result)
+        self.assertEqual(status["failures"], 1)
+        self.assertEqual(status["consecutive_failures"], 1)
+        self.assertFalse(status["stale"])
+
+
+class SnapshotSquashTests(unittest.TestCase):
+    """第 47 批（R4 P2）：快照是整文件覆盖，历史要定期压平，但压平失败不能影响上传。"""
+
+    def _config(self, local_path: Path, *, every: int = 2) -> dict[str, object]:
+        return {
+            "enabled": True,
+            "repo": "owner/db",
+            "token": "hf_x",
+            "interval_seconds": 120,
+            "local_path": str(local_path),
+            "squash_every": every,
+        }
+
+    def _write_extra_row(self, path: Path, index: int) -> None:
+        conn = sqlite3.connect(str(path))
+        try:
+            conn.execute("INSERT INTO t (name) VALUES (?)", (f"x{index}",))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_squash_not_called_below_threshold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "app.db"
+            SnapshotUploaderHelper.make_db(db)
+            fake = _fake_urlopen(b'{"commitOid":"abc"}')
+            uploader = db_snapshot.SnapshotUploader(self._config(db), urlopen=fake)
+            uploader.flush()
+            urls = [request.full_url for request in fake.calls]
+        self.assertEqual(len(urls), 1, urls)
+        self.assertTrue(urls[0].endswith("/commit/main"), urls)
+        self.assertEqual(uploader.status()["squashes"], 0)
+
+    def test_squash_called_after_threshold_uploads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "app.db"
+            SnapshotUploaderHelper.make_db(db)
+            fake = _fake_urlopen(b'{"commitOid":"abc"}')
+            uploader = db_snapshot.SnapshotUploader(self._config(db, every=2), urlopen=fake)
+            uploader.flush()
+            self._write_extra_row(db, 1)
+            uploader.flush()
+            urls = [request.full_url for request in fake.calls]
+            status = uploader.status()
+        self.assertEqual(len(urls), 3, urls)  # 2 次上传 + 1 次压平
+        self.assertTrue(any(url.endswith("/super-squash/main") for url in urls), urls)
+        self.assertEqual(status["squashes"], 1)
+        self.assertEqual(status["squash_every"], 2)
+        self.assertIsNone(status["last_squash_error"])
+        self.assertEqual(status["uploads"], 2)
+
+    def test_squash_failure_does_not_mark_upload_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "app.db"
+            SnapshotUploaderHelper.make_db(db)
+            calls: list[str] = []
+
+            def opener(request, timeout=None):  # noqa: ANN001
+                calls.append(request.full_url)
+                if request.full_url.endswith("/super-squash/main"):
+                    raise urllib.error.HTTPError(
+                        request.full_url, 500, "boom", hdrs=None, fp=io.BytesIO(b"nope")
+                    )
+                return io.BytesIO(b'{"commitOid":"abc"}')
+
+            uploader = db_snapshot.SnapshotUploader(self._config(db, every=1), urlopen=opener)
+            result = uploader.flush()
+            status = uploader.status()
+        self.assertTrue(result.startswith("uploaded:"), result)
+        self.assertEqual(status["failures"], 0)
+        self.assertEqual(status["consecutive_failures"], 0)
+        self.assertFalse(status["stale"])
+        self.assertEqual(status["squashes"], 0)
+        self.assertIn("HTTP 500", status["last_squash_error"])
+
+    def test_squash_url_carries_api_prefix(self) -> None:
+        self.assertEqual(
+            db_snapshot.snapshot_squash_url("owner/db"),
+            "https://huggingface.co/api/datasets/owner/db/super-squash/main",
+        )
 
 
 class SnapshotFileFormatTests(unittest.TestCase):

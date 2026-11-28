@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 import pathlib
 import sys
@@ -40,7 +42,13 @@ class PreReleaseCheckTests(unittest.TestCase):
             self.assertGreater(self.mod.TIMEOUTS[name], 0)
 
     def test_list_prints_all_steps(self) -> None:
-        self.assertEqual(self.mod.main(["--list"]), 0)
+        # 捕获 stdout：否则 `unittest` 的 OK 行之后会混进 9 行步骤名（第 47 批）。
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            self.assertEqual(self.mod.main(["--list"]), 0)
+        printed = buffer.getvalue()
+        for name in self.mod.ALL_STEPS:
+            self.assertIn(name, printed)
 
     def test_unknown_step_returns_two(self) -> None:
         self.assertEqual(self.mod.main(["--only", "docs,not-a-step"]), 2)
