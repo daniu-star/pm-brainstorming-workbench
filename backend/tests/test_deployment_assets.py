@@ -182,6 +182,18 @@ class SpaceDeployScriptTests(unittest.TestCase):
             self.assertIn(token, self.text)
         self.assertNotIn("worktree add", self.text)
 
+    def test_script_checks_remote_before_saying_up_to_date(self) -> None:
+        # 第 47 批真踩过：上一次 push 因网络失败，脚本只看本地 ref 就报「已是最新」。
+        self.assertIn("_remote_sha", self.text)
+        self.assertIn("ls-remote", self.text)
+        self.assertIn("继续校验远端", self.text)
+
+    def test_push_failure_exits_non_zero(self) -> None:
+        # 推送失败必须非零退出；不能打印「已推送」然后 exit 0。
+        self.assertIn("推送失败（可重试）", self.text)
+        push_block = self.text.split("推送失败（可重试）")[1]
+        self.assertIn("return 1", push_block)
+
     def test_script_removes_its_temp_index(self) -> None:
         self.assertIn("GIT_INDEX_FILE", self.text)
         self.assertIn("index_file.unlink()", self.text)

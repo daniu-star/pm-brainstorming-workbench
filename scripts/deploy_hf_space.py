@@ -63,6 +63,18 @@ def _git(args: list[str], *, cwd: pathlib.Path, check: bool = True, env: dict[st
     return proc.stdout
 
 
+def _remote_sha(repo: pathlib.Path, remote: str, ref: str) -> str:
+    """读远端 sha（失败/不存在返回空串）；只用于判断是否需要推送，绝不阻断部署。"""
+
+    proc = subprocess.run(
+        ["git", "ls-remote", remote, ref], cwd=str(repo), text=True, capture_output=True
+    )
+    if proc.returncode != 0:
+        return ""
+    line = proc.stdout.strip().splitlines()
+    return line[0].split("\t")[0] if line else ""
+
+
 def _git_ok(args: list[str], *, cwd: pathlib.Path) -> bool:
     if not "".join(args):
         return False
@@ -130,37 +142,61 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         parent = ""
+        parent_tree = ""
         if _git_ok(["rev-parse", "--verify", f"refs/heads/{args.branch}"], cwd=repo):
             parent = _git(["rev-parse", f"refs/heads/{args.branch}"], cwd=repo).strip()
             parent_tree = _git(["rev-parse", f"{parent}^{{tree}}"], cwd=repo).strip()
-            if parent_tree == tree:
-                print(f"Space 仓库已是最新（树 {tree}），无需推送。")
-                return 0
 
-        name = _git(["config", "user.name"], cwd=repo).strip() or "pm-brainstorm"
-        email = _git(["config", "user.email"], cwd=repo).strip() or "pm-brainstorm@example.com"
-        message = args.message or f"deploy: Space backend subset at {head} ({len(files)} files)"
-        commit_args = ["commit-tree", tree]
-        if parent:
-            commit_args += ["-p", parent]
-        commit_args += ["-m", message]
-        env = dict(os.environ)
-        env.update(
-            {
-                "GIT_AUTHOR_NAME": name,
-                "GIT_AUTHOR_EMAIL": email,
-                "GIT_COMMITTER_NAME": name,
-                "GIT_COMMITTER_EMAIL": email,
-                "GIT_INDEX_FILE": str(index_file),
-            }
-        )
-        commit = _git(commit_args, cwd=repo, env=env).strip()
-        _git(["update-ref", f"refs/heads/{args.branch}", commit], cwd=repo)
-        print(f"提交 {commit[:9]}（父 {parent[:9] or '无'}），{len(files)} 个文件", flush=True)
+        # 子集内容没变时不要造空提交，但**必须继续校验远端**：上一次 push 可能因网络
+        # 失败而没到远端（第 47 批真踩过：脚本据此误报「已是最新」）。
+        if parent and parent_tree == tree:
+            commit = parent
+            print(f"子集内容未变化（树 {tree}，复用 {parent[:9]}），继续校验远端…", flush=True)
+        else:
+            name = _git(["config", "user.name"], cwd=repo).strip() or "pm-brainstorm"
+            email = _git(["config", "user.email"], cwd=repo).strip() or "pm-brainstorm@example.com"
+            message = args.message or f"deploy: Space backend subset at {head} ({len(files)} files)"
+            commit_args = ["commit-tree", tree]
+            if parent:
+                commit_args += ["-p", parent]
+            commit_args += ["-m", message]
+            env = dict(os.environ)
+            env.update(
+                {
+                    "GIT_AUTHOR_NAME": name,
+                    "GIT_AUTHOR_EMAIL": email,
+                    "GIT_COMMITTER_NAME": name,
+                    "GIT_COMMITTER_EMAIL": email,
+                    "GIT_INDEX_FILE": str(index_file),
+                }
+            )
+            commit = _git(commit_args, cwd=repo, env=env).strip()
+            _git(["update-ref", f"refs/heads/{args.branch}", commit], cwd=repo)
+            print(f"提交 {commit[:9]}（父 {parent[:9] or '无'}），{len(files)} 个文件", flush=True)
+
+        remote_ref = f"refs/heads/main"
+        remote_sha = _remote_sha(repo, args.remote, remote_ref)
+        if remote_sha == commit:
+            print(f"Space 远端已是 {commit[:9]}，无需推送。")
+            return 0
+        if remote_sha:
+            print(f"远端当前 {remote_sha[:9]} -> 目标 {commit[:9]}", flush=True)
 
         ref = f"{args.branch}:main"
         print(f"推送 {ref} -> {args.remote} …", flush=True)
-        _run(["git", "push", "--force", args.remote, ref], cwd=repo, check=False, capture=False)
+        proc = subprocess.run(
+            ["git", "push", "--force", args.remote, ref],
+            cwd=str(repo),
+            text=True,
+            capture_output=True,
+            env=dict(os.environ),
+        )
+        if proc.returncode != 0:
+            # 网络抖动（本机 fake-IP 代理常见）不能算成功：必须非零退出，否则 CI/用户
+            # 会以为已上线。
+            print("推送失败（可重试）：", flush=True)
+            print((proc.stderr or proc.stdout).strip()[:800], flush=True)
+            return 1
         print("已推送。Space 会按根 Dockerfile 重建（BUILDING → RUNNING）。")
         print("验证：https://www.brainstorming.top/backend/health 与 /backend/openapi.json")
         return 0
