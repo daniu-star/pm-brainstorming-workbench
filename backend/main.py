@@ -585,7 +585,9 @@ def _persistence_mode() -> dict:
         on_space = bool(os.environ.get("SPACE_ID") or os.environ.get("SPACE_HOST"))
         if database_url and not database_url.startswith("sqlite"):
             mode = {"kind": "external", "durable": True}
-        elif database_url and not on_space:
+        elif not on_space:
+            # 本机开发：默认库就是 ``backend/data/app.db`` 这个真实文件，
+            # 重启不丢，别把它误报成 ephemeral（第 47 批修正）。
             mode = {"kind": "local-file", "durable": True}
         else:
             from core.db_snapshot import snapshot_config

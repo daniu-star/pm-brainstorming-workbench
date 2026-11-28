@@ -283,6 +283,8 @@ class PersistenceWarningTests(V2ApiTestBase):
         )
 
     def test_ephemeral_mode_is_not_persistent(self) -> None:
+        """平台环境 + 没配任何持久化方案 = ephemeral（唯一真正会丢数据的组合）。"""
+
         env = {
             "SPACE_ID": "demo/space",
             "DATABASE_URL": "",
@@ -292,11 +294,32 @@ class PersistenceWarningTests(V2ApiTestBase):
             "HF_TOKEN": "",
             "HF_API_TOKEN": "",
         }
-        with mock.patch.dict("os.environ", env, clear=False):
+        with mock.patch.dict("os.environ", env, clear=False), mock.patch.object(
+            main, "_SNAPSHOT_UPLOADER", None
+        ):
             body = self.client.get("/health/ready").json()
         self.assertEqual(body["persistence"]["kind"], "ephemeral")
         self.assertFalse(body["persistent"])
         self.assertTrue(any("数据会丢失" in reason for reason in body["degraded_reasons"]))
+
+    def test_local_development_reports_local_file(self) -> None:
+        """第 47 批：本机没有 SPACE_ID 时，默认库是真实文件，不该报 ephemeral。"""
+
+        env = {
+            "DATABASE_URL": "",
+            "DB_SNAPSHOT_REPO": "",
+            "DB_SNAPSHOT_TOKEN": "",
+            "DB_SYNC_TOKEN": "",
+            "HF_TOKEN": "",
+            "HF_API_TOKEN": "",
+            "SPACE_ID": "",
+            "SPACE_HOST": "",
+        }
+        with mock.patch.dict("os.environ", env, clear=False):
+            body = self.client.get("/health/ready").json()
+        self.assertEqual(body["persistence"]["kind"], "local-file")
+        self.assertTrue(body["persistence"]["durable"])
+        self.assertTrue(body["persistent"])
 
 
 if __name__ == "__main__":  # pragma: no cover
